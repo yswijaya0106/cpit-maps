@@ -117,7 +117,7 @@ async function showUsulanGeometry(usulan, btn) {
         zIndex: 20,
       });
       const info = new google.maps.InfoWindow({
-        content: `<div class="usulan-info-tooltip"><strong>${escapeHtml(usulan.nama_kegiatan || usulan.nama_ruas)}</strong><br/>${escapeHtml(usulan.jenis_penanganan || "")} · ${formatRupiah(usulan.alokasi_usulan_pemda)}<br/>Panjang KML: ${kmlLengthKm.toFixed(2)} km</div>`,
+        content: `<div class="usulan-info-tooltip"><strong>${escapeHtml(usulan.nama_kegiatan || usulan.nama_ruas)}</strong><br/>ID: ${usulan.id}<br/>${escapeHtml(usulan.jenis_penanganan || "")} · ${formatRupiah(usulan.alokasi_usulan_pemda)}<br/>Panjang KML: ${kmlLengthKm.toFixed(2)} km</div>`,
       });
       pl.addListener("click", (e) => {
         info.setPosition(e.latLng);
@@ -373,7 +373,7 @@ async function flyToUsulanGeometry(u) {
     const paths = lineStrings.map((coords) => coords.map(([lng, lat]) => ({ lat, lng })));
     const kmlLengthKm = sumPathLengthKm(paths);
     const info = new google.maps.InfoWindow({
-      content: `<div class="usulan-info-tooltip"><strong>${escapeHtml(u.nama_kegiatan || u.nama_ruas)}</strong><br/>Panjang KML: ${kmlLengthKm.toFixed(2)} km</div>`,
+      content: `<div class="usulan-info-tooltip"><strong>${escapeHtml(u.nama_kegiatan || u.nama_ruas)}</strong><br/>ID: ${u.id}<br/>Panjang KML: ${kmlLengthKm.toFixed(2)} km</div>`,
     });
 
     paths.forEach((path) => {

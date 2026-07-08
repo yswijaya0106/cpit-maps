@@ -1,0 +1,9 @@
+.env
+__pycache__/
+*.pyc
+.venv/
+venv/
+exports_tmp/
+docs/
+Maps/
+maps.md

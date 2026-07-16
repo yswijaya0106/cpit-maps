@@ -308,6 +308,7 @@ async function showMapLayer(provinsi, kabupaten, layer) {
 
     state.mapLayers.active[layer] = data;
     applyLayerStyle(layer);
+    if (layer.startsWith("BATASKEC__")) updateKecamatanLintasan();
     updateMapLegend();
 
     // Data ini biasanya di luar jendela peta yang sedang tampil (peta default
@@ -326,12 +327,92 @@ async function showMapLayer(provinsi, kabupaten, layer) {
   }
 }
 
+/* ---------- kecamatan yang dilintasi rute KML usulan diberi warna beda ---------- */
+
+// Kontras dengan polyline rute usulan (oranye #f59e0b) dan warna-warna palet
+// layer — jangan samakan, supaya poligon terlintas tidak menyatu dengan rute.
+const KEC_LINTAS_COLOR = "#e11d74";
+
+function _routeSamplePoints(maxPts = 80) {
+  const pts = [];
+  (state.browseUsulanPolylines || []).forEach((pl) => {
+    const path = pl.getPath();
+    for (let i = 0; i < path.getLength(); i++) pts.push(path.getAt(i));
+  });
+  if (pts.length <= maxPts) return pts;
+  const step = pts.length / maxPts;
+  return Array.from({ length: maxPts }, (_, i) => pts[Math.floor(i * step)]);
+}
+
+function _pointInRing(lat, lng, ring) {
+  // ray casting sederhana; ring = array LatLng cincin luar poligon
+  let inside = false;
+  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+    const yi = ring[i].lat(), xi = ring[i].lng();
+    const yj = ring[j].lat(), xj = ring[j].lng();
+    if ((yi > lat) !== (yj > lat) && lng < ((xj - xi) * (lat - yi)) / (yj - yi) + xi) {
+      inside = !inside;
+    }
+  }
+  return inside;
+}
+
+function _featureOuterRings(feature) {
+  const rings = [];
+  const walk = (g) => {
+    const t = g.getType();
+    if (t === "Polygon") rings.push(g.getAt(0).getArray());
+    else if (t === "MultiPolygon" || t === "GeometryCollection") g.getArray().forEach(walk);
+  };
+  walk(feature.getGeometry());
+  return rings;
+}
+
+/* Tandai fitur layer BATAS KECAMATAN yang dilintasi rute usulan yang sedang
+   tampil (properti DILINTASI_RUTE, dibaca applyLayerStyle & popup identify).
+   Dipanggil setiap rute usulan digambar/dihapus dan setiap layer BATASKEC
+   diaktifkan. */
+function updateKecamatanLintasan() {
+  const pts = _routeSamplePoints();
+  Object.entries(state.mapLayers.active).forEach(([layerName, data]) => {
+    if (!layerName.startsWith("BATASKEC__")) return;
+    data.forEach((feature) => {
+      let kena = false;
+      if (pts.length) {
+        for (const ring of _featureOuterRings(feature)) {
+          // pra-saring bbox supaya ray casting tidak jalan untuk poligon jauh
+          let minLat = 90, maxLat = -90, minLng = 180, maxLng = -180;
+          ring.forEach((p) => {
+            const la = p.lat(), ln = p.lng();
+            if (la < minLat) minLat = la; if (la > maxLat) maxLat = la;
+            if (ln < minLng) minLng = ln; if (ln > maxLng) maxLng = ln;
+          });
+          kena = pts.some((p) => {
+            const la = p.lat(), ln = p.lng();
+            return la >= minLat && la <= maxLat && ln >= minLng && ln <= maxLng
+              && _pointInRing(la, ln, ring);
+          });
+          if (kena) break;
+        }
+      }
+      feature.setProperty("DILINTASI_RUTE", kena ? "YA" : null);
+    });
+    applyLayerStyle(layerName);
+  });
+}
+
 function applyLayerStyle(layer) {
   const data = state.mapLayers.active[layer];
   if (!data) return;
   const color = mapLayerColor(layer);
   const opacity = state.mapLayers.opacity[layer] ?? 1;
   data.setStyle((feature) => {
+    if (feature.getProperty("DILINTASI_RUTE") === "YA") {
+      return {
+        fillColor: KEC_LINTAS_COLOR, fillOpacity: 0.28 * opacity,
+        strokeColor: KEC_LINTAS_COLOR, strokeWeight: 2.6, strokeOpacity: opacity, zIndex: 20,
+      };
+    }
     const type = feature.getGeometry().getType();
     if (type === "Point" || type === "MultiPoint") {
       return {

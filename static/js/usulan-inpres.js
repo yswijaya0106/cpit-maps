@@ -142,6 +142,7 @@ async function showUsulanGeometry(usulan, btn) {
 function clearBrowseUsulanPolylines() {
   state.browseUsulanPolylines.forEach((pl) => pl.setMap(null));
   state.browseUsulanPolylines = [];
+  if (typeof updateKecamatanLintasan === "function") updateKecamatanLintasan();
 }
 
 async function loadUsulanProvinsiOptions() {
@@ -525,6 +526,7 @@ async function flyToUsulanGeometry(u) {
     });
 
     fitBoundsCapped(bounds);
+    if (typeof updateKecamatanLintasan === "function") updateKecamatanLintasan();
     if (statusEl) statusEl.remove();
   } catch (err) {
     console.error(err);

@@ -133,8 +133,14 @@ Deps: `requirements.txt`, venv at `.venv/` (already gitignored).
   90MB, attribute = kecamatan name ONLY) is special-cased as a virtual
   hierarchy in these same endpoints: the "kabupaten" dropdown lists
   provinces, layers are kabupaten (id `BATASKEC__<prov>__<kab>`), features
-  carry KODE_KECAMATAN matched by name against `penduduk_kecamatan` (~89%
-  unique; homonyms flagged in a CATATAN property).
+  carry KODE_KECAMATAN matched by name against `penduduk_kecamatan`
+  (exact → space-collapsed → numeral-equalized SATU↔I↔1; ~96% polygon
+  coverage; homonym multipolygons are trimmed to parts adjacent to their
+  kabupaten). Kecamatan crossed by the currently displayed usulan route are
+  recolored client-side (`updateKecamatanLintasan` in maps-overlay.js), and
+  the identify popup joins the feature to DB tables via
+  `GET /api/kecamatan/{kode}/data?tabel=` (whitelist
+  `KECAMATAN_JOIN_TABLES`).
 
 ## Data pipeline (scripts/)
 

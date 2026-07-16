@@ -69,9 +69,15 @@ function dataViewerRender(data) {
 
   const esc = (s) => String(s)
     .replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
-  const cell = (v) => {
+  // kolom identitas (tahun, kode wilayah, id) bukan besaran — jangan diberi
+  // pemisah ribuan ("2.025", "3.673.010" menyesatkan)
+  const plainCols = data.columns.map((c) =>
+    /(^|_)(tahun|kode|id)($|_)|^kode|_kode$/i.test(c));
+  const cell = (v, j) => {
     if (v === null || v === undefined) return '<td class="null">—</td>';
-    if (typeof v === "number") return `<td class="num">${esc(v.toLocaleString("id-ID"))}</td>`;
+    if (typeof v === "number") {
+      return `<td class="num">${esc(plainCols[j] ? String(v) : v.toLocaleString("id-ID"))}</td>`;
+    }
     return `<td>${esc(v)}</td>`;
   };
   const head = data.columns.map((c) => `<th>${esc(c)}</th>`).join("");

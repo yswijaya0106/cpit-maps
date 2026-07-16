@@ -75,18 +75,83 @@ function showIdentifyInfo(layerName, feature, latLng) {
     ? `<table class="identify-table">${rows.join("")}</table>`
     : `<div class="hint">Fitur ini tidak memiliki atribut</div>`;
 
+  // Konten dibangun sebagai DOM node (bukan string) supaya select join tabel
+  // di bawah bisa langsung diberi event listener.
+  const container = document.createElement("div");
+  container.className = "identify-info";
+  container.innerHTML = `
+    <div class="identify-info-title">${escapeHtml(state.mapLayers.labels[layerName] || layerName)}</div>
+    ${body}
+  `;
+  const kodeKec = feature.getProperty("KODE_KECAMATAN");
+  if (kodeKec) attachKecamatanJoin(container, kodeKec);
+
   if (!state.identifyInfoWindow) {
     state.identifyInfoWindow = new google.maps.InfoWindow();
     state.identifyInfoWindow.addListener("closeclick", clearIdentifyHighlight);
   }
-  state.identifyInfoWindow.setContent(`
-    <div class="identify-info">
-      <div class="identify-info-title">${escapeHtml(state.mapLayers.labels[layerName] || layerName)}</div>
-      ${body}
-    </div>
-  `);
+  state.identifyInfoWindow.setContent(container);
   state.identifyInfoWindow.setPosition(latLng);
   state.identifyInfoWindow.open(state.map);
+}
+
+/* Join atribut poligon kecamatan ke tabel database — pengguna memilih tabel
+   yang mau dilihat lewat dropdown di popup identify. */
+function attachKecamatanJoin(container, kodeKec) {
+  const wrap = document.createElement("div");
+  wrap.className = "identify-join";
+  wrap.innerHTML = `
+    <div class="identify-join-head">
+      <i class="bi bi-table"></i> Data database:
+      <select class="identify-join-select"></select>
+    </div>
+    <div class="identify-join-body hint">Memuat...</div>`;
+  container.appendChild(wrap);
+  const sel = wrap.querySelector("select");
+  const bodyEl = wrap.querySelector(".identify-join-body");
+
+  const load = async () => {
+    bodyEl.className = "identify-join-body hint";
+    bodyEl.textContent = "Memuat...";
+    try {
+      const tabel = sel.value ? `?tabel=${encodeURIComponent(sel.value)}` : "";
+      const res = await fetch(`/api/kecamatan/${kodeKec}/data${tabel}`);
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || "Gagal memuat");
+      if (!sel.options.length) {
+        data.tabel_tersedia.forEach((t) => {
+          const opt = document.createElement("option");
+          opt.value = t.tabel;
+          opt.textContent = t.label;
+          opt.selected = t.tabel === data.tabel;
+          sel.appendChild(opt);
+        });
+      }
+      bodyEl.className = "identify-join-body";
+      if (!data.rows.length) {
+        bodyEl.innerHTML = `<div class="hint">Tidak ada baris di tabel ini untuk kecamatan tsb.</div>`;
+        return;
+      }
+      if (data.rows.length === 1) {
+        // satu baris -> tampilkan tegak (kolom: nilai) biar muat di popup
+        bodyEl.innerHTML = `<table class="identify-table">${data.columns.map((c, i) =>
+          `<tr><th>${escapeHtml(c)}</th><td>${escapeHtml(String(data.rows[0][i] ?? "—"))}</td></tr>`
+        ).join("")}</table>`;
+      } else {
+        bodyEl.innerHTML = `<div class="identify-join-scroll"><table class="identify-table identify-join-table">
+          <thead><tr>${data.columns.map((c) => `<th>${escapeHtml(c)}</th>`).join("")}</tr></thead>
+          <tbody>${data.rows.map((r) =>
+            `<tr>${r.map((v) => `<td>${escapeHtml(String(v ?? "—"))}</td>`).join("")}</tr>`
+          ).join("")}</tbody></table></div>
+          <div class="hint">${data.rows.length} baris</div>`;
+      }
+    } catch (err) {
+      bodyEl.className = "identify-join-body hint";
+      bodyEl.textContent = String(err.message || err);
+    }
+  };
+  sel.addEventListener("change", load);
+  load();
 }
 
 function clearIdentifyHighlight() {

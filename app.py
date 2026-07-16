@@ -1790,6 +1790,46 @@ def _batas_kec_layer_geojson(prov: str, kab: str) -> dict:
     }
 
 
+# Join atribut poligon kecamatan (identify di overlay BATAS KECAMATAN) ke
+# tabel database — pengguna memilih tabel mana yang dilihat di popup.
+KECAMATAN_JOIN_TABLES = {
+    "kecamatan_data_turunan": "Data turunan (kepadatan, kendaraan)",
+    "penduduk_kecamatan": "Master penduduk kecamatan",
+    "usulan_inpres": "Usulan Inpres di kecamatan ini",
+}
+_USULAN_JOIN_COLS = (
+    "id", "nama_ruas", "jenis_penanganan", "panjang_ruas_km",
+    "alokasi_usulan_pemda", "prioritas", "verifikasi_balai", "verifikasi_kompetensi",
+)
+
+
+@app.get("/api/kecamatan/{kode_kecamatan}/data")
+def kecamatan_join_data(kode_kecamatan: int, tabel: str = "kecamatan_data_turunan"):
+    if tabel not in KECAMATAN_JOIN_TABLES:
+        raise HTTPException(400, "Tabel tidak dikenal untuk join kecamatan")
+    with db_cursor() as cur:
+        if tabel == "usulan_inpres":
+            cur.execute(
+                f"SELECT {', '.join(_USULAN_JOIN_COLS)} FROM usulan_inpres "
+                "WHERE kode_kecamatan = %s ORDER BY id LIMIT 50",
+                (kode_kecamatan,),
+            )
+        else:
+            cur.execute(
+                f"SELECT * FROM `{tabel}` WHERE kode_kecamatan = %s LIMIT 20",
+                (kode_kecamatan,),
+            )
+        rows = cur.fetchall()
+    columns = [c for c in (rows[0].keys() if rows else []) if c not in DATA_TABLE_SKIP_COLS]
+    return {
+        "tabel": tabel,
+        "label": KECAMATAN_JOIN_TABLES[tabel],
+        "tabel_tersedia": [{"tabel": k, "label": v} for k, v in KECAMATAN_JOIN_TABLES.items()],
+        "columns": columns,
+        "rows": [[jsonable_encoder(r[c]) for c in columns] for r in rows],
+    }
+
+
 @app.get("/api/maps/provinces")
 def maps_provinces():
     if not MAPS_DIR.is_dir():

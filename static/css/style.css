@@ -119,6 +119,9 @@ html, body {
 .datatable-head h3 { margin: 0; font-size: 15px; font-weight: 700; }
 .datatable-head h3 i { color: var(--primary); margin-right: 4px; }
 .datatable-meta { font-size: 12px; color: var(--text-dim); margin-right: auto; }
+/* .icon-btn dasarnya display:none (tombol toggle sidebar mobile) — tombol
+   close modal Data menumpang kelas itu, jadi harus dimunculkan eksplisit. */
+.datatable-head .icon-btn { display: flex; flex: 0 0 auto; }
 .datatable-scroll { flex: 1; overflow: auto; }
 .datatable-loading { padding: 32px; text-align: center; color: var(--text-dim); font-size: 13px; }
 table.datatable { border-collapse: collapse; font-size: 12.5px; min-width: 100%; }
@@ -286,6 +289,18 @@ table.datatable .rownum { color: var(--text-dim); font-size: 11.5px; }
   vertical-align: top; white-space: nowrap; font-size: 11.5px;
 }
 .identify-table td { padding: 3px 0; font-size: 11.5px; word-break: break-word; }
+.identify-join { margin-top: 8px; padding-top: 8px; border-top: 1px solid #dde; }
+.identify-join-head {
+  display: flex; align-items: center; gap: 6px;
+  font-weight: 600; font-size: 11.5px; color: #445; margin-bottom: 6px;
+}
+.identify-join-select {
+  flex: 1; min-width: 0; font-size: 11.5px; padding: 2px 4px;
+  border: 1px solid #ccd; border-radius: 6px; background: #fff; color: #223;
+}
+.identify-join-scroll { max-height: 180px; max-width: 340px; overflow: auto; }
+.identify-join-table td, .identify-join-table th { padding: 3px 8px 3px 0; white-space: nowrap; }
+.identify-info { max-width: 360px; }
 .topbar-search input {
   flex: 1;
   background: none;

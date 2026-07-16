@@ -1,21 +1,29 @@
-"""Import docs/usulan_inpres_20260706114127.xlsx into MySQL (route_gis).
+"""Import/export xlsx usulan Inpres (SITIA) <-> MySQL (route_gis).
 
 Usage (venv aktif):
-    python scripts/import_usulan_inpres.py
+    python scripts/import_usulan_inpres.py                  # import xlsx terbaru di docs/
+    python scripts/import_usulan_inpres.py path/ke/file.xlsx  # import file tertentu
+    python scripts/import_usulan_inpres.py --export         # export DB -> xlsx
+    python scripts/import_usulan_inpres.py --export out.xlsx
 
-Membaca skema dari scripts/schema_usulan_inpres.sql, lalu mengisi tabel
-usulan_inpres + usulan_dokumen dari file xlsx sumber.
+Import bersifat upsert per ID usulan: baris yang sudah ada di tabel di-UPDATE,
+yang belum ada di-INSERT (kolom geom_geojson/geom_fetched_at hasil fetch KML
+tidak disentuh). Skema dibuat dulu dari scripts/schema_usulan_inpres.sql bila
+belum ada. Export menghasilkan xlsx dengan tata letak kolom yang sama dengan
+file sumber SITIA sehingga hasilnya bisa di-import balik.
 """
 
+import argparse
 import datetime
 import os
+import sys
 from pathlib import Path
 
 import openpyxl
 import pymysql
 
 BASE_DIR = Path(__file__).resolve().parent.parent
-XLSX_PATH = BASE_DIR / "docs" / "usulan_inpres_20260706114127.xlsx"
+DOCS_DIR = BASE_DIR / "docs"
 SCHEMA_PATH = Path(__file__).resolve().parent / "schema_usulan_inpres.sql"
 
 DB_HOST = os.environ.get("MYSQL_HOST", "127.0.0.1")
@@ -103,8 +111,42 @@ COLUMN_MAP = {
     "Map Ruas KML dengan Data IJD": "kml_ijd_url",
 }
 
+# Kolom yang baru muncul/terisi mulai tarikan 15 Juli 2026 (jalur verifikasi
+# Kompetensi + kolom prioritisasi). Opsional: diimpor hanya bila ada di file,
+# sehingga tarikan lama (6 Juli, 139 kolom) tetap bisa di-import/-export.
+# Nilai = (kolom tabel, DDL untuk migrasi ALTER TABLE otomatis di run_schema).
+OPTIONAL_COLUMN_MAP = {
+    "Prioritas DPR": ("prioritas_dpr", "SMALLINT UNSIGNED"),
+    "Indikasi Ruas Prioritas PU": ("indikasi_prioritas_pu", "VARCHAR(10)"),
+    # masih kosong di tarikan 15 Juli, tapi jadi komponen 10% Skor Prioritas
+    # Nasional (G9) — otomatis terisi saat tarikan berikutnya diimpor
+    "Indikasi Ruas Prioritas Bappenas": ("indikasi_prioritas_bappenas", "VARCHAR(10)"),
+    "Indikasi Ruas Prioritas Kemenko IPK": ("indikasi_prioritas_kemenko", "VARCHAR(10)"),
+    "Verifikasi Kompetensi Oleh": ("verifikasi_kompetensi_oleh", "VARCHAR(255)"),
+    "Catatan Pembahasan Kompetensi": ("catatan_pembahasan_kompetensi", "TEXT"),
+    "Alasan Tolak/Terima Verifikasi Kompetensi": ("alasan_tolak_terima_kompetensi", "TEXT"),
+    "Dir. Pengampu Verifikasi Kompetensi": ("dir_pengampu_verifikasi_kompetensi", "VARCHAR(100)"),
+    "RC DED Kompetensi": ("rc_ded_kompetensi", "VARCHAR(20)"),
+    "Catatan RC DED Kompetensi": ("catatan_rc_ded_kompetensi", "TEXT"),
+    "RC FS Kompetensi": ("rc_fs_kompetensi", "VARCHAR(20)"),
+    "Catatan RC FS Kompetensi": ("catatan_rc_fs_kompetensi", "TEXT"),
+    "RC Lahan Kompetensi": ("rc_lahan_kompetensi", "VARCHAR(20)"),
+    "Catatan RC Lahan Kompetensi": ("catatan_rc_lahan_kompetensi", "TEXT"),
+    "RC Dokling Kompetensi": ("rc_dokling_kompetensi", "VARCHAR(20)"),
+    "Catatan RC Dokling Kompetensi": ("catatan_rc_dokling_kompetensi", "TEXT"),
+    "RAB Kompetensi": ("rab_kompetensi", "VARCHAR(20)"),
+    "Catatan RAB Kompetensi": ("catatan_rab_kompetensi", "TEXT"),
+    "Jenis RC Dokling Balai": ("jenis_rc_dokling_balai", "VARCHAR(40)"),
+    # SESUAI/TIDAK SESUAI — dipakai _ijd_score_koridor() (parameter D 2026)
+    "Status Koridor Prioritas Balai": ("status_koridor_balai", "VARCHAR(20)"),
+    # KP2B/LP2B dkk — calon sumber sub-parameter A4 (data dukung tematik)
+    "Jenis Data Dukung Tematik (Kompetensi)": ("jenis_data_dukung_tematik_kompetensi", "VARCHAR(60)"),
+    # YA = flag resmi penuntasan — diprioritaskan _ijd_score_penuntasan()
+    "Penuntasan IJD Sebelumnya (Kompetensi)": ("penuntasan_ijd_kompetensi", "VARCHAR(10)"),
+}
+
 INT_COLUMNS = {
-    "prioritas", "prioritas_balai", "prioritas_kompetensi",
+    "prioritas", "prioritas_balai", "prioritas_kompetensi", "prioritas_dpr",
     "alokasi_usulan_pemda", "alokasi_usulan_balai", "alokasi_usulan_kompetensi",
 }
 DATE_COLUMNS = {"tgl_pengusulan", "tgl_surat"}
@@ -178,81 +220,217 @@ def run_schema(conn):
     with conn.cursor() as cur:
         for stmt in statements:
             cur.execute(stmt)
+        # Migrasi kolom opsional (tarikan 15 Juli+) untuk DB yang tabelnya
+        # sudah terlanjur dibuat dari schema lama (MySQL 8 belum mendukung
+        # ADD COLUMN IF NOT EXISTS).
+        cur.execute(
+            "SELECT column_name FROM information_schema.columns "
+            "WHERE table_schema = %s AND table_name = 'usulan_inpres'",
+            (DB_NAME,),
+        )
+        existing_cols = {r[0] for r in cur.fetchall()}
+        for dest_col, ddl in OPTIONAL_COLUMN_MAP.values():
+            if dest_col not in existing_cols:
+                cur.execute(f"ALTER TABLE usulan_inpres ADD COLUMN {dest_col} {ddl}")
     conn.commit()
 
 
-def main():
-    wb = openpyxl.load_workbook(XLSX_PATH, read_only=True, data_only=True)
-    ws = wb["Worksheet"]
-    rows = ws.iter_rows(values_only=True)
-    header = next(rows)
-    header_idx = {name: i for i, name in enumerate(header)}
-
+def connect(select_db=True):
     conn = pymysql.connect(
         host=DB_HOST, port=DB_PORT, user=DB_USER, password=DB_PASS,
         charset="utf8mb4", autocommit=False,
     )
-    try:
+    if select_db:
         with conn.cursor() as cur:
             cur.execute(
                 "CREATE DATABASE IF NOT EXISTS %s CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci"
                 % DB_NAME
             )
         conn.select_db(DB_NAME)
-        run_schema(conn)
+    return conn
 
-        usulan_cols = list(COLUMN_MAP.values())
-        insert_sql = (
-            f"INSERT INTO usulan_inpres ({', '.join(usulan_cols)}) "
-            f"VALUES ({', '.join(['%s'] * len(usulan_cols))}) "
-            f"ON DUPLICATE KEY UPDATE " +
-            ", ".join(f"{c}=VALUES({c})" for c in usulan_cols if c != "id")
-        )
-        doc_insert_sql = (
-            "INSERT INTO usulan_dokumen (usulan_id, jenis_dokumen, url) VALUES (%s, %s, %s) "
-            "ON DUPLICATE KEY UPDATE url=VALUES(url)"
-        )
 
-        usulan_batch = []
-        doc_batch = []
-        total = 0
-        with conn.cursor() as cur:
-            for row in rows:
-                record = {}
-                for src_name, dest_col in COLUMN_MAP.items():
-                    raw = row[header_idx[src_name]]
-                    record[dest_col] = clean_value(dest_col, raw)
-                usulan_batch.append(tuple(record[c] for c in usulan_cols))
+def latest_xlsx():
+    candidates = sorted(p for p in DOCS_DIR.glob("usulan_inpres_*.xlsx")
+                        if "export" not in p.name)
+    if not candidates:
+        sys.exit(f"Tidak ada file usulan_inpres_*.xlsx di {DOCS_DIR}")
+    return candidates[-1]
 
-                usulan_id = record["id"]
-                for src_name, jenis in DOCUMENT_COLUMN_MAP.items():
-                    url = row[header_idx[src_name]]
-                    if url:
-                        doc_batch.append((usulan_id, jenis, url))
 
-                total += 1
-                if len(usulan_batch) >= 500:
-                    cur.executemany(insert_sql, usulan_batch)
-                    usulan_batch.clear()
-                    if doc_batch:
-                        cur.executemany(doc_insert_sql, doc_batch)
-                        doc_batch.clear()
+def upsert_xlsx(source, conn):
+    """Upsert isi workbook xlsx (path atau file-like) ke usulan_inpres +
+    usulan_dokumen lewat koneksi `conn` (database sudah terpilih, skema sudah
+    ada). Return dict statistik. Dipakai CLI ini dan endpoint import di app.py.
 
-            if usulan_batch:
+    Raises ValueError bila kolom wajib tidak ada di file.
+    """
+    wb = openpyxl.load_workbook(source, read_only=True, data_only=True)
+    ws = wb["Worksheet"] if "Worksheet" in wb.sheetnames else wb.active
+    rows = ws.iter_rows(values_only=True)
+    header = next(rows)
+    header_idx = {name: i for i, name in enumerate(header)}
+
+    missing = [c for c in COLUMN_MAP if c not in header_idx]
+    if missing:
+        raise ValueError(f"Kolom wajib tidak ada di file xlsx: {missing}")
+    doc_cols = {s: j for s, j in DOCUMENT_COLUMN_MAP.items() if s in header_idx}
+    # kolom opsional: hanya yang benar-benar ada di file ini
+    active_map = dict(COLUMN_MAP)
+    active_map.update({s: dest for s, (dest, _ddl) in OPTIONAL_COLUMN_MAP.items()
+                       if s in header_idx})
+
+    with conn.cursor() as cur:
+        cur.execute("SELECT id FROM usulan_inpres")
+        existing_ids = {r[0] for r in cur.fetchall()}
+
+    usulan_cols = list(active_map.values())
+    insert_sql = (
+        f"INSERT INTO usulan_inpres ({', '.join(usulan_cols)}) "
+        f"VALUES ({', '.join(['%s'] * len(usulan_cols))}) "
+        f"ON DUPLICATE KEY UPDATE " +
+        ", ".join(f"{c}=VALUES({c})" for c in usulan_cols if c != "id")
+    )
+    doc_insert_sql = (
+        "INSERT INTO usulan_dokumen (usulan_id, jenis_dokumen, url) VALUES (%s, %s, %s) "
+        "ON DUPLICATE KEY UPDATE url=VALUES(url)"
+    )
+
+    usulan_batch, doc_batch = [], []
+    total = inserted = updated = 0
+    with conn.cursor() as cur:
+        for row in rows:
+            if len(row) < len(header):
+                # openpyxl memangkas sel kosong di ujung baris
+                row = row + (None,) * (len(header) - len(row))
+            record = {}
+            for src_name, dest_col in active_map.items():
+                raw = row[header_idx[src_name]]
+                record[dest_col] = clean_value(dest_col, raw)
+            if record["id"] is None:
+                continue
+            usulan_batch.append(tuple(record[c] for c in usulan_cols))
+            if record["id"] in existing_ids:
+                updated += 1
+            else:
+                inserted += 1
+
+            for src_name, jenis in doc_cols.items():
+                url = row[header_idx[src_name]]
+                if url:
+                    doc_batch.append((record["id"], jenis, url))
+
+            total += 1
+            if len(usulan_batch) >= 500:
                 cur.executemany(insert_sql, usulan_batch)
-            if doc_batch:
-                cur.executemany(doc_insert_sql, doc_batch)
+                usulan_batch.clear()
+                if doc_batch:
+                    cur.executemany(doc_insert_sql, doc_batch)
+                    doc_batch.clear()
 
-        conn.commit()
-        print(f"Selesai import {total} baris usulan_inpres.")
+        if usulan_batch:
+            cur.executemany(insert_sql, usulan_batch)
+        if doc_batch:
+            cur.executemany(doc_insert_sql, doc_batch)
 
-        with conn.cursor() as cur:
-            cur.execute("SELECT COUNT(*) FROM usulan_inpres")
-            print("Total usulan_inpres:", cur.fetchone()[0])
-            cur.execute("SELECT COUNT(*) FROM usulan_dokumen")
-            print("Total usulan_dokumen:", cur.fetchone()[0])
+    conn.commit()
+
+    with conn.cursor() as cur:
+        cur.execute("SELECT COUNT(*) FROM usulan_inpres")
+        total_usulan = cur.fetchone()[0]
+        cur.execute("SELECT COUNT(*) FROM usulan_dokumen")
+        total_dokumen = cur.fetchone()[0]
+    return {
+        "total": total, "inserted": inserted, "updated": updated,
+        "total_usulan": total_usulan, "total_dokumen": total_dokumen,
+    }
+
+
+def import_xlsx(xlsx_path):
+    conn = connect()
+    try:
+        run_schema(conn)
+        stats = upsert_xlsx(xlsx_path, conn)
     finally:
         conn.close()
+    print(f"Selesai import {stats['total']} baris dari {xlsx_path.name}: "
+          f"{stats['inserted']} baru diinsert, {stats['updated']} sudah ada di-update.")
+    print("Total usulan_inpres:", stats["total_usulan"])
+    print("Total usulan_dokumen:", stats["total_dokumen"])
+
+
+def export_xlsx(out, conn=None):
+    """Export usulan_inpres (+ URL dokumen) ke xlsx dengan header yang sama
+    dengan file sumber SITIA, sehingga hasilnya bisa di-import balik.
+    `out` boleh path atau file-like (BytesIO). Return jumlah baris."""
+    own_conn = conn is None
+    if own_conn:
+        conn = connect()
+    try:
+        # sertakan kolom opsional (tarikan 15 Juli+) supaya roundtrip
+        # export -> import tidak menghilangkan data — tapi hanya yang sudah
+        # ada di DB (export tidak menjalankan migrasi schema)
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT column_name FROM information_schema.columns "
+                "WHERE table_schema = %s AND table_name = 'usulan_inpres'",
+                (DB_NAME,),
+            )
+            existing_cols = {r[0] for r in cur.fetchall()}
+        full_map = dict(COLUMN_MAP)
+        full_map.update({s: dest for s, (dest, _ddl) in OPTIONAL_COLUMN_MAP.items()
+                         if dest in existing_cols})
+        usulan_cols = list(full_map.values())
+        with conn.cursor() as cur:
+            cur.execute(
+                f"SELECT {', '.join(usulan_cols)} FROM usulan_inpres ORDER BY id"
+            )
+            usulan_rows = cur.fetchall()
+            cur.execute("SELECT usulan_id, jenis_dokumen, url FROM usulan_dokumen")
+            docs = {}
+            for usulan_id, jenis, url in cur.fetchall():
+                docs.setdefault(usulan_id, {})[jenis] = url
+    finally:
+        if own_conn:
+            conn.close()
+
+    doc_headers = list(DOCUMENT_COLUMN_MAP)  # "File ..." sesuai sumber
+    wb = openpyxl.Workbook(write_only=True)
+    ws = wb.create_sheet("Worksheet")
+    ws.append(["No."] + list(full_map) + doc_headers)
+    for no, row in enumerate(usulan_rows, start=1):
+        rec = dict(zip(usulan_cols, row))
+        doc = docs.get(rec["id"], {})
+        ws.append(
+            [no]
+            + [rec[c] for c in usulan_cols]
+            + [doc.get(DOCUMENT_COLUMN_MAP[h]) for h in doc_headers]
+        )
+    wb.save(out)
+    return len(usulan_rows)
+
+
+def main():
+    ap = argparse.ArgumentParser(
+        description="Import (upsert) / export xlsx usulan Inpres <-> MySQL route_gis")
+    ap.add_argument("xlsx", nargs="?", default=None,
+                    help="path file xlsx (import: default file usulan_inpres_*.xlsx "
+                         "terbaru di docs/; export: default docs/usulan_inpres_export_<ts>.xlsx)")
+    ap.add_argument("--export", action="store_true",
+                    help="export isi tabel ke xlsx alih-alih import")
+    args = ap.parse_args()
+
+    if args.export:
+        out = Path(args.xlsx) if args.xlsx else DOCS_DIR / (
+            "usulan_inpres_export_%s.xlsx"
+            % datetime.datetime.now().strftime("%Y%m%d%H%M%S"))
+        n = export_xlsx(out)
+        print(f"Export {n} baris usulan_inpres -> {out}")
+    else:
+        xlsx = Path(args.xlsx) if args.xlsx else latest_xlsx()
+        if not xlsx.exists():
+            sys.exit(f"File tidak ditemukan: {xlsx}")
+        import_xlsx(xlsx)
 
 
 if __name__ == "__main__":

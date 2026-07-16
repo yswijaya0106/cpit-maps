@@ -146,21 +146,30 @@ async function refreshMapLayerKabupaten() {
 
   const chosen = fillComboPanel(
     "mapLayerKabupatenPanel", "mapLayerKabupatenLabel", rows, "kabupaten",
-    (r) => `${r.kabupaten} (${r.layer_count} layer)`, defaultKabupaten
+    (r) => `${r.label || r.kabupaten} (${r.layer_count} layer)`, defaultKabupaten
   );
   state.mapLayers.selectedKabupaten = chosen;
 }
+
+let _mapLayerListRequestId = 0;
 
 async function refreshMapLayerList() {
   const listEl = document.getElementById("mapLayerList");
   const provinsi = state.mapLayers.selectedProvinsi;
   const kabupaten = state.mapLayers.selectedKabupaten;
-  if (!provinsi || !kabupaten) return;
+  if (!provinsi || kabupaten == null) return;
+
+  // Setiap panggilan mendapat id sendiri: kalau user ganti provinsi/kabupaten
+  // lagi sebelum fetch sebelumnya selesai, respons yang basi ini dibuang
+  // alih-alih menimpa daftar layer yang sudah sesuai pilihan terbaru.
+  const requestId = ++_mapLayerListRequestId;
+  listEl.innerHTML = `<div class="maplayer-loading">Memuat daftar layer...</div>`;
 
   try {
     const res = await fetch(`/api/maps/layers?provinsi=${encodeURIComponent(provinsi)}&kabupaten=${encodeURIComponent(kabupaten)}`);
     if (!res.ok) throw new Error(await res.text());
     const layers = await res.json();
+    if (requestId !== _mapLayerListRequestId) return;
     if (!layers.length) {
       listEl.innerHTML = `<div class="maplayer-loading">Belum ada layer (.shp) di folder kabupaten ini</div>`;
       return;
@@ -176,13 +185,14 @@ async function refreshMapLayerList() {
         <input type="checkbox" ${isActive ? "checked" : ""} data-provinsi="${escapeHtml(provinsi)}" data-kabupaten="${escapeHtml(kabupaten)}" data-layer="${escapeHtml(l.layer)}" />
         <span class="maplayer-swatch" style="background:${mapLayerColor(l.layer)}"></span>
         <span class="maplayer-item-label">${escapeHtml(l.label)}</span>
-        <span class="maplayer-item-size">${l.size_mb} MB</span>
+        <span class="maplayer-item-size">${l.size_mb != null ? `${l.size_mb} MB` : ""}</span>
         <input type="range" class="maplayer-opacity" min="0" max="1" step="0.05" value="${opacity}" data-layer="${escapeHtml(l.layer)}" title="Transparansi layer" ${isActive ? "" : "hidden"} />
       `;
       listEl.appendChild(row);
     });
   } catch (err) {
     console.error(err);
+    if (requestId !== _mapLayerListRequestId) return;
     listEl.innerHTML = `<div class="maplayer-loading">Gagal memuat daftar layer</div>`;
   }
 }

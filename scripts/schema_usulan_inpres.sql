@@ -1,10 +1,14 @@
 -- Skema untuk data Usulan Inpres No. 11 Tahun 2025 (Bina Marga SITIA)
--- Sumber: docs/usulan_inpres_20260706114127.xlsx (139 kolom asli).
--- Kolom yang 100% kosong atau nyaris tidak terisi (<15 baris dari 3072) di
--- snapshot ini sengaja tidak dibawa masuk (mis. seluruh jalur "Kompetensi"
--- RC, Bilateral Bappenas/PU, Indikasi Prioritas Kemenko/Bappenas/PU,
--- Diprogramkan) supaya tabel tidak jadi sangat sparse. Tambahkan lagi kalau
--- suatu saat kolom itu mulai terisi di ekspor berikutnya.
+-- Sumber: docs/usulan_inpres_20260706114127.xlsx (139 kolom asli) +
+-- kolom tambahan tarikan 15 Juli 2026 (jalur verifikasi Kompetensi yang
+-- mulai terisi, status koridor balai, penuntasan IJD — lihat
+-- OPTIONAL_COLUMN_MAP di scripts/import_usulan_inpres.py; importer
+-- menambahkannya via ALTER TABLE bila tabel dibuat dari schema lama).
+-- Kolom yang tetap kosong/konstan (Bilateral Bappenas/PU, Verifikasi PFID,
+-- MYP/MYC, Diprogramkan, Indikasi Prioritas Kemenko/Bappenas/Aspirasi)
+-- sengaja tidak dibawa masuk supaya tabel tidak jadi sangat sparse.
+-- Tambahkan lagi kalau suatu saat kolom itu mulai terisi di ekspor
+-- berikutnya.
 
 CREATE DATABASE IF NOT EXISTS route_gis
   CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
@@ -83,6 +87,30 @@ CREATE TABLE IF NOT EXISTS usulan_inpres (
   dir_pengampu_verifikasi_balai      VARCHAR(100),
   prioritas_balai                SMALLINT UNSIGNED,
   prioritas_kompetensi            SMALLINT UNSIGNED,
+
+  -- Jalur verifikasi Kompetensi + prioritisasi (terisi mulai tarikan 15 Juli)
+  prioritas_dpr                 SMALLINT UNSIGNED,
+  indikasi_prioritas_pu           VARCHAR(10),                        -- YA
+  indikasi_prioritas_bappenas      VARCHAR(10),                        -- komponen 10% skor prioritas nasional
+  indikasi_prioritas_kemenko       VARCHAR(10),                        -- komponen 10% skor prioritas nasional
+  verifikasi_kompetensi_oleh       VARCHAR(255),
+  catatan_pembahasan_kompetensi     TEXT,
+  alasan_tolak_terima_kompetensi    TEXT,
+  dir_pengampu_verifikasi_kompetensi VARCHAR(100),
+  rc_ded_kompetensi              VARCHAR(20),
+  catatan_rc_ded_kompetensi        TEXT,
+  rc_fs_kompetensi               VARCHAR(20),
+  catatan_rc_fs_kompetensi         TEXT,
+  rc_lahan_kompetensi             VARCHAR(20),
+  catatan_rc_lahan_kompetensi       TEXT,
+  rc_dokling_kompetensi           VARCHAR(20),
+  catatan_rc_dokling_kompetensi     TEXT,
+  rab_kompetensi                 VARCHAR(20),
+  catatan_rab_kompetensi           TEXT,
+  jenis_rc_dokling_balai           VARCHAR(40),                        -- SPPL / UKL-UPL / DELH-DPLH / TIDAK ADA
+  status_koridor_balai            VARCHAR(20),                        -- SESUAI / TIDAK SESUAI (parameter D 2026)
+  jenis_data_dukung_tematik_kompetensi VARCHAR(60),                    -- KP2B/LP2B dkk (calon A4)
+  penuntasan_ijd_kompetensi        VARCHAR(10),                        -- YA = flag resmi parameter E
 
   -- Readiness criteria (RC) - Pemda vs Balai, SIAP/TIDAK SIAP/TIDAK PERLU
   rc_ded_pemda                 VARCHAR(20),

@@ -331,6 +331,9 @@ async function loadUsulanDetail(id) {
     });
     html += `</div>`;
   }
+  html += `<div class="usulan-ijd-score" id="usulanIjdScore"><div class="adv-loading">Menghitung skor prioritisasi IJD...</div></div>`;
+  html += `<div class="usulan-ijd-score" id="usulanSkorNasional"></div>`;
+  html += `<div class="usulan-ijd-score" id="usulanPenilaianBappenas"></div>`;
   html += `<div class="adv-loading" id="usulanGeomStatus">Memuat lokasi di peta...</div></div>`;
   detailEl.innerHTML = html;
 
@@ -342,7 +345,135 @@ async function loadUsulanDetail(id) {
     });
   });
 
+  loadIjdScore(u.id);
+  loadSkorNasional(u.id);
+  loadPenilaianBappenas(u.id);
   await flyToUsulanGeometry(u);
+}
+
+async function loadPenilaianBappenas(id, generate = false) {
+  const el = document.getElementById("usulanPenilaianBappenas");
+  if (!el) return;
+  try {
+    if (generate) {
+      el.innerHTML = `<div class="adv-loading"><i class="bi bi-hourglass-split"></i> Menyusun draf penilaian dengan AI...</div>`;
+    }
+    const res = await fetch(`/api/usulan-inpres/${id}/penilaian-bappenas`,
+      generate ? { method: "POST" } : undefined);
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || "Gagal");
+    el.innerHTML = renderPenilaianBappenasHtml(id, data);
+  } catch (err) {
+    console.error(err);
+    el.innerHTML = `<div class="ijd-score-head">
+        <span class="ijd-score-title"><i class="bi bi-stars"></i> Draf Penilaian Bappenas (AI)</span>
+      </div>
+      <div class="adv-error">${escapeHtml(String(err.message || err))}</div>
+      <button type="button" class="btn btn-ghost btn-sm" onclick="loadPenilaianBappenas(${id}, true)">Coba lagi</button>`;
+  }
+}
+
+function renderPenilaianBappenasHtml(id, data) {
+  let html = `<div class="ijd-score-head">
+    <span class="ijd-score-title"><i class="bi bi-stars"></i> Draf Penilaian Bappenas (AI)</span>
+  </div>`;
+  if (!data.tersedia) {
+    html += `<p class="hint">Belum ada draf penilaian untuk usulan ini.</p>
+      <button type="button" class="btn btn-ghost btn-sm" onclick="loadPenilaianBappenas(${id}, true)">
+        <i class="bi bi-stars"></i> Buat draf penilaian (AI)</button>`;
+    return html;
+  }
+  const aspek = (label, poin, narasi) => `
+    <div class="ijd-bar-row">
+      <div class="ijd-bar-label">${escapeHtml(label)}
+        <span class="usulan-badge usulan-badge-ok ijd-badge">poin ${poin} / 2</span></div>
+    </div>
+    <p class="usulan-penilaian-narasi">${escapeHtml(narasi || "-")}</p>`;
+  html += aspek("A. Prioritas & Nilai Strategis", data.aspek_a_poin, data.aspek_a_narasi);
+  html += aspek("B. Daya Ungkit Ekonomi & Sektoral", data.aspek_b_poin, data.aspek_b_narasi);
+  html += `<div class="ijd-bar-row"><div class="ijd-bar-label">Kesimpulan
+      <span class="usulan-badge usulan-badge-ok ijd-badge">total ${data.total_poin} / 4</span></div></div>
+    <p class="usulan-penilaian-narasi">${escapeHtml(data.kesimpulan || "-")}</p>
+    <p class="hint ijd-score-note">Draf dihasilkan AI (${escapeHtml(data.provider || "?")} · ${escapeHtml(data.model || "?")},
+      ${escapeHtml(String(data.generated_at || ""))}) mengikuti format sheet "Output Penilaian" —
+      BUKAN penilaian resmi Bappenas.</p>
+    <button type="button" class="btn btn-ghost btn-sm" onclick="loadPenilaianBappenas(${id}, true)">
+      <i class="bi bi-arrow-clockwise"></i> Generate ulang</button>`;
+  return html;
+}
+
+async function loadSkorNasional(id) {
+  const el = document.getElementById("usulanSkorNasional");
+  if (!el) return;
+  try {
+    const res = await fetch(`/api/usulan-inpres/${id}/skor-prioritas-nasional`);
+    if (!res.ok) throw new Error(await res.text());
+    const data = await res.json();
+    const totalLabel = data.skor_total != null
+      ? `${data.skor_total.toFixed(1)} · peringkat ${data.peringkat_nasional} dari ${data.jumlah_ternilai} usulan ternilai`
+      : "Belum dapat dihitung — usulan belum punya urutan prioritas kompetensi.";
+    let html = `<div class="ijd-score-head">
+      <span class="ijd-score-title"><i class="bi bi-trophy"></i> Skor Prioritas Nasional (perkiraan)</span>
+      <span class="ijd-score-total">${escapeHtml(totalLabel)}</span>
+    </div>`;
+    data.komponen.forEach((k) => {
+      const ada = k.nilai != null;
+      const pct = ada ? Math.max(0, Math.min(100, Math.round(k.nilai))) : 0;
+      html += `<div class="ijd-bar-row" title="${escapeHtml(k.keterangan)}">
+        <div class="ijd-bar-label">${escapeHtml(k.kode)}. ${escapeHtml(k.label)} <span class="hint">(${k.bobot_pct}%)</span></div>
+        <div class="ijd-bar-value">
+          ${ada ? `<div class="adv-bar-track"><div class="adv-bar-fill" style="width:${pct}%"></div></div>` : ""}
+          <span class="usulan-badge ${ada ? "usulan-badge-ok" : "usulan-badge-warn"} ijd-badge">${ada ? k.nilai.toFixed(0) : "Belum ada"}</span>
+        </div>
+      </div>`;
+    });
+    html += `<p class="hint ijd-score-note">${escapeHtml(data.catatan)}</p>`;
+    el.innerHTML = html;
+  } catch (err) {
+    console.error(err);
+    el.innerHTML = `<div class="adv-error">Gagal menghitung skor prioritas nasional.</div>`;
+  }
+}
+
+async function loadIjdScore(id) {
+  const el = document.getElementById("usulanIjdScore");
+  if (!el) return;
+  try {
+    const res = await fetch(`/api/usulan-inpres/${id}/ijd-score`);
+    if (!res.ok) throw new Error(await res.text());
+    const data = await res.json();
+    el.innerHTML = renderIjdScoreHtml(data);
+  } catch (err) {
+    console.error(err);
+    el.innerHTML = `<div class="adv-error">Gagal menghitung skor prioritisasi IJD.</div>`;
+  }
+}
+
+function renderIjdScoreHtml(data) {
+  const totalLabel = data.skor_ternormalisasi_100 != null
+    ? `${data.skor_ternormalisasi_100.toFixed(1)} / 100 · dari ${data.bobot_tersedia.toFixed(0)} dari 100 bobot parameter yang datanya tersedia`
+    : "Tidak dapat dihitung — belum ada parameter yang datanya tersedia.";
+
+  let html = `<div class="ijd-score-head">
+    <span class="ijd-score-title"><i class="bi bi-bar-chart-line"></i> Skor Prioritisasi Teknokratik IJD (perkiraan, kaidah ${escapeHtml(String(data.tahun_berlaku))})</span>
+    <span class="ijd-score-total">${escapeHtml(totalLabel)}</span>
+  </div>`;
+
+  data.komponen.forEach((k) => {
+    const pct = k.tersedia ? Math.max(0, Math.min(100, Math.round(k.nilai))) : 0;
+    const badgeClass = k.tersedia ? "usulan-badge-ok" : "usulan-badge-warn";
+    const badgeText = k.tersedia ? k.nilai.toFixed(0) : "Belum tersedia";
+    html += `<div class="ijd-bar-row" title="${escapeHtml(k.keterangan)}">
+      <div class="ijd-bar-label">${escapeHtml(k.kode)}. ${escapeHtml(k.label)} <span class="hint">(bobot ${k.bobot_maks})</span></div>
+      <div class="ijd-bar-value">
+        ${k.tersedia ? `<div class="adv-bar-track"><div class="adv-bar-fill" style="width:${pct}%"></div></div>` : ""}
+        <span class="usulan-badge ${badgeClass} ijd-badge">${escapeHtml(badgeText)}</span>
+      </div>
+    </div>`;
+  });
+
+  html += `<p class="hint ijd-score-note">${escapeHtml(data.catatan)}</p>`;
+  return html;
 }
 
 async function flyToUsulanGeometry(u) {
@@ -401,10 +532,44 @@ async function flyToUsulanGeometry(u) {
   }
 }
 
+async function importUsulanXlsx(file) {
+  const btn = document.getElementById("btnUsulanImport");
+  btn.disabled = true;
+  btn.innerHTML = '<i class="bi bi-hourglass-split"></i> Mengimpor...';
+  try {
+    const form = new FormData();
+    form.append("file", file);
+    const res = await fetch("/api/usulan-inpres/import", { method: "POST", body: form });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || "Import gagal");
+    toast(`Import ${data.filename}: ${data.inserted} baru, ${data.updated} di-update (total ${data.total_usulan} usulan).`);
+    loadUsulanProvinsiOptions();
+    loadUsulanBrowseList(true);
+  } catch (err) {
+    toast(`Import gagal: ${err.message}`, true);
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = '<i class="bi bi-upload"></i> Import XLSX';
+  }
+}
+
+function bindUsulanImportExport() {
+  const fileInput = document.getElementById("usulanImportFile");
+  document.getElementById("btnUsulanImport").addEventListener("click", () => fileInput.click());
+  fileInput.addEventListener("change", () => {
+    if (fileInput.files.length) importUsulanXlsx(fileInput.files[0]);
+    fileInput.value = ""; // agar file yang sama bisa dipilih ulang
+  });
+  document.getElementById("btnUsulanExport").addEventListener("click", () => {
+    window.location.href = "/api/usulan-inpres/export/xlsx";
+  });
+}
+
 function bindUsulanBrowse() {
   loadUsulanProvinsiOptions();
   loadUsulanBrowseList(true);
   bindUsulanProvinsiCombo();
+  bindUsulanImportExport();
 
   let searchTimer = null;
   document.getElementById("usulanSearchInput").addEventListener("input", (e) => {

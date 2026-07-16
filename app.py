@@ -1,8 +1,10 @@
 import io
 import json
 import re
+import sys
 import zipfile
 from contextlib import contextmanager
+from datetime import datetime
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import List, Optional
@@ -13,7 +15,7 @@ import requests
 from dotenv import load_dotenv
 import os
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.encoders import jsonable_encoder
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
@@ -23,13 +25,20 @@ from pydantic import BaseModel
 import geopandas as gpd
 from pyproj import Geod
 import shapely.wkt
-from shapely.geometry import LineString, Point
+from shapely.geometry import LineString, Point, mapping
 from shapely.strtree import STRtree
 
 load_dotenv()
 
 BASE_DIR = Path(__file__).resolve().parent
 STATIC_DIR = BASE_DIR / "static"
+
+# Logika import/export xlsx usulan Inpres (COLUMN_MAP, upsert, export) tinggal
+# satu di scripts/import_usulan_inpres.py — dipakai bersama oleh CLI dan
+# endpoint /api/usulan-inpres/import|export di bawah.
+sys.path.insert(0, str(BASE_DIR / "scripts"))
+import import_usulan_inpres as usulan_xlsx  # noqa: E402
+import import_penduduk_kecamatan as penduduk_xlsx  # noqa: E402
 
 app = FastAPI(title="Route to SHP Converter")
 
@@ -508,8 +517,942 @@ def usulan_inpres_detail(usulan_id: int):
     return row
 
 
+@app.post("/api/usulan-inpres/import")
+def usulan_inpres_import(file: UploadFile = File(...)):
+    """Upsert xlsx usulan (format SITIA) ke database: ID yang sudah ada
+    di-update, yang belum ada di-insert. Kolom geometri hasil fetch KML
+    tidak disentuh."""
+    if not (file.filename or "").lower().endswith(".xlsx"):
+        raise HTTPException(400, "File harus berformat .xlsx")
+    conn = usulan_xlsx.connect()
+    try:
+        usulan_xlsx.run_schema(conn)
+        try:
+            stats = usulan_xlsx.upsert_xlsx(file.file, conn)
+        except ValueError as exc:  # kolom wajib tidak ada
+            raise HTTPException(400, str(exc))
+    finally:
+        conn.close()
+    return {"filename": file.filename, **stats}
+
+
+@app.get("/api/usulan-inpres/export/xlsx")
+def usulan_inpres_export():
+    """Unduh seluruh isi usulan_inpres sebagai xlsx dengan tata letak kolom
+    yang sama dengan file sumber SITIA (bisa di-import balik)."""
+    buf = io.BytesIO()
+    usulan_xlsx.export_xlsx(buf)
+    buf.seek(0)
+    fname = f"usulan_inpres_export_{datetime.now():%Y%m%d%H%M%S}.xlsx"
+    return StreamingResponse(
+        buf,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f"attachment; filename={fname}"},
+    )
+
+
+@app.post("/api/penduduk-kecamatan/import")
+def penduduk_kecamatan_import(file: UploadFile = File(...)):
+    """Upsert xlsx master ID wilayah + jumlah penduduk per kecamatan (format
+    "3_ID dan Jumlah Penduduk Indonesia") ke tabel penduduk_kecamatan."""
+    if not (file.filename or "").lower().endswith(".xlsx"):
+        raise HTTPException(400, "File harus berformat .xlsx")
+    conn = penduduk_xlsx.connect()
+    try:
+        penduduk_xlsx.run_schema(conn)
+        try:
+            stats = penduduk_xlsx.upsert_xlsx(file.file, conn)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc))
+    finally:
+        conn.close()
+    return {"filename": file.filename, **stats}
+
+
+# --- Penampil data tabel database (topbar "Data") ---
+# Whitelist nama tabel -> label tampilan; menghindari akses tabel arbitrer.
+DATA_TABLES = {
+    "usulan_inpres": "Usulan Inpres (SITIA)",
+    "usulan_dokumen": "Dokumen Usulan",
+    "penduduk_kecamatan": "Penduduk per Kecamatan (Nasional 2025)",
+    "bps_kecamatan_demografi": "Demografi Kecamatan (Dalam Angka)",
+    "bps_kabupaten_padi": "Padi per Kab/Kota (Dalam Angka)",
+    "bps_kabupaten_kendaraan": "Kendaraan per Kab/Kota (Dalam Angka)",
+    "si_panjang_jalan_provinsi": "Panjang Jalan per Provinsi (SI 2026)",
+    "si_kendaraan_provinsi": "Kendaraan per Provinsi (SI 2026)",
+    "si_lahan_sawah_provinsi": "Lahan Baku Sawah per Provinsi (SI 2026)",
+    "ijd_scoring_rules": "Kaidah Skoring IJD",
+    "dpp_ijd_2025": "DPP IJD TA 2025 (BA + DPP)",
+    "wilayah_mapping": "Pemetaan Wilayah SITIA ↔ Kode BPS",
+    "kecamatan_data_turunan": "Data Turunan Kecamatan (C.A1/C.A3)",
+    "penilaian_bappenas_ai": "Draf Penilaian Bappenas (AI)",
+}
+# kolom yang tidak ditampilkan (payload besar)
+DATA_TABLE_SKIP_COLS = {"geom_geojson"}
+
+
+@app.get("/api/data/tables")
+def data_tables():
+    out = []
+    with db_cursor() as cur:
+        for name, label in DATA_TABLES.items():
+            try:
+                cur.execute(f"SELECT COUNT(*) AS n FROM `{name}`")
+                total = cur.fetchone()["n"]
+            except pymysql.err.ProgrammingError:
+                continue  # tabel belum dibuat — sembunyikan dari daftar
+            out.append({"name": name, "label": label, "total": total})
+    return out
+
+
+@app.get("/api/data/{table}")
+def data_table_rows(table: str, limit: int = 50, offset: int = 0):
+    if table not in DATA_TABLES:
+        raise HTTPException(404, "Tabel tidak dikenal")
+    limit = max(1, min(limit, 200))
+    offset = max(0, offset)
+    with db_cursor() as cur:
+        cur.execute(f"SHOW COLUMNS FROM `{table}`")
+        columns = [c["Field"] for c in cur.fetchall()
+                   if c["Field"] not in DATA_TABLE_SKIP_COLS]
+        col_sql = ", ".join(f"`{c}`" for c in columns)
+        cur.execute(f"SELECT COUNT(*) AS n FROM `{table}`")
+        total = cur.fetchone()["n"]
+        cur.execute(
+            f"SELECT {col_sql} FROM `{table}` ORDER BY 1 LIMIT %s OFFSET %s",
+            (limit, offset),
+        )
+        rows = []
+        for r in cur.fetchall():
+            row = []
+            for c in columns:
+                v = r[c]
+                if isinstance(v, str) and len(v) > 200:
+                    v = v[:200] + "…"
+                row.append(v)
+            rows.append(row)
+    return jsonable_encoder({
+        "table": table, "label": DATA_TABLES[table], "columns": columns,
+        "rows": rows, "total": total, "limit": limit, "offset": offset,
+    })
+
+
+@app.get("/api/penduduk-kecamatan/export/xlsx")
+def penduduk_kecamatan_export():
+    """Unduh master penduduk per kecamatan sebagai xlsx (bisa di-import balik)."""
+    buf = io.BytesIO()
+    penduduk_xlsx.export_xlsx(buf)
+    buf.seek(0)
+    fname = f"penduduk_kecamatan_export_{datetime.now():%Y%m%d%H%M%S}.xlsx"
+    return StreamingResponse(
+        buf,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f"attachment; filename={fname}"},
+    )
+
+
+# --- Skoring "Prioritisasi Teknokratik" IJD (Inpres Jalan Daerah No. 11/2025) ---
+# Kaidah nilai/bobot per parameter (Tabel 1, 3, 6, A1/A2) disimpan di tabel
+# ijd_scoring_rules (lihat scripts/schema_ijd_scoring.sql) supaya bisa
+# disesuaikan tanpa redeploy saat kebijakan IJD berubah tiap tahun anggaran.
+# Hanya parameter A (tematik, sub A1/A2 saja), B (kemantapan), D (koridor,
+# pendekatan), dan F (kelengkapan RC; hanya kaidah 2025 — dihapus dari
+# penilaian 2026) yang punya sumber data di tabel usulan_inpres — C
+# (Kemanfaatan) dan E (Penuntasan IJD sebelumnya) dilaporkan "belum tersedia"
+# karena sumber datanya (BPS/LHR untuk C, pencocokan DPP IJD 2025 untuk E)
+# belum diimpor ke aplikasi ini. Bobot maksimal parameter pending berbeda per
+# tahun kaidah (Tabel 1 dokumen 14072026: C naik 20 -> 25).
+IJD_PENDING_PARAMETERS = {
+    "C": {
+        "parameter_label": "Kemanfaatan (kepadatan penduduk, produktivitas lahan, LHR)",
+        "bobot_maks_per_tahun": {2025: 20, 2026: 25},
+        "alasan": "Belum ada sumber data kepadatan penduduk per kecamatan, produktivitas lahan, dan volume lalu lintas (LHR) di aplikasi ini.",
+    },
+    "E": {
+        # Terpakai hanya untuk tahun kaidah tanpa rules E di DB (2025) —
+        # kaidah 2026 menilai E lewat _ijd_score_penuntasan().
+        "parameter_label": "Kegiatan IJD Sebelumnya (Penuntasan)",
+        "bobot_maks_per_tahun": {2025: 10, 2026: 10},
+        "alasan": "Skoring penuntasan hanya diimplementasikan pada kaidah 2026 (pencocokan DPP IJD TA 2025).",
+    },
+}
+
+# (label komponen, kolom deklarasi Pemda, kolom hasil verifikasi Balai)
+_RC_FIELD_MAP = [
+    ("DED", "rc_ded_pemda", "rc_ded_balai"),
+    ("RAB", "rab_pemda", "rab_balai"),
+    ("DOKLING", "rc_dokling_pemda", "rc_dokling_balai"),
+    ("LAHAN", "rc_lahan_pemda", "rc_lahan_balai"),
+]
+
+
+def _load_ijd_rules(tahun: int) -> dict:
+    with db_cursor() as cur:
+        cur.execute(
+            "SELECT parameter_kode, parameter_label, bobot_maks, sub_kode, kondisi_label, nilai "
+            "FROM ijd_scoring_rules WHERE tahun_berlaku = %s",
+            (tahun,),
+        )
+        rows = cur.fetchall()
+    rules: dict = {}
+    for r in rows:
+        p = rules.setdefault(r["parameter_kode"], {"label": r["parameter_label"], "bobot_maks": float(r["bobot_maks"]), "subs": {}})
+        p["subs"][r["sub_kode"]] = {"label": r["kondisi_label"], "nilai": float(r["nilai"])}
+    return rules
+
+
+def _ijd_score_tematik(row: dict, rules: dict) -> dict:
+    rule = rules.get("A")
+    if not rule:
+        return {"tersedia": False, "keterangan": "Kaidah tematik belum diset di database."}
+    tematik = (row.get("tematik_kawasan_pemda") or "").strip()
+    sub = rule["subs"].get(tematik)
+    if not sub:
+        keterangan = (
+            f"Kategori tematik '{tematik}' tidak dikenali kaidah." if tematik
+            else "Usulan tidak mencantumkan tematik kawasan."
+        )
+        return {"tersedia": False, "keterangan": keterangan}
+    return {
+        "tersedia": True,
+        "nilai": sub["nilai"],
+        "keterangan": (
+            f"{sub['label']} — hanya mencakup sub-parameter tematik utama (A1/A2); "
+            "tematik tambahan & data dukung (A3/A4) belum tersedia."
+        ),
+    }
+
+
+def _ijd_score_kemantapan(row: dict, rules: dict) -> dict:
+    rule = rules.get("B")
+    if not rule:
+        return {"tersedia": False, "keterangan": "Kaidah kemantapan belum diset di database."}
+    if "pembangunan" in (row.get("jenis_penanganan") or "").lower():
+        sub = rule["subs"]["PEMBANGUNAN"]
+        return {"tersedia": True, "nilai": sub["nilai"], "keterangan": sub["label"]}
+
+    baik = float(row.get("kondisi_baik_km") or 0)
+    sedang = float(row.get("kondisi_sedang_km") or 0)
+    ringan = float(row.get("kondisi_ringan_km") or 0)
+    berat = float(row.get("kondisi_berat_km") or 0)
+    total = baik + sedang + ringan + berat
+    if total <= 0:
+        return {"tersedia": False, "keterangan": "Data kondisi ruas (baik/sedang/ringan/berat) belum diisi."}
+
+    pct_mantap = (baik + sedang) / total * 100
+    sub = rule["subs"]["TIDAK_MANTAP" if pct_mantap < 60 else "MANTAP"]
+    return {
+        "tersedia": True,
+        "nilai": sub["nilai"],
+        "keterangan": f"{sub['label']} (kemantapan eksisting {pct_mantap:.1f}%)",
+    }
+
+
+def _ijd_score_koridor(row: dict, rules: dict) -> dict:
+    rule = rules.get("D")
+    if not rule:
+        return {"tersedia": False, "keterangan": "Kaidah koridor belum diset di database."}
+    # Hasil verifikasi Balai (kolom Status Koridor Prioritas Balai, terisi
+    # mulai tarikan 15 Juli) diprioritaskan; usulan yang belum dinilai Balai
+    # jatuh ke proksi kode_koridor terisi/kosong.
+    status_balai = (row.get("status_koridor_balai") or "").strip().upper()
+    if status_balai == "SESUAI":
+        sub, sumber = rule["subs"]["TERIDENTIFIKASI"], "verifikasi Balai"
+    elif status_balai:
+        sub = rule["subs"].get("LAINNYA_BALAI") or rule["subs"]["LAINNYA"]
+        sumber = "verifikasi Balai"
+    elif (row.get("kode_koridor") or "").strip():
+        sub, sumber = rule["subs"]["TERIDENTIFIKASI"], "perkiraan dari kode koridor"
+    else:
+        sub, sumber = rule["subs"]["LAINNYA"], "perkiraan dari kode koridor"
+    return {
+        "tersedia": True,
+        "nilai": sub["nilai"],
+        "keterangan": f"{sub['label']} ({sumber}).",
+    }
+
+
+def _ijd_score_rc(row: dict, rules: dict) -> dict:
+    rule = rules.get("F")
+    if not rule:
+        return {"tersedia": False, "keterangan": "Kaidah RC belum diset di database."}
+
+    nilai_list, detail = [], []
+    for label, pemda_col, balai_col in _RC_FIELD_MAP:
+        status = row.get(balai_col) or row.get(pemda_col)
+        if not status:
+            detail.append(f"{label}: belum diisi")
+            continue
+        sumber = "Balai" if row.get(balai_col) else "Pemda"
+        sub_key = f"{label}_{status.strip().upper().replace(' ', '_')}"
+        sub = rule["subs"].get(sub_key)
+        if not sub:
+            detail.append(f"{label}: status '{status}' tidak dikenali kaidah")
+            continue
+        nilai_list.append(sub["nilai"])
+        detail.append(f"{label}: {status} ({sumber}) → {sub['nilai']:.0f}")
+
+    if not nilai_list:
+        return {"tersedia": False, "keterangan": "Belum ada status RC (DED/RAB/Dokling/Lahan) yang terisi."}
+
+    nilai = sum(nilai_list) / len(nilai_list)
+    return {
+        "tersedia": True,
+        "nilai": round(nilai, 1),
+        "keterangan": "; ".join(detail) + f" — rata-rata dari {len(nilai_list)}/4 komponen RC yang terisi.",
+    }
+
+
+def _ijd_score_kemanfaatan(row: dict, rules: dict) -> dict:
+    """Parameter C kaidah 2026 — baru sub A1 (kepadatan penduduk kecamatan,
+    bobot internal 35%; nilai rules sudah tertimbang). Butuh relasi
+    usulan_inpres.kode_kecamatan (interim manual, menunggu SHP batas
+    kecamatan) dan kepadatan di kecamatan_data_turunan (dari buku Dalam
+    Angka di dalam_angka/). Sub A2 produktivitas & A3 lalu lintas menunggu
+    data — lihat scripts/schema_ijd_scoring_2026.sql."""
+    rule = rules.get("C")
+    if not rule:
+        return {"tersedia": False, "keterangan": "Kaidah kemanfaatan belum diset di database."}
+    kode_kec = row.get("kode_kecamatan")
+    if not kode_kec:
+        return {
+            "tersedia": False,
+            "keterangan": (
+                "Usulan belum dihubungkan ke kecamatan (kolom kode_kecamatan — "
+                "interim manual, spatial-join menunggu SHP batas kecamatan)."
+            ),
+        }
+    with db_cursor() as cur:
+        cur.execute(
+            "SELECT kecamatan, kepadatan_per_km2 FROM kecamatan_data_turunan "
+            "WHERE kode_kecamatan = %s ORDER BY tahun DESC LIMIT 1",
+            (kode_kec,),
+        )
+        kec = cur.fetchone()
+    if not kec:
+        return {"tersedia": False, "keterangan": f"Kode kecamatan {kode_kec} tidak dikenal di master."}
+    if kec["kepadatan_per_km2"] is None:
+        return {
+            "tersedia": False,
+            "keterangan": (
+                f"Kepadatan penduduk Kec. {kec['kecamatan']} belum tersedia — "
+                "buku Dalam Angka provinsi ybs. belum diimpor (folder dalam_angka/)."
+            ),
+        }
+    kepadatan = float(kec["kepadatan_per_km2"])
+    if kepadatan > 1000:
+        sub_kode = "A1_GT1000"
+    elif kepadatan >= 500:
+        sub_kode = "A1_500_1000"
+    elif kepadatan >= 100:
+        sub_kode = "A1_100_500"
+    else:
+        sub_kode = "A1_LT100"
+    sub = rule["subs"][sub_kode]
+    return {
+        "tersedia": True,
+        "nilai": sub["nilai"],
+        "keterangan": (
+            f"Kec. {kec['kecamatan']}: {sub['label']} (kepadatan {kepadatan:,.0f} jiwa/km2) — "
+            "hanya sub A1 kepadatan; produktivitas (A2) & lalu lintas (A3) belum tersedia."
+        ),
+    }
+
+
+def _ijd_score_penuntasan(row: dict, rules: dict) -> dict:
+    """Parameter E kaidah 2026: lanjutan/penuntasan IJD TA 2025 vs usulan baru.
+    Flag usulan_inpres.lanjutan_ijd_2025 diisi scripts/import_dpp_ijd_2025.py
+    (pencocokan nama ruas + wilayah terhadap tabel dpp_ijd_2025); NULL berarti
+    pencocokan belum pernah dijalankan."""
+    rule = rules.get("E")
+    if not rule:
+        return {"tersedia": False, "keterangan": "Kaidah penuntasan belum diset di database."}
+    # Flag resmi hasil verifikasi kompetensi (kolom Penuntasan IJD Sebelumnya,
+    # terisi mulai tarikan 15 Juli) diprioritaskan di atas hasil pencocokan
+    # nama ruas kita sendiri.
+    if (row.get("penuntasan_ijd_kompetensi") or "").strip().upper() == "YA":
+        sub = rule["subs"]["LANJUTAN"]
+        return {
+            "tersedia": True,
+            "nilai": sub["nilai"],
+            "keterangan": sub["label"] + " (flag resmi verifikasi kompetensi SITIA).",
+        }
+    flag = row.get("lanjutan_ijd_2025")
+    if flag is None:
+        return {
+            "tersedia": False,
+            "keterangan": "Pencocokan DPP IJD 2025 belum dijalankan (scripts/import_dpp_ijd_2025.py).",
+        }
+    sub = rule["subs"]["LANJUTAN" if flag else "BARU"]
+    return {
+        "tersedia": True,
+        "nilai": sub["nilai"],
+        "keterangan": sub["label"] + " (pencocokan nama ruas + wilayah terhadap DPP IJD TA 2025, bukan penetapan resmi).",
+    }
+
+
+_IJD_SCORERS = {
+    "A": _ijd_score_tematik, "B": _ijd_score_kemantapan, "C": _ijd_score_kemanfaatan,
+    "D": _ijd_score_koridor, "E": _ijd_score_penuntasan, "F": _ijd_score_rc,
+}
+
+
+def _compute_ijd_score(row: dict, tahun: int = 2026) -> dict:
+    rules = _load_ijd_rules(tahun)
+
+    komponen = []
+    skor_tertimbang = 0.0
+    bobot_tersedia = 0.0
+
+    # Daftar parameter mengikuti kaidah tahun terpilih: gabungan kode yang
+    # punya rules di DB dan yang masih pending — F ada di kaidah 2025 tapi
+    # dihapus dari penilaian 2026, jadi tidak boleh muncul (bahkan sebagai
+    # "belum tersedia") saat tahun=2026.
+    for kode in sorted(set(rules) | set(IJD_PENDING_PARAMETERS)):
+        if kode in rules and kode in _IJD_SCORERS:
+            rule = rules.get(kode, {})
+            hasil = _IJD_SCORERS[kode](row, rules)
+            bobot_maks = rule.get("bobot_maks", 0)
+            entry = {
+                "kode": kode,
+                "label": rule.get("label", kode),
+                "bobot_maks": bobot_maks,
+                "tersedia": hasil["tersedia"],
+                "keterangan": hasil["keterangan"],
+            }
+            if hasil["tersedia"]:
+                kontribusi = hasil["nilai"] / 100 * bobot_maks
+                entry["nilai"] = hasil["nilai"]
+                entry["kontribusi"] = round(kontribusi, 2)
+                skor_tertimbang += kontribusi
+                bobot_tersedia += bobot_maks
+            komponen.append(entry)
+        else:
+            pending = IJD_PENDING_PARAMETERS.get(kode, {})
+            bobot_maks = rules.get(kode, {}).get("bobot_maks") or \
+                pending.get("bobot_maks_per_tahun", {}).get(tahun, 0)
+            komponen.append({
+                "kode": kode,
+                "label": pending.get("parameter_label") or rules.get(kode, {}).get("label", kode),
+                "bobot_maks": bobot_maks,
+                "tersedia": False,
+                "keterangan": pending.get("alasan", "Parameter belum diimplementasikan."),
+            })
+
+    skor_ternormalisasi = round(skor_tertimbang / bobot_tersedia * 100, 1) if bobot_tersedia else None
+
+    return {
+        "tahun_berlaku": tahun,
+        "komponen": komponen,
+        "skor_tertimbang": round(skor_tertimbang, 2),
+        "bobot_tersedia": bobot_tersedia,
+        "skor_ternormalisasi_100": skor_ternormalisasi,
+        "catatan": (
+            "Skor 'Prioritisasi Teknokratik' perkiraan berdasarkan Tabel 1 dokumen Penentuan Parameter "
+            f"Penilaian IJD No. 11/2025 (kaidah tahun {tahun}). skor_tertimbang dihitung hanya dari parameter yang datanya "
+            f"tersedia (total bobot tersedia: {bobot_tersedia:.0f} dari 100); skor_ternormalisasi_100 "
+            "menyetarakannya ke skala 0-100 seolah hanya parameter tersedia yang dinilai. Bukan skor "
+            "resmi Bina Marga/Bappenas."
+        ),
+    }
+
+
+@app.get("/api/usulan-inpres/{usulan_id}/ijd-score")
+def usulan_inpres_ijd_score(usulan_id: int, tahun: int = 2026):
+    with db_cursor() as cur:
+        cur.execute("SELECT * FROM usulan_inpres WHERE id = %s", (usulan_id,))
+        row = cur.fetchone()
+    if not row:
+        raise HTTPException(404, "Usulan tidak ditemukan")
+    return _compute_ijd_score(row, tahun)
+
+
+# --- Skor Prioritas Nasional (dokumen 14072026 bagian C: 70% teknokratis +
+# 10% Kementerian PU + 10% Bappenas + 10% Kemenko Infra) ---
+
+_SPN_FIELDS = (
+    "id, nama_kegiatan, nama_ruas, provinsi, kabupaten_kota, "
+    "prioritas_kompetensi, prioritas_balai, indikasi_prioritas_bappenas, "
+    "indikasi_prioritas_kemenko, alokasi_usulan_kompetensi, alokasi_usulan_pemda"
+)
+
+
+def _skor_prioritas_nasional(row: dict) -> dict:
+    """Skor kuantitatif per usulan. Hanya usulan yang sudah punya urutan
+    prioritas kompetensi (lolos verifikasi) yang bisa dihitung — komponen
+    teknokratis 70% adalah basisnya."""
+    pk = row.get("prioritas_kompetensi")
+    pb = row.get("prioritas_balai")
+    bappenas = (row.get("indikasi_prioritas_bappenas") or "").strip().upper() == "YA"
+    kemenko = (row.get("indikasi_prioritas_kemenko") or "").strip().upper() == "YA"
+
+    skor_kompetensi = max(101 - int(pk), 1) if pk is not None else None
+    skor_pu = 100 if pb == 1 else (50 if pb is not None else 0)
+
+    komponen = [
+        {
+            "kode": "A", "label": "Prioritisasi Teknokratis", "bobot_pct": 70,
+            "nilai": skor_kompetensi,
+            "keterangan": (
+                f"101 − urutan prioritas kompetensi ({pk}), minimal 1." if pk is not None
+                else "Belum ada urutan prioritas kompetensi (usulan belum selesai dinilai)."
+            ),
+        },
+        {
+            "kode": "B", "label": "Prioritisasi Kementerian PU", "bobot_pct": 10,
+            "nilai": skor_pu,
+            "keterangan": (
+                f"Prioritas Balai {pb} ({'peringkat 1 = 100' if pb == 1 else 'peringkat 2+ = 50'})."
+                if pb is not None else "Belum ada urutan prioritas Balai — dinilai 0."
+            ),
+        },
+        {
+            "kode": "C", "label": "Indikasi Prioritas Bappenas", "bobot_pct": 10,
+            "nilai": 100 if bappenas else 0,
+            "keterangan": (
+                "Ditandai prioritas Bappenas." if bappenas else
+                "Belum/tidak ditandai prioritas Bappenas (kolom indikasi SITIA masih kosong per tarikan 15 Juli)."
+            ),
+        },
+        {
+            "kode": "D", "label": "Indikasi Prioritas Kemenko Infra", "bobot_pct": 10,
+            "nilai": 100 if kemenko else 0,
+            "keterangan": (
+                "Ditandai prioritas Kemenko Infra." if kemenko else
+                "Belum/tidak ditandai prioritas Kemenko Infra (kolom indikasi SITIA masih kosong per tarikan 15 Juli)."
+            ),
+        },
+    ]
+    total = None
+    if skor_kompetensi is not None:
+        total = round(sum(k["nilai"] * k["bobot_pct"] / 100 for k in komponen), 2)
+    for k in komponen:
+        k["kontribusi"] = round((k["nilai"] or 0) * k["bobot_pct"] / 100, 2)
+
+    return {
+        "skor_total": total,
+        "komponen": komponen,
+        "catatan": (
+            "Skor Prioritas Nasional perkiraan per dokumen Penentuan Parameter Penilaian IJD "
+            "14 Juli 2026 (70% teknokratis + 10% PU + 10% Bappenas + 10% Kemenko Infra). "
+            "Bukan penetapan resmi."
+        ),
+    }
+
+
+@app.get("/api/usulan-inpres/{usulan_id}/skor-prioritas-nasional")
+def usulan_inpres_skor_prioritas(usulan_id: int):
+    with db_cursor() as cur:
+        cur.execute(f"SELECT {_SPN_FIELDS} FROM usulan_inpres WHERE id = %s", (usulan_id,))
+        row = cur.fetchone()
+    if not row:
+        raise HTTPException(404, "Usulan tidak ditemukan")
+    hasil = _skor_prioritas_nasional(row)
+    if hasil["skor_total"] is not None:
+        # peringkat nasional = posisi skor usulan ini di antara semua yang ternilai
+        with db_cursor() as cur:
+            cur.execute(
+                f"SELECT {_SPN_FIELDS} FROM usulan_inpres WHERE prioritas_kompetensi IS NOT NULL"
+            )
+            semua = sorted((_skor_prioritas_nasional(r)["skor_total"] for r in cur.fetchall()),
+                           reverse=True)
+        hasil["peringkat_nasional"] = semua.index(hasil["skor_total"]) + 1
+        hasil["jumlah_ternilai"] = len(semua)
+    return hasil
+
+
+@app.get("/api/prioritas-nasional")
+def prioritas_nasional_list(provinsi: str = "", limit: int = 50, offset: int = 0):
+    """Peringkat Prioritas Nasional: semua usulan yang punya urutan prioritas
+    kompetensi, diurutkan skor tertinggi -> terendah (basis alokasi 2 lapis)."""
+    limit = max(1, min(limit, 200))
+    with db_cursor() as cur:
+        cur.execute(f"SELECT {_SPN_FIELDS} FROM usulan_inpres WHERE prioritas_kompetensi IS NOT NULL")
+        rows = cur.fetchall()
+    dinilai = []
+    for r in rows:
+        hasil = _skor_prioritas_nasional(r)
+        dinilai.append({
+            "id": r["id"], "nama_kegiatan": r["nama_kegiatan"], "nama_ruas": r["nama_ruas"],
+            "provinsi": r["provinsi"], "kabupaten_kota": r["kabupaten_kota"],
+            "prioritas_kompetensi": r["prioritas_kompetensi"], "prioritas_balai": r["prioritas_balai"],
+            "alokasi": r["alokasi_usulan_kompetensi"] or r["alokasi_usulan_pemda"],
+            "skor_total": hasil["skor_total"],
+        })
+    dinilai.sort(key=lambda x: (-x["skor_total"], x["id"]))
+    for i, d in enumerate(dinilai, start=1):
+        d["peringkat_nasional"] = i
+    if provinsi:
+        dinilai = [d for d in dinilai if d["provinsi"] == provinsi]
+    total = len(dinilai)
+    return {"total": total, "usulan": dinilai[offset:offset + limit]}
+
+
+# --- Pagu Indikatif Provinsi (dokumen 14072026 bagian B) + Alokasi 2 Lapis
+# (bagian C akhir). Komponen pagu yang datanya ada baru A1 (panjang jalan
+# daerah, SI 2026 Tabel 10.1.1) dan A4 (kapasitas fiskal, kolom SITIA usulan
+# gubernur) — A2 kemantapan (PUPR), A3 kawasan pangan (KP2B), dan A5 IKK
+# (publikasi BPS terpisah) belum ada sumbernya. Tiap komponen dinyatakan
+# sebagai pangsa nasional (jumlah antar provinsi = 100%) supaya total pagu
+# tepat mendistribusikan alokasi nasional; skor akhir dinormalisasi ulang ke
+# bobot komponen yang tersedia (20 + 15 dari 100).
+
+_FISKAL_SKOR = {"SANGAT TINGGI": 10, "TINGGI": 15, "SEDANG": 20, "RENDAH": 25, "SANGAT RENDAH": 30}
+_PAGU_KOMPONEN_PENDING = {
+    "A2": "Panjang jalan tidak mantap (bobot 30) — data kemantapan per provinsi dari PUPR belum tersedia.",
+    "A3": "Kawasan pangan strategis (bobot 20) — data KP2B/kawasan pangan belum diimpor.",
+    "A5": "Indeks Kemahalan Konstruksi (bobot 15) — publikasi IKK BPS belum diimpor.",
+}
+
+
+def _norm_prov_nama(s: str) -> str:
+    toks = [t for t in re.split(r"[^A-Z0-9]+", str(s).upper()) if t]
+    toks = ["DI" if t in ("DI", "D", "DAERAH") else t for t in toks]
+    return " ".join(t for t in toks if t not in ("I", "ISTIMEWA"))
+
+
+def _pagu_provinsi(alokasi_nasional: Optional[float] = None) -> dict:
+    with db_cursor() as cur:
+        cur.execute(
+            "SELECT provinsi, NULLIF(COALESCE(provinsi_km, 0) + COALESCE(kabkota_km, 0), 0) AS daerah_km "
+            "FROM si_panjang_jalan_provinsi WHERE kode_provinsi > 0 "
+            "AND tahun = (SELECT MAX(tahun) FROM si_panjang_jalan_provinsi)"
+        )
+        jalan = {_norm_prov_nama(r["provinsi"]): float(r["daerah_km"])
+                 for r in cur.fetchall() if r["daerah_km"] is not None}
+        cur.execute(
+            "SELECT provinsi, MAX(kapasitas_fiskal) AS fiskal FROM usulan_inpres "
+            "WHERE nama_pengusul LIKE 'Gubernur%%' AND kapasitas_fiskal IS NOT NULL "
+            "GROUP BY provinsi"
+        )
+        fiskal = {_norm_prov_nama(r["provinsi"]): r["fiskal"] for r in cur.fetchall()}
+        cur.execute("SELECT DISTINCT provinsi FROM usulan_inpres ORDER BY provinsi")
+        frame = [r["provinsi"] for r in cur.fetchall()]
+
+    total_jalan = sum(jalan.get(_norm_prov_nama(p), 0) for p in frame)
+    total_fiskal = sum(_FISKAL_SKOR.get((fiskal.get(_norm_prov_nama(p)) or "").upper(), 0) for p in frame)
+
+    provinsi_rows, total_skor = [], 0.0
+    for p in frame:
+        key = _norm_prov_nama(p)
+        km = jalan.get(key)
+        f_label = fiskal.get(key)
+        f_skor = _FISKAL_SKOR.get((f_label or "").upper())
+        a1 = km / total_jalan * 100 if km and total_jalan else None
+        a4 = f_skor / total_fiskal * 100 if f_skor and total_fiskal else None
+        bobot, nilai = 0.0, 0.0
+        if a1 is not None:
+            bobot += 20
+            nilai += a1 * 20
+        if a4 is not None:
+            bobot += 15
+            nilai += a4 * 15
+        skor = nilai / bobot if bobot else None
+        provinsi_rows.append({
+            "provinsi": p,
+            "jalan_daerah_km": km,
+            "a1_pangsa_pct": round(a1, 3) if a1 is not None else None,
+            "kapasitas_fiskal": f_label,
+            "a4_pangsa_pct": round(a4, 3) if a4 is not None else None,
+            "bobot_tersedia": bobot,
+            "skor_pct": round(skor, 3) if skor is not None else None,
+        })
+        total_skor += skor or 0
+
+    # normalisasi ulang supaya jumlah pangsa = 100% (provinsi tanpa data salah
+    # satu komponen tetap proporsional terhadap yang lain)
+    for r in provinsi_rows:
+        if r["skor_pct"] is not None and total_skor:
+            r["pangsa_final_pct"] = round(r["skor_pct"] / total_skor * 100, 3)
+            if alokasi_nasional:
+                r["pagu_rp"] = round(alokasi_nasional * r["pangsa_final_pct"] / 100)
+        else:
+            r["pangsa_final_pct"] = None
+            if alokasi_nasional:
+                r["pagu_rp"] = 0
+
+    provinsi_rows.sort(key=lambda r: -(r["pangsa_final_pct"] or 0))
+    return {
+        "tahun_data_jalan": "SI 2026 (tahun terbaru di tabel)",
+        "alokasi_nasional_rp": alokasi_nasional,
+        "provinsi": provinsi_rows,
+        "komponen_belum_tersedia": _PAGU_KOMPONEN_PENDING,
+        "catatan": (
+            "Skor pagu provinsi PARSIAL: baru komponen A1 panjang jalan daerah (bobot 20) dan "
+            "A4 kapasitas fiskal (bobot 15) dari 5 komponen dokumen 14072026; pangsa dinormalisasi "
+            "ulang ke bobot yang tersedia. Bukan penetapan resmi."
+        ),
+    }
+
+
+@app.get("/api/pagu-provinsi")
+def pagu_provinsi(alokasi_nasional: Optional[float] = None):
+    return _pagu_provinsi(alokasi_nasional)
+
+
+@app.get("/api/alokasi-2-lapis")
+def alokasi_2_lapis(alokasi_nasional: float):
+    """Simulasi Metode Alokasi 2 Lapis (dokumen 14072026): Lapis 1 = usulan
+    peringkat 1-2 per pemda mengikuti Peringkat Nasional, kumulatif <= pagu
+    provinsi; Lapis 2 = sisa pagu untuk pemda yang belum kebagian, lalu
+    pengisi celah."""
+    pagu = {r["provinsi"]: r.get("pagu_rp") or 0 for r in _pagu_provinsi(alokasi_nasional)["provinsi"]}
+
+    with db_cursor() as cur:
+        cur.execute(f"SELECT {_SPN_FIELDS} FROM usulan_inpres WHERE prioritas_kompetensi IS NOT NULL")
+        rows = cur.fetchall()
+    usulan = []
+    for r in rows:
+        skor = _skor_prioritas_nasional(r)["skor_total"]
+        nilai = r["alokasi_usulan_kompetensi"] or r["alokasi_usulan_pemda"] or 0
+        usulan.append({
+            "id": r["id"], "provinsi": r["provinsi"], "pemda": r["kabupaten_kota"],
+            "nama_ruas": r["nama_ruas"], "skor_total": skor, "nilai_rp": int(nilai),
+        })
+    usulan.sort(key=lambda x: (-x["skor_total"], x["id"]))
+    for i, u in enumerate(usulan, start=1):
+        u["peringkat_nasional"] = i
+
+    # peringkat dalam pemda (kunci aturan kualifikasi Lapis 1)
+    rank_pemda: dict = {}
+    for u in usulan:
+        key = (u["provinsi"], u["pemda"])
+        rank_pemda[key] = rank_pemda.get(key, 0) + 1
+        u["peringkat_pemda"] = rank_pemda[key]
+
+    terpakai = {p: 0 for p in pagu}
+    pemda_dapat = set()
+    hasil = []
+
+    # Lapis 1
+    for u in usulan:
+        if u["peringkat_pemda"] > 2 or not u["nilai_rp"]:
+            continue
+        prov = u["provinsi"]
+        if terpakai.get(prov, 0) + u["nilai_rp"] <= pagu.get(prov, 0):
+            terpakai[prov] = terpakai.get(prov, 0) + u["nilai_rp"]
+            pemda_dapat.add((prov, u["pemda"]))
+            u["lapis"] = 1
+            hasil.append(u)
+
+    # Lapis 2
+    teralokasi_ids = {u["id"] for u in hasil}
+    for prov in pagu:
+        while True:
+            sisa = pagu[prov] - terpakai.get(prov, 0)
+            if sisa <= 0:
+                break
+            kandidat = [u for u in usulan
+                        if u["provinsi"] == prov and u["id"] not in teralokasi_ids
+                        and 0 < u["nilai_rp"] <= sisa]
+            if not kandidat:
+                break
+            # prioritas pemerataan: pemda yang belum dapat alokasi dulu
+            belum = [u for u in kandidat if (prov, u["pemda"]) not in pemda_dapat]
+            pilih = min(belum or kandidat, key=lambda x: x["peringkat_nasional"])
+            terpakai[prov] += pilih["nilai_rp"]
+            pemda_dapat.add((prov, pilih["pemda"]))
+            teralokasi_ids.add(pilih["id"])
+            pilih["lapis"] = 2
+            hasil.append(pilih)
+
+    rekap = []
+    for prov in sorted(pagu, key=lambda p: -pagu[p]):
+        alloc = [u for u in hasil if u["provinsi"] == prov]
+        rekap.append({
+            "provinsi": prov,
+            "pagu_rp": pagu[prov],
+            "terpakai_rp": terpakai.get(prov, 0),
+            "sisa_rp": pagu[prov] - terpakai.get(prov, 0),
+            "jumlah_usulan": len(alloc),
+            "lapis1": sum(1 for u in alloc if u["lapis"] == 1),
+            "lapis2": sum(1 for u in alloc if u["lapis"] == 2),
+        })
+
+    return {
+        "alokasi_nasional_rp": alokasi_nasional,
+        "total_teralokasi_rp": sum(terpakai.values()),
+        "jumlah_usulan_teralokasi": len(hasil),
+        "rekap_provinsi": rekap,
+        "alokasi": sorted(hasil, key=lambda x: x["peringkat_nasional"]),
+        "catatan": (
+            "Simulasi alokasi 2 lapis di atas pagu provinsi PARSIAL (komponen A1+A4 saja) dan "
+            "Skor Prioritas Nasional perkiraan — hasil berubah saat komponen pagu/flag prioritas "
+            "lain terisi. Bukan penetapan resmi."
+        ),
+    }
+
+
+# --- Draf narasi "Output Penilaian" Bappenas per usulan, dihasilkan AI (gap
+# G11). Format mengikuti sheet Output Penilaian file 2 (aspek A Prioritas-
+# Strategis + aspek B Daya Ungkit, poin 0/1/2 + narasi + kesimpulan); hasil
+# di-cache di tabel penilaian_bappenas_ai. SELALU berlabel draf AI. ---
+
+PENILAIAN_SYSTEM_PROMPT = """Anda membantu analis Bappenas menyusun DRAF penilaian kualitatif usulan \
+Inpres Jalan Daerah. Nilai dua aspek berdasarkan HANYA data yang diberikan (jangan mengarang fakta di luar itu):
+1. aspek_a — ASPEK PRIORITAS DAN NILAI STRATEGIS: sejauh mana usulan berada di lokasi yang menjadi prioritas \
+nasional (tematik kawasan, penuntasan program sebelumnya, koridor, indikasi prioritas) dan membutuhkan afirmasi \
+khusus pemerintah pusat. Catatan: data resmi Lokpri RPJMN belum tersedia di aplikasi — bila penilaian bergantung \
+pada itu, sebutkan keterbatasannya di narasi.
+2. aspek_b — DAYA UNGKIT EKONOMI & KINERJA SEKTORAL: kontribusi ruas terhadap ketahanan pangan, kelancaran \
+logistik, dan ekonomi lokal (tematik pangan/energi, kepadatan penduduk, kondisi eksisting, panjang & alokasi).
+Poin per aspek: 0 = tidak/belum ada dukungan data, 1 = dukungan sebagian, 2 = dukungan kuat.
+Balas HANYA JSON valid tanpa teks lain, format:
+{"aspek_a": {"poin": 0|1|2, "narasi": "..."}, "aspek_b": {"poin": 0|1|2, "narasi": "..."}, "kesimpulan": "..."}
+Narasi 2-4 kalimat per aspek, kesimpulan 2-3 kalimat, Bahasa Indonesia formal, sebut angka dari data bila relevan."""
+
+
+def _plain_openai_compatible(url: str, key: str, model: str, system: str, user: str) -> str:
+    resp = requests.post(
+        url, headers={"Authorization": f"Bearer {key}"},
+        json={"model": model, "temperature": 0.4,
+              "messages": [{"role": "system", "content": system},
+                           {"role": "user", "content": user}]},
+        timeout=90,
+    )
+    resp.raise_for_status()
+    return resp.json()["choices"][0]["message"]["content"]
+
+
+def _plain_claude(key: str, system: str, user: str) -> str:
+    client = anthropic.Anthropic(api_key=key)
+    resp = client.messages.create(
+        model=CLAUDE_MODEL, max_tokens=2048, system=system,
+        messages=[{"role": "user", "content": user}],
+    )
+    return "".join(b.text for b in resp.content if b.type == "text")
+
+
+def _plain_gemini(key: str, system: str, user: str) -> str:
+    resp = requests.post(
+        f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent?key={key}",
+        json={"system_instruction": {"parts": [{"text": system}]},
+              "contents": [{"parts": [{"text": user}]}]},
+        timeout=90,
+    )
+    resp.raise_for_status()
+    return resp.json()["candidates"][0]["content"]["parts"][0]["text"]
+
+
+def _llm_plain(system: str, user: str) -> tuple:
+    """Satu completion polos (tanpa tools) lewat provider pertama yang
+    tersedia — urutan sama dengan _chat_providers. Return (provider, model, teks)."""
+    attempts = []
+    if os.getenv("GROQ_API_KEY"):
+        attempts.append(("Groq", GROQ_MODEL, lambda: _plain_openai_compatible(GROQ_API_URL, os.getenv("GROQ_API_KEY"), GROQ_MODEL, system, user)))
+    if os.getenv("GROK_API_KEY"):
+        attempts.append(("Grok", GROK_MODEL, lambda: _plain_openai_compatible(GROK_API_URL, os.getenv("GROK_API_KEY"), GROK_MODEL, system, user)))
+    if os.getenv("OPEN_AI_API_KEY"):
+        attempts.append(("OpenAI", OPENAI_MODEL, lambda: _plain_openai_compatible("https://api.openai.com/v1/chat/completions", os.getenv("OPEN_AI_API_KEY"), OPENAI_MODEL, system, user)))
+    if os.getenv("CLOUDE_API_KEY"):
+        attempts.append(("Claude", CLAUDE_MODEL, lambda: _plain_claude(os.getenv("CLOUDE_API_KEY"), system, user)))
+    if os.getenv("GEMINI_API_KEY"):
+        attempts.append(("Gemini", GEMINI_MODEL, lambda: _plain_gemini(os.getenv("GEMINI_API_KEY"), system, user)))
+    if not attempts:
+        raise HTTPException(500, "Tidak ada API key LLM di .env (GROQ/GROK/OPEN_AI/CLOUDE/GEMINI_API_KEY).")
+    errors = []
+    for provider, model, fn in attempts:
+        try:
+            return provider, model, fn()
+        except Exception as e:  # coba provider berikutnya
+            errors.append(f"{provider}: {e}")
+    raise HTTPException(502, "Semua provider LLM gagal — " + "; ".join(errors))
+
+
+_PENILAIAN_SCHEMA_PATH = BASE_DIR / "scripts" / "schema_penilaian_bappenas.sql"
+_penilaian_table_ready = False
+
+
+def _ensure_penilaian_table():
+    global _penilaian_table_ready
+    if _penilaian_table_ready:
+        return
+    sql_text = _PENILAIAN_SCHEMA_PATH.read_text(encoding="utf-8")
+    code = "\n".join(l for l in sql_text.splitlines() if not l.strip().startswith("--"))
+    with db_cursor() as cur:
+        for stmt in [s.strip() for s in code.split(";") if s.strip()]:
+            cur.execute(stmt)
+    _penilaian_table_ready = True
+
+
+def _penilaian_context(row: dict) -> str:
+    """Ringkasan data usulan (JSON) yang jadi satu-satunya bahan penilaian AI."""
+    ijd = _compute_ijd_score(row, 2026)
+    spn = _skor_prioritas_nasional(row)
+    data = {
+        "usulan": {k: row.get(k) for k in (
+            "id", "nama_kegiatan", "nama_ruas", "provinsi", "kabupaten_kota",
+            "jenis_penanganan", "status_ruas", "panjang_ruas_km", "panjang_penanganan_pemda",
+            "alokasi_usulan_pemda", "alokasi_usulan_kompetensi", "kapasitas_fiskal",
+            "tematik_kawasan_pemda", "kondisi_baik_km", "kondisi_sedang_km",
+            "kondisi_ringan_km", "kondisi_berat_km", "verifikasi_balai",
+            "verifikasi_kompetensi", "prioritas_balai", "prioritas_kompetensi",
+            "status_koridor_balai", "penuntasan_ijd_kompetensi", "lanjutan_ijd_2025",
+            "jenis_data_dukung_tematik_kompetensi", "indikasi_prioritas_pu",
+        )},
+        "skor_teknokratik_ijd_2026": {
+            "skor_ternormalisasi_100": ijd["skor_ternormalisasi_100"],
+            "komponen": [{k: c.get(k) for k in ("kode", "label", "tersedia", "nilai", "keterangan")}
+                         for c in ijd["komponen"]],
+        },
+        "skor_prioritas_nasional": {
+            "total": spn["skor_total"],
+            "komponen": [{k: c.get(k) for k in ("kode", "label", "nilai", "keterangan")}
+                         for c in spn["komponen"]],
+        },
+    }
+    return json.dumps(jsonable_encoder(data), ensure_ascii=False)
+
+
+@app.get("/api/usulan-inpres/{usulan_id}/penilaian-bappenas")
+def penilaian_bappenas_get(usulan_id: int):
+    _ensure_penilaian_table()
+    with db_cursor() as cur:
+        cur.execute("SELECT * FROM penilaian_bappenas_ai WHERE usulan_id = %s", (usulan_id,))
+        row = cur.fetchone()
+    if not row:
+        return {"tersedia": False}
+    row["tersedia"] = True
+    return jsonable_encoder(row)
+
+
+@app.post("/api/usulan-inpres/{usulan_id}/penilaian-bappenas")
+def penilaian_bappenas_generate(usulan_id: int):
+    _ensure_penilaian_table()
+    with db_cursor() as cur:
+        cur.execute("SELECT * FROM usulan_inpres WHERE id = %s", (usulan_id,))
+        row = cur.fetchone()
+    if not row:
+        raise HTTPException(404, "Usulan tidak ditemukan")
+
+    provider, model, teks = _llm_plain(PENILAIAN_SYSTEM_PROMPT, _penilaian_context(row))
+    teks = re.sub(r"^```(?:json)?\s*|\s*```$", "", teks.strip())
+    try:
+        hasil = json.loads(teks)
+        aspek_a, aspek_b = hasil["aspek_a"], hasil["aspek_b"]
+        poin_a, poin_b = int(aspek_a["poin"]), int(aspek_b["poin"])
+        if not (0 <= poin_a <= 2 and 0 <= poin_b <= 2):
+            raise ValueError("poin di luar rentang 0-2")
+    except (ValueError, KeyError, TypeError) as e:
+        raise HTTPException(502, f"Jawaban {provider} tidak sesuai format JSON penilaian: {e}")
+
+    with db_cursor() as cur:
+        cur.execute(
+            "INSERT INTO penilaian_bappenas_ai (usulan_id, aspek_a_poin, aspek_a_narasi, "
+            "aspek_b_poin, aspek_b_narasi, total_poin, kesimpulan, provider, model) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s) "
+            "ON DUPLICATE KEY UPDATE aspek_a_poin=VALUES(aspek_a_poin), "
+            "aspek_a_narasi=VALUES(aspek_a_narasi), aspek_b_poin=VALUES(aspek_b_poin), "
+            "aspek_b_narasi=VALUES(aspek_b_narasi), total_poin=VALUES(total_poin), "
+            "kesimpulan=VALUES(kesimpulan), provider=VALUES(provider), model=VALUES(model)",
+            (usulan_id, poin_a, aspek_a.get("narasi"), poin_b, aspek_b.get("narasi"),
+             poin_a + poin_b, hasil.get("kesimpulan"), provider, model),
+        )
+    return penilaian_bappenas_get(usulan_id)
+
+
 _KML_COORD_RE = re.compile(
-    r"<(?:LineString|Point)\b[^>]*>.*?<coordinates>\s*([^<]+?)\s*</coordinates>",
+    r"<(?:LineString|Point|Polygon)\b[^>]*>.*?<coordinates>\s*([^<]+?)\s*</coordinates>",
     re.DOTALL,
 )
 
@@ -533,6 +1476,75 @@ def _parse_kml_linestrings(kml_text: str) -> Optional[dict]:
     if len(lines) == 1:
         return {"type": "LineString", "coordinates": lines[0]}
     return {"type": "MultiLineString", "coordinates": lines}
+
+
+def _geojson_line_to_shapely(geojson: dict):
+    """GeoJSON LineString/MultiLineString -> geometri shapely.
+    MultiLineString(list_of_linestrings) segfaults-into-TypeError pada kombinasi
+    shapely/numpy ini (shapely.creation.multilinestrings tersedak object array)
+    — lewat WKT untuk menghindari jalur kode itu."""
+    if geojson["type"] == "MultiLineString":
+        lines = [LineString(coords) for coords in geojson["coordinates"] if len(coords) >= 2]
+        wkt = "MULTILINESTRING (" + ", ".join(
+            "(" + ", ".join(f"{c[0]} {c[1]}" for c in ls.coords) + ")" for ls in lines
+        ) + ")"
+        return shapely.wkt.loads(wkt)
+    return LineString(geojson["coordinates"])
+
+
+def _parse_usulan_geometry(content: bytes) -> Optional[dict]:
+    """Parse unggahan geometri SITIA apa adanya: sebagian 'KML' ternyata
+    KMZ (zip berisi doc.kml) atau bahkan shapefile ter-zip — deteksi dari
+    header PK lalu tangani ketiganya. Return geojson LineString/
+    MultiLineString atau None."""
+    if content[:2] != b"PK":
+        return _parse_kml_linestrings(content.decode("utf-8", "replace"))
+    try:
+        zf = zipfile.ZipFile(io.BytesIO(content))
+    except zipfile.BadZipFile:
+        return None
+    names = zf.namelist()
+
+    kml = next((n for n in names if n.lower().endswith(".kml")), None)
+    if kml:
+        return _parse_kml_linestrings(zf.read(kml).decode("utf-8", "replace"))
+
+    kmz = next((n for n in names if n.lower().endswith(".kmz")), None)
+    if kmz:
+        # zip berisi .kmz (arsip di dalam arsip) — rekursi sekali
+        return _parse_usulan_geometry(zf.read(kmz))
+
+    shp = next((n for n in names if n.lower().endswith(".shp")), None)
+    if shp:
+        with TemporaryDirectory() as tmp:
+            # ekstraksi rata (basename saja) — hindari path traversal dari
+            # nama entri arsip
+            for n in names:
+                base = Path(n).name
+                if not base:
+                    continue
+                (Path(tmp) / base).write_bytes(zf.read(n))
+            try:
+                gdf = gpd.read_file(Path(tmp) / Path(shp).name)
+                if gdf.crs and gdf.crs.to_epsg() != 4326:
+                    gdf = gdf.to_crs(epsg=4326)
+            except Exception:
+                return None
+        lines = []
+        for geom in gdf.geometry:
+            if geom is None:
+                continue
+            if geom.geom_type == "LineString":
+                lines.append([[c[0], c[1]] for c in geom.coords])
+            elif geom.geom_type == "MultiLineString":
+                lines.extend([[c[0], c[1]] for c in g.coords] for g in geom.geoms)
+        lines = [l for l in lines if len(l) >= 2]
+        if not lines:
+            return None
+        if len(lines) == 1:
+            return {"type": "LineString", "coordinates": lines[0]}
+        return {"type": "MultiLineString", "coordinates": lines}
+    return None
 
 
 MAPS_DIR = BASE_DIR / "Maps"
@@ -612,6 +1624,172 @@ def _resolve_map_layer(kabupaten_dir: Path, layer: str) -> Path:
     return shp_path
 
 
+# --- Layer khusus: Maps/BATAS KECAMATAN (SHP batas kecamatan nasional
+# Dukcapil Des 2019, 6.810 poligon, 90MB). Atributnya HANYA nama kecamatan —
+# tanpa kolom provinsi/kabupaten — jadi hierarki pilih provinsi -> kabupaten
+# -> kecamatan dibangun dengan mencocokkan nama ke master penduduk_kecamatan
+# (±89% nama match unik; homonim nasional & beda pemekaran 2019/2025 ditandai).
+# Folder ini di-treat sebagai hierarki virtual di endpoint maps yang sudah
+# ada: dropdown "kabupaten" berisi provinsi Indonesia, daftar layer berisi
+# kabupaten (centang = tampilkan seluruh poligon kecamatannya; tiap poligon
+# membawa properti nama untuk identify/select).
+BATAS_KEC_DIRNAME = "BATAS KECAMATAN"
+_batas_kec_index_cache: Optional[dict] = None
+
+
+def _batas_kec_shp() -> Optional[Path]:
+    d = MAPS_DIR / BATAS_KEC_DIRNAME
+    if not d.is_dir():
+        return None
+    return next(iter(sorted(d.glob("*.shp"))), None)
+
+
+def _norm_nama_wilayah(s) -> str:
+    return " ".join(t for t in re.split(r"[^A-Z0-9]+", str(s).upper()) if t)
+
+
+def _batas_kec_index() -> dict:
+    """{provinsi: {kabupaten: [{kecamatan, kode_kecamatan, shp_nama|None,
+    homonim}]}} — dibangun sekali per proses (restart untuk file baru)."""
+    global _batas_kec_index_cache
+    if _batas_kec_index_cache is not None:
+        return _batas_kec_index_cache
+
+    shp = _batas_kec_shp()
+    if not shp:
+        raise HTTPException(404, "SHP batas kecamatan tidak ditemukan di Maps/BATAS KECAMATAN")
+    # Penyeteraan bilangan pada nama kecamatan: SHP memakai romawi ("ILIR
+    # BARAT I"), master memakai kata ("ILIR BARAT SATU") / angka arab; plus
+    # varian Minang ANAM=ENAM.
+    _ANGKA = {
+        "SATU": "I", "DUA": "II", "TIGA": "III", "EMPAT": "IV", "LIMA": "V",
+        "ENAM": "VI", "ANAM": "VI", "TUJUH": "VII", "DELAPAN": "VIII",
+        "SEMBILAN": "IX", "SEPULUH": "X", "1": "I", "2": "II", "3": "III",
+        "4": "IV", "5": "V", "6": "VI", "7": "VII", "8": "VIII", "9": "IX",
+        "10": "X",
+    }
+
+    def _kunci_longgar(norm_nama: str) -> str:
+        return "".join(_ANGKA.get(t, t) for t in norm_nama.split())
+
+    attrs = gpd.read_file(shp, ignore_geometry=True, engine="pyogrio")
+    shp_nama = {}     # norm -> nama asli di shp
+    shp_compact = {}  # tanpa spasi -> {nama asli} (GUNUNG KENCANA vs GUNUNGKENCANA)
+    shp_angka = {}    # tanpa spasi + bilangan diseragamkan -> {nama asli} (ILIR BARAT SATU vs I)
+    for v in attrs["KECAMATAN"].dropna():
+        n = _norm_nama_wilayah(v)
+        shp_nama.setdefault(n, str(v))
+        shp_compact.setdefault(n.replace(" ", ""), set()).add(str(v))
+        shp_angka.setdefault(_kunci_longgar(n), set()).add(str(v))
+
+    def _cari_shp_nama(norm_nama: str):
+        """Cari nama poligon: persis dulu, lalu dua kunci longgar berurutan
+        (tanpa-spasi, lalu bilangan diseragamkan) bila hasilnya tunggal."""
+        hit = shp_nama.get(norm_nama)
+        if hit:
+            return hit
+        for idx, key in ((shp_compact, norm_nama.replace(" ", "")),
+                         (shp_angka, _kunci_longgar(norm_nama))):
+            loose = idx.get(key, set())
+            if len(loose) == 1:
+                return next(iter(loose))
+        return None
+
+    with db_cursor() as cur:
+        cur.execute(
+            "SELECT provinsi, kabupaten_kota, kode_kabupaten, kecamatan, kode_kecamatan "
+            "FROM penduduk_kecamatan ORDER BY provinsi, kabupaten_kota, kecamatan"
+        )
+        master = cur.fetchall()
+
+    from collections import Counter as _Counter
+    nama_count = _Counter(_norm_nama_wilayah(m["kecamatan"]) for m in master)
+
+    index: dict = {}
+    for m in master:
+        n = _norm_nama_wilayah(m["kecamatan"])
+        # nama master polos ("SERANG" bisa kabupaten ATAU kota) — beri prefiks
+        # dari konvensi kode BPS supaya keduanya tidak menyatu jadi satu entri
+        jenis = "KOTA" if m["kode_kabupaten"] % 100 >= 71 else "KAB."
+        kab_label = f"{jenis} {m['kabupaten_kota']}"
+        index.setdefault(m["provinsi"], {}).setdefault(kab_label, []).append({
+            "kecamatan": m["kecamatan"],
+            "kode_kecamatan": m["kode_kecamatan"],
+            "shp_nama": _cari_shp_nama(n),
+            "homonim": nama_count[n] > 1,
+        })
+    _batas_kec_index_cache = index
+    return index
+
+
+def _batas_kec_layer_geojson(prov: str, kab: str) -> dict:
+    index = _batas_kec_index()
+    entries = index.get(prov, {}).get(kab)
+    if entries is None:
+        raise HTTPException(404, "Provinsi/kabupaten tidak dikenal di master wilayah")
+
+    by_shp_nama = {e["shp_nama"]: e for e in entries if e["shp_nama"]}
+    tanpa_poligon = [e["kecamatan"] for e in entries if not e["shp_nama"]]
+    if not by_shp_nama:
+        raise HTTPException(404, "Tidak ada poligon kecamatan yang cocok nama untuk kabupaten ini")
+
+    daftar = ", ".join("'" + n.replace("'", "''") + "'" for n in by_shp_nama)
+    gdf = gpd.read_file(_batas_kec_shp(), engine="pyogrio", where=f"KECAMATAN IN ({daftar})")
+    if gdf.crs and gdf.crs.to_epsg() != 4326:
+        gdf = gdf.to_crs(epsg=4326)
+
+    # Poligon kecamatan HOMONIM di SHP sumber tergabung jadi satu MultiPolygon
+    # lintas daerah (file tanpa kolom wilayah). Kecamatan dalam satu kabupaten
+    # saling berbatasan, jadi bagian yang benar dipilih lewat ketetanggaan:
+    # bagian yang berjarak > ±1 km dari semua poligon non-homonim kabupaten
+    # ini dibuang; bila tak ada yang dekat, ambil bagian terdekat saja.
+    # (Sengaja tanpa unary_union/MultiPolygon(list) — kombinasi shapely/numpy
+    # di sini gagal membuat koleksi dari list Python, lihat
+    # _geojson_line_to_shapely.)
+    anchor_geoms = [row.geometry for _, row in gdf.iterrows()
+                    if (e := by_shp_nama.get(str(row["KECAMATAN"]))) and not e["homonim"]]
+
+    features = []
+    for _, row in gdf.iterrows():
+        e = by_shp_nama.get(str(row["KECAMATAN"]))
+        geom_json, catatan = mapping(row.geometry), None
+        if e and e["homonim"]:
+            if anchor_geoms and row.geometry.geom_type == "MultiPolygon":
+                parts = [p for p in row.geometry.geoms
+                         if any(p.distance(a) < 0.01 for a in anchor_geoms)]
+                if not parts:
+                    parts = [min(row.geometry.geoms,
+                                 key=lambda p: min(p.distance(a) for a in anchor_geoms))]
+                if len(parts) == 1:
+                    geom_json = mapping(parts[0])
+                else:
+                    geom_json = {"type": "MultiPolygon",
+                                 "coordinates": [mapping(p)["coordinates"] for p in parts]}
+                catatan = ("Nama kecamatan homonim nasional — bagian poligon yang jauh dari "
+                           "kabupaten ini disembunyikan (heuristik ketetanggaan; SHP Dukcapil "
+                           "2019 tanpa kolom wilayah).")
+            else:
+                catatan = ("Nama kecamatan homonim nasional — poligon bisa mencakup kecamatan "
+                           "senama di daerah lain (SHP Dukcapil 2019 tanpa kolom wilayah).")
+        features.append({
+            "type": "Feature",
+            "geometry": geom_json,
+            "properties": {
+                "KECAMATAN": row["KECAMATAN"],
+                "KABUPATEN_KOTA": kab,
+                "PROVINSI": prov,
+                "KODE_KECAMATAN": e["kode_kecamatan"] if e else None,
+                "CATATAN": catatan,
+            },
+        })
+    return {
+        "label": f"Batas Kecamatan — {kab} ({prov})",
+        "type": "FeatureCollection",
+        "features": features,
+        "kecamatan_tanpa_poligon": tanpa_poligon,
+    }
+
+
 @app.get("/api/maps/provinces")
 def maps_provinces():
     if not MAPS_DIR.is_dir():
@@ -620,24 +1798,62 @@ def maps_provinces():
     for d in sorted(MAPS_DIR.iterdir()):
         if d.is_dir():
             count = sum(1 for sub in d.iterdir() if sub.is_dir())
+            if count == 0 and any(d.glob("*.shp")):
+                # Folder "datar" tanpa sub-folder kabupaten (mis. Maps/KAMPUNG
+                # NELAYAN/*.shp langsung) — perlakukan sebagai 1 pseudo-kabupaten
+                # supaya tidak terlihat kosong di daftar provinsi.
+                count = 1
             provinces.append({"provinsi": d.name, "kabupaten_count": count})
     return provinces
 
 
 @app.get("/api/maps/kabupaten")
 def maps_kabupaten(provinsi: str):
+    if provinsi == BATAS_KEC_DIRNAME and _batas_kec_shp():
+        # hierarki virtual: "kabupaten" = provinsi Indonesia dari master
+        index = _batas_kec_index()
+        return [{"kabupaten": p, "label": p, "layer_count": len(kabs)}
+                for p, kabs in sorted(index.items())]
     provinsi_dir = _resolve_map_dir(provinsi)
     kabupaten = []
     for d in sorted(provinsi_dir.iterdir()):
         if d.is_dir():
             count = sum(1 for _ in d.glob("*.shp"))
             kabupaten.append({"kabupaten": d.name, "layer_count": count})
+    if not kabupaten:
+        # Folder provinsi tanpa sub-folder kabupaten tapi berisi .shp langsung
+        # (mis. Maps/KAMPUNG NELAYAN/) — pakai folder itu sendiri sebagai satu
+        # entri "kabupaten" (kabupaten="" jadi penanda: pakai folder provinsi).
+        count = sum(1 for _ in provinsi_dir.glob("*.shp"))
+        if count:
+            kabupaten.append({"kabupaten": "", "label": provinsi, "layer_count": count})
     return kabupaten
 
 
+def _resolve_kabupaten_dir(provinsi: str, kabupaten: str) -> Path:
+    if kabupaten:
+        return _resolve_map_dir(provinsi, kabupaten)
+    return _resolve_map_dir(provinsi)
+
+
 @app.get("/api/maps/layers")
-def maps_layers(provinsi: str, kabupaten: str):
-    kabupaten_dir = _resolve_map_dir(provinsi, kabupaten)
+def maps_layers(provinsi: str, kabupaten: str = ""):
+    if provinsi == BATAS_KEC_DIRNAME and _batas_kec_shp():
+        # hierarki virtual: layer = kabupaten/kota berisi poligon kecamatannya
+        index = _batas_kec_index()
+        kabs = index.get(kabupaten)
+        if kabs is None:
+            raise HTTPException(404, "Provinsi tidak dikenal di master wilayah")
+        out = []
+        for kab, entries in sorted(kabs.items()):
+            ada = sum(1 for e in entries if e["shp_nama"])
+            out.append({
+                "layer": f"BATASKEC__{kabupaten}__{kab}",
+                "label": f"{kab} ({ada}/{len(entries)} kecamatan)",
+                "size_mb": None,
+            })
+        return out
+    kabupaten_dir = _resolve_kabupaten_dir(provinsi, kabupaten)
     layers = []
     for shp in sorted(kabupaten_dir.glob("*.shp")):
         layers.append({
@@ -649,12 +1865,21 @@ def maps_layers(provinsi: str, kabupaten: str):
 
 
 @app.get("/api/maps/layer")
-def maps_layer(provinsi: str, kabupaten: str, layer: str):
+def maps_layer(provinsi: str, layer: str, kabupaten: str = ""):
     key = (provinsi, kabupaten, layer)
     if key in _map_layer_geojson_cache:
         return _map_layer_geojson_cache[key]
 
-    kabupaten_dir = _resolve_map_dir(provinsi, kabupaten)
+    if provinsi == BATAS_KEC_DIRNAME and layer.startswith("BATASKEC__"):
+        try:
+            _, prov, kab = layer.split("__", 2)
+        except ValueError:
+            raise HTTPException(400, "Layer batas kecamatan tidak valid")
+        geojson = _batas_kec_layer_geojson(prov, kab)
+        _map_layer_geojson_cache[key] = geojson
+        return geojson
+
+    kabupaten_dir = _resolve_kabupaten_dir(provinsi, kabupaten)
     shp_path = _resolve_map_layer(kabupaten_dir, layer)
 
     gdf = gpd.read_file(shp_path, engine="pyogrio")
@@ -696,7 +1921,7 @@ def _fetch_usulan_geometry(usulan_id: int) -> dict:
         except requests.RequestException as e:
             raise HTTPException(502, f"Gagal mengambil KML dari SITIA Bina Marga: {e}")
 
-        geojson = _parse_kml_linestrings(resp.text)
+        geojson = _parse_usulan_geometry(resp.content)
         if not geojson:
             raise HTTPException(404, "KML tidak berisi geometri jalur yang dapat dibaca")
 
@@ -727,17 +1952,7 @@ def usulan_inpres_export_shp(usulan_id: int):
     if not u:
         raise HTTPException(404, "Usulan tidak ditemukan")
 
-    if geojson["type"] == "MultiLineString":
-        # MultiLineString(list_of_linestrings) segfaults-into-TypeError on this
-        # shapely/numpy combo (shapely.creation.multilinestrings chokes on the
-        # object array) — round-tripping through WKT avoids that code path.
-        lines = [LineString(coords) for coords in geojson["coordinates"]]
-        wkt = "MULTILINESTRING (" + ", ".join(
-            "(" + ", ".join(f"{x} {y}" for x, y in ls.coords) + ")" for ls in lines
-        ) + ")"
-        geometry = shapely.wkt.loads(wkt)
-    else:
-        geometry = LineString(geojson["coordinates"])
+    geometry = _geojson_line_to_shapely(geojson)
 
     gdf = gpd.GeoDataFrame(
         [{
@@ -1208,7 +2423,19 @@ def chat(payload: ChatRequest):
     return {"reply": reply}
 
 
-app.mount("/", StaticFiles(directory=str(STATIC_DIR), html=True), name="static")
+class NoCacheStaticFiles(StaticFiles):
+    """StaticFiles tanpa Cache-Control membuat browser memakai caching
+    heuristik: js/css lama bisa terus dipakai setelah file berubah (tanpa
+    build step tidak ada cache-busting hash). no-cache = browser tetap
+    menyimpan file tapi selalu revalidasi ETag (304 bila tidak berubah)."""
+
+    def file_response(self, *args, **kwargs):
+        resp = super().file_response(*args, **kwargs)
+        resp.headers["Cache-Control"] = "no-cache"
+        return resp
+
+
+app.mount("/", NoCacheStaticFiles(directory=str(STATIC_DIR), html=True), name="static")
 
 
 if __name__ == "__main__":

@@ -77,6 +77,75 @@ html, body {
 .topbar-basemap:hover { background: rgba(255,255,255,.09); }
 .topbar-basemap i { font-size: 13px; color: var(--text-dim); }
 
+/* Penampil data tabel database (topbar "Data") */
+.topbar-datatable { position: relative; flex: 0 0 auto; }
+.datatable-menu {
+  position: absolute; top: calc(100% + 8px); right: 0; z-index: 60;
+  min-width: 320px; max-height: 60vh; overflow-y: auto;
+  background: var(--panel); border: 1px solid var(--border);
+  border-radius: 12px; box-shadow: var(--shadow); padding: 6px;
+}
+.datatable-menu-item {
+  display: flex; justify-content: space-between; align-items: center; gap: 12px;
+  width: 100%; padding: 9px 12px; border: 0; border-radius: 8px;
+  background: transparent; color: var(--text); font-family: inherit;
+  font-size: 13px; text-align: left; cursor: pointer;
+}
+.datatable-menu-item:hover { background: rgba(255,255,255,.07); }
+.datatable-menu-count {
+  font-size: 11.5px; color: var(--text-dim);
+  background: rgba(255,255,255,.05); border: 1px solid var(--border);
+  border-radius: 999px; padding: 2px 9px;
+}
+.datatable-overlay {
+  position: fixed; inset: 0; z-index: 90;
+  background: rgba(8,11,18,.65); backdrop-filter: blur(2px);
+  display: flex; align-items: center; justify-content: center; padding: 24px;
+}
+/* display:flex di atas menimpa [hidden] bawaan browser — tanpa aturan ini
+   modal langsung tampil saat halaman dibuka. */
+.datatable-overlay[hidden] { display: none; }
+.datatable-modal {
+  display: flex; flex-direction: column; width: min(1280px, 96vw);
+  height: min(82vh, 900px); background: var(--bg);
+  border: 1px solid var(--border); border-radius: var(--radius);
+  box-shadow: var(--shadow); overflow: hidden;
+}
+.datatable-head {
+  display: flex; align-items: center; gap: 12px;
+  padding: 12px 16px; border-bottom: 1px solid var(--border);
+  background: var(--panel);
+}
+.datatable-head h3 { margin: 0; font-size: 15px; font-weight: 700; }
+.datatable-head h3 i { color: var(--primary); margin-right: 4px; }
+.datatable-meta { font-size: 12px; color: var(--text-dim); margin-right: auto; }
+.datatable-scroll { flex: 1; overflow: auto; }
+.datatable-loading { padding: 32px; text-align: center; color: var(--text-dim); font-size: 13px; }
+table.datatable { border-collapse: collapse; font-size: 12.5px; min-width: 100%; }
+table.datatable th, table.datatable td {
+  padding: 7px 12px; border-bottom: 1px solid var(--border);
+  white-space: nowrap; max-width: 380px; overflow: hidden; text-overflow: ellipsis;
+}
+table.datatable thead th {
+  position: sticky; top: 0; z-index: 2; background: var(--panel-alt);
+  color: var(--text); text-align: left; font-weight: 600;
+}
+table.datatable tbody tr:hover { background: rgba(255,255,255,.04); }
+table.datatable td.num { text-align: right; font-variant-numeric: tabular-nums; }
+table.datatable td.null { color: var(--text-dim); text-align: center; }
+table.datatable .rownum { color: var(--text-dim); font-size: 11.5px; }
+.datatable-foot {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 10px 16px; border-top: 1px solid var(--border); background: var(--panel);
+  font-size: 12.5px; color: var(--text-dim); flex-wrap: wrap;
+}
+.datatable-pagesize select {
+  background: var(--panel-alt); color: var(--text); border: 1px solid var(--border);
+  border-radius: 8px; padding: 4px 8px; font-family: inherit; font-size: 12.5px;
+}
+.datatable-pager { display: flex; align-items: center; gap: 12px; }
+.datatable-pager .btn[disabled] { opacity: .4; cursor: default; }
+
 .osm-attribution {
   position: absolute; left: 8px; bottom: 8px; z-index: 20;
   background: rgba(15,20,32,.75); color: var(--text-dim);
@@ -517,6 +586,8 @@ html, body {
 .btn-usulan-show { align-self: flex-start; margin-top: 2px; font-size: 12px; }
 
 /* Jelajahi Usulan Inpres (browse panel) */
+.usulan-io-row { display: flex; gap: 8px; margin-bottom: 10px; }
+.usulan-io-row .btn { flex: 1; }
 .usulan-browse-filters { display: flex; flex-direction: column; gap: 8px; margin-bottom: 10px; }
 .usulan-filter-field {
   display: flex; align-items: center; gap: 8px;
@@ -577,6 +648,28 @@ html, body {
   vertical-align: top; white-space: nowrap;
 }
 .usulan-detail-table td { padding: 3px 0; }
+
+.usulan-ijd-score {
+  border-top: 1px dashed var(--border); padding-top: 10px; margin-top: 2px;
+  display: flex; flex-direction: column; gap: 8px;
+}
+.ijd-score-head { display: flex; flex-direction: column; gap: 2px; }
+.ijd-score-title { font-weight: 600; font-size: 12.5px; }
+.ijd-score-title i { color: var(--primary); margin-right: 4px; }
+.ijd-score-total { font-size: 11.5px; color: var(--text-dim); }
+.ijd-bar-row { display: flex; flex-direction: column; gap: 4px; }
+.ijd-bar-label { font-size: 12px; }
+.ijd-bar-value { display: flex; align-items: center; gap: 8px; }
+.ijd-bar-value .adv-bar-track { flex: 1; min-width: 0; }
+.ijd-badge {
+  flex: 0 0 auto; white-space: nowrap; font-size: 10px; padding: 2px 8px;
+  min-width: 22px; text-align: center;
+}
+.ijd-score-note { margin-top: 2px; }
+.usulan-penilaian-narasi {
+  margin: 2px 0 8px; font-size: 12.5px; line-height: 1.55;
+  color: var(--text-dim); white-space: pre-wrap;
+}
 .usulan-note-toggle { cursor: pointer; text-decoration: underline dotted; text-underline-offset: 2px; }
 .usulan-note-toggle:hover { color: var(--primary); }
 .usulan-doc-links { display: flex; flex-wrap: wrap; gap: 6px; }

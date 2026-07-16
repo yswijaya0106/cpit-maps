@@ -55,8 +55,43 @@
         <div class="maplayer-list" id="mapLayerList"></div>
       </div>
     </div>
+    <div class="topbar-datatable" id="dataTableControl">
+      <button type="button" class="topbar-basemap" id="btnDataTable" title="Lihat isi tabel database">
+        <i class="bi bi-table"></i>
+        <span>Data</span>
+        <i class="bi bi-chevron-down"></i>
+      </button>
+      <div class="datatable-menu" id="dataTableMenu" hidden></div>
+    </div>
     <div class="topbar-status" id="topbarStatus">Siap</div>
   </header>
+
+  <div class="datatable-overlay" id="dataTableOverlay" hidden>
+    <div class="datatable-modal">
+      <div class="datatable-head">
+        <h3 id="dataTableTitle"><i class="bi bi-table"></i> <span></span></h3>
+        <span class="datatable-meta" id="dataTableMeta"></span>
+        <button type="button" class="icon-btn" id="dataTableClose" aria-label="Tutup"><i class="bi bi-x-lg"></i></button>
+      </div>
+      <div class="datatable-scroll" id="dataTableScroll"></div>
+      <div class="datatable-foot">
+        <div class="datatable-pagesize">
+          Baris per halaman:
+          <select id="dataTablePageSize">
+            <option value="25">25</option>
+            <option value="50" selected>50</option>
+            <option value="100">100</option>
+            <option value="200">200</option>
+          </select>
+        </div>
+        <div class="datatable-pager">
+          <button type="button" class="btn btn-ghost btn-sm" id="dataTablePrev"><i class="bi bi-chevron-left"></i> Sebelumnya</button>
+          <span id="dataTablePageInfo"></span>
+          <button type="button" class="btn btn-ghost btn-sm" id="dataTableNext">Berikutnya <i class="bi bi-chevron-right"></i></button>
+        </div>
+      </div>
+    </div>
+  </div>
 
   <div class="layout">
     <aside class="sidebar" id="sidebar">
@@ -169,6 +204,11 @@
 
         <section class="panel" id="usulanBrowsePanel">
           <h2 class="panel-title">7. Jelajahi Usulan Inpres Jalan/Jembatan</h2>
+          <div class="usulan-io-row">
+            <button id="btnUsulanImport" class="btn btn-ghost btn-sm"><i class="bi bi-upload"></i> Import XLSX</button>
+            <button id="btnUsulanExport" class="btn btn-ghost btn-sm"><i class="bi bi-download"></i> Export XLSX</button>
+            <input type="file" id="usulanImportFile" accept=".xlsx" hidden />
+          </div>
           <div class="usulan-browse-filters">
             <div class="usulan-filter-field usulan-combo" id="usulanProvinsiField">
               <i class="bi bi-map-fill"></i>
@@ -267,6 +307,7 @@
 </script>
 <script src="/js/state.js"></script>
 <script src="/js/utils.js"></script>
+<script src="/js/data-viewer.js"></script>
 <script src="/js/map-bootstrap.js"></script>
 <script src="/js/points.js"></script>
 <script src="/js/routing.js"></script>

@@ -9,6 +9,12 @@ analysis, export to GIS formats, browsing/scoring of Inpres Jalan Daerah (IJD)
 road proposals, and an AI chat assistant. UI/user-facing strings, code
 comments, and docstrings are in Indonesian.
 
+This file covers the file map and run instructions. For design rationale
+and reusable patterns, see `docs/ARCHITECTURE.md`; for change recipes, see
+`CONTRIBUTING.md`; for hard-won gotchas, see `docs/MEMORY.md`; for adding an
+IJD scoring parameter specifically, use the `ijd-scoring-parameter` skill
+(`.claude/skills/`).
+
 ## Run
 
 Windows: the bare `python` command resolves to the Microsoft Store alias
@@ -38,7 +44,7 @@ Deps: `requirements.txt`, venv at `.venv/` (already gitignored).
 
 ## Architecture (single-file backend + MySQL, no ORM)
 
-- [app.py](app.py) — entire backend (~1600 lines). FastAPI app, all routes,
+- [app.py](app.py) — entire backend (~2600 lines). FastAPI app, all routes,
   all GIS logic, IJD scoring, chat providers. No other backend modules exist;
   don't go looking for a `routers/` or `services/` dir.
 - Database: MySQL via `pymysql`, raw parameterized SQL through the
@@ -85,21 +91,31 @@ Deps: `requirements.txt`, venv at `.venv/` (already gitignored).
   `GET .../{id}/ijd-score`. Geometry comes from the SITIA `kml_original_url`:
   fetched on first request, parsed by `_parse_kml_linestrings`, and cached in
   the `geom_geojson` column.
-- `GET /api/usulan-inpres/{id}/ijd-score` — "Prioritisasi Teknokratik"
-  scoring per Inpres 11/2025. Weights/values are **data, not code**: rows in
-  the `ijd_scoring_rules` table (seeded by `scripts/schema_ijd_scoring.sql`)
-  keyed by `tahun_berlaku`, so policy changes mean SQL updates, not code
-  changes. Only parameters A/B/D/F are computed; C and E are intentionally
-  reported "belum tersedia" (see `IJD_PENDING_PARAMETERS`) until their BPS
-  source tables are populated by the extract scripts.
+- `GET /api/usulan-inpres/{id}/ijd-score?tahun=` — "Prioritisasi Teknokratik"
+  scoring per the IJD policy document (default `tahun=2026`, `2025` also
+  available). Weights/values are **data, not code**: rows in the
+  `ijd_scoring_rules` table (`schema_ijd_scoring.sql` for 2025,
+  `schema_ijd_scoring_2026.sql` for 2026 — a new policy year means a new
+  seed file + `INSERT`, not a code change) keyed by `tahun_berlaku`. The set
+  of parameters shown is `set(rules) | set(IJD_PENDING_PARAMETERS)` for that
+  year, not a hardcoded A-F loop — this is why F (present in 2025) cleanly
+  disappears in 2026 instead of showing as "belum tersedia". 2026 computes
+  A (A1 tematik + A2 konektivitas + A3 kawasan tematik via `kawasan_tematik`
+  + A4 data dukung), B, C (A1 kepadatan only, via `kecamatan_data_turunan`
+  + `usulan_inpres.kode_kecamatan`), D, and E; F was removed from the 2026
+  policy. Every component that lacks a data source reports
+  `"tersedia": false` with a specific reason instead of contributing 0 —
+  `skor_ternormalisasi_100` is normalized against `bobot_tersedia`, not 100.
+  See `.claude/skills/ijd-scoring-parameter/` before touching this.
 - `GET /api/usulan-inpres/{id}/skor-prioritas-nasional` /
   `GET /api/prioritas-nasional` — national priority score (70% teknokratis +
   10% PU + 10% Bappenas + 10% Kemenko per the 14072026 document) and the
   national ranking; Bappenas/Kemenko indication columns are imported but
   still empty in the 15 Juli snapshot, so they currently score 0.
 - `GET /api/pagu-provinsi` / `GET /api/alokasi-2-lapis` — provincial
-  indicative budget (partial score: road-length A1 + fiscal A4 only,
-  renormalized shares) and the two-layer allocation simulation on top of the
+  indicative budget (partial score: A1 road-length + A2 road unsoundness
+  `kemantapan_ijd_2026` + A4 fiscal capacity, renormalized shares; A3/A5
+  still missing) and the two-layer allocation simulation on top of the
   national ranking. Both label themselves "perkiraan/parsial" — keep that.
 - `GET`/`POST /api/usulan-inpres/{id}/penilaian-bappenas` — AI-generated
   draft of the Bappenas qualitative assessment (aspek A/B points + narrative,
@@ -128,7 +144,12 @@ Deps: `requirements.txt`, venv at `.venv/` (already gitignored).
   Geometry is simplified for layers with >3000 features (the 68MB
   `KONTUR_LN_25K.shp` contour layer is why) and cached in-memory per
   (provinsi, kabupaten, layer) in `_map_layer_geojson_cache` — restart the
-  server to pick up changed `.shp` files.
+  server to pick up changed `.shp` files. `Maps/JALAN PROVINSI/` and
+  `Maps/JALAN TOL/` are flat (no kabupaten subfolder) national road layers —
+  `maps_kabupaten`'s existing `kabupaten=""` fallback handles those with no
+  special-case code; prefer flattening a new source to the plain
+  provinsi/kabupaten shape over adding a special case (see `docs/MEMORY.md`
+  §"Maps/ overlay").
   `Maps/BATAS KECAMATAN/` (national Dukcapil 2019 kecamatan-boundary SHP,
   90MB, attribute = kecamatan name ONLY) is special-cased as a virtual
   hierarchy in these same endpoints: the "kabupaten" dropdown lists
@@ -167,6 +188,11 @@ if missing and upsert, so they're safe to re-run:
 - `spatial_join_kecamatan.py` — route geometry × `Maps/BATAS KECAMATAN`
   polygons → fills `usulan_inpres.kode_kecamatan` (basis of IJD C.A1);
   manual entries are never overwritten. Run after fetch_kml_massal.
+- `import_kemantapan_ijd2026.py` — road-soundness per kab/kota
+  (`kemantapan_ijd_2026`), the source of IJD pagu component G8.A2.
+- `import_kawasan_tematik.py` — thematic kawasan (Perkebunan/Perikanan/
+  Transmigrasi/KI Prioritas/PKPN) from the Bappenas lokus workbook →
+  `kawasan_tematik`, the source of IJD parameter A3.
 - `extract_dalam_angka.py` — parses BPS "Kab/Kota Dalam Angka" PDFs from
   `dalam_angka/<kode> <Provinsi>/` (currently only 36 Banten; drop in more
   province folders and re-run with `--load`). Feeds IJD parameter C tables
@@ -178,15 +204,23 @@ if missing and upsert, so they're safe to re-run:
 The PDF extractors are position/regex-based (PyMuPDF) and tuned to the 2026
 BPS layouts — expect to adjust them for other publication years.
 
+Several source files under `docs/docs/` (`5_IJD 2026 - DATA...xlsx`,
+`6_Usulan Lokus IJD 2026 Sektor Bappenas.xlsx`) were pulled from public
+Google Sheets/Drive links embedded in file 2's "Kumpulan Data" sheet
+(column E hyperlinks, not just filenames — most resolve directly via
+`.../export?format=xlsx` or `embeddedfolderview?id=<id>#list` for folders,
+no auth needed). See `docs/checklist_implementasi_cpit.md` Fase 9 for the
+full link inventory, including a public "Dalam Angka" Drive folder with all
+37 provinces (~10GB, not yet bulk-downloaded) and public SHP folders for
+road/transport-node connectivity validation.
+
 ## Conventions / gotchas
 
-- Coordinates are `[lat, lng]` in API payloads but shapely/geojson need
-  `(lng, lat)` — conversions happen inline in the `_build_*`/`_routes_to_*`
-  helpers, easy to get backwards when adding new export formats.
+- Coordinate order and the no-test-suite verification approach are common
+  trip-ups — see `docs/ARCHITECTURE.md` (§"Coordinate order",
+  §"Verification without a test suite") rather than re-deriving them.
 - SHP export uses a `TemporaryDirectory`, writes with `pyogrio` engine, then
   zips the sidecar files (`.shp/.dbf/.shx/.prj/.cpg`) in memory.
-- No test suite exists. Verify changes by running the app and exercising the
-  UI (route search → analysis → export) rather than assuming coverage.
 - `maps.md` is a design/spec doc (Indonesian), not source of truth for
   implemented behavior — cross-check against app.py before trusting it.
   **It currently contains a hardcoded Google Maps API key at the bottom —

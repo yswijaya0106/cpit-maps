@@ -54,6 +54,34 @@ INSERT INTO ijd_scoring_rules (tahun_berlaku, parameter_kode, parameter_label, b
 (2026, 'A', 'Tematik dan Data Dukungnya', 30, 'Konektivitas - Terhubung Ke Simpul Transportasi', 'A2 Konektivitas - Terhubung ke Simpul Transportasi (75 x 30%)', 22.5)
 ON DUPLICATE KEY UPDATE parameter_label=VALUES(parameter_label), bobot_maks=VALUES(bobot_maks), kondisi_label=VALUES(kondisi_label), nilai=VALUES(nilai);
 
+-- A4. Data Dukung Tematik (bobot internal 10%) — Tabel 2 blok A4: data dukung
+-- yang ada & relevan (KP2B/LP2B, surat BBM, perikanan/perkebunan) = 100.
+-- Sumber: kolom SITIA "Jenis Data Dukung Tematik (Kompetensi)" (hasil
+-- verifikasi kompetensi, terisi mulai tarikan 15 Juli). sub_kode berprefiks
+-- "A4_" + status kolom apa adanya; dijumlahkan _ijd_score_tematik() ke nilai
+-- A1/A2. NULL (belum dinilai kompetensi) tidak menambah nilai.
+INSERT INTO ijd_scoring_rules (tahun_berlaku, parameter_kode, parameter_label, bobot_maks, sub_kode, kondisi_label, nilai) VALUES
+(2026, 'A', 'Tematik dan Data Dukungnya', 30, 'A4_KP2B/LP2B', 'A4 Data dukung KP2B/LP2B — menjaga alih fungsi lahan (100 x 10%)', 10.0),
+(2026, 'A', 'Tematik dan Data Dukungnya', 30, 'A4_SELAIN KP2B/LP2B', 'A4 Data dukung tematik selain KP2B/LP2B (100 x 10%)', 10.0),
+(2026, 'A', 'Tematik dan Data Dukungnya', 30, 'A4_TIDAK ADA', 'A4 Tidak ada data dukung tematik (0 x 10%)', 0.0)
+ON DUPLICATE KEY UPDATE parameter_label=VALUES(parameter_label), bobot_maks=VALUES(bobot_maks), kondisi_label=VALUES(kondisi_label), nilai=VALUES(nilai);
+
+-- A3. Tematik Tambahan (bobot internal 20%) — Tabel 2 baris 14-23. Sumber:
+-- tabel kawasan_tematik (scripts/import_kawasan_tematik.py, dari data lokus
+-- Bappenas) — usulan yang kabupaten/kecamatannya cocok dengan kawasan
+-- tematik ini dapat kontribusi A3 sesuai kategori (nilai tertinggi bila
+-- cocok >1 kategori). sub_kode = "A3_<kategori tabel kawasan_tematik>".
+-- Kategori PETERNAKAN, MBG, ENERGI_TERBARUKAN, BBM_SATU_HARGA, dan
+-- KAWASAN_STRATEGIS belum ada sumber datanya (sheet lokus tak sesuai
+-- granularitas/di luar cakupan file yang tersedia).
+INSERT INTO ijd_scoring_rules (tahun_berlaku, parameter_kode, parameter_label, bobot_maks, sub_kode, kondisi_label, nilai) VALUES
+(2026, 'A', 'Tematik dan Data Dukungnya', 30, 'A3_PERKEBUNAN', 'A3 Swasembada Pangan - Perkebunan (100 x 20%)', 20.0),
+(2026, 'A', 'Tematik dan Data Dukungnya', 30, 'A3_PERIKANAN', 'A3 Swasembada Pangan - Perikanan (100 x 20%)', 20.0),
+(2026, 'A', 'Tematik dan Data Dukungnya', 30, 'A3_TRANSMIGRASI', 'A3 Kawasan Produktif Lainnya - Kawasan Transmigrasi (75 x 20%)', 15.0),
+(2026, 'A', 'Tematik dan Data Dukungnya', 30, 'A3_KI_PRIORITAS', 'A3 Kawasan Produktif Lainnya - Kawasan Industri Prioritas RPJMN (50 x 20%)', 10.0),
+(2026, 'A', 'Tematik dan Data Dukungnya', 30, 'A3_PKPN', 'A3 Kawasan Produktif Lainnya - Kawasan Mendukung PKPN (25 x 20%)', 5.0)
+ON DUPLICATE KEY UPDATE parameter_label=VALUES(parameter_label), bobot_maks=VALUES(bobot_maks), kondisi_label=VALUES(kondisi_label), nilai=VALUES(nilai);
+
 -- B. Kondisi Kemantapan Eksisting Ruas (bobot 15) — Tabel 3, tidak berubah
 -- dari 2025.
 INSERT INTO ijd_scoring_rules (tahun_berlaku, parameter_kode, parameter_label, bobot_maks, sub_kode, kondisi_label, nilai) VALUES

@@ -82,11 +82,27 @@ FIELD_PHRASES = [
 
 
 def num(s):
-    """'1.007,63' -> 1007.63 ; '–' -> None"""
+    """'1.007,63' -> 1007.63 ; '–' -> None.
+
+    Sebagian besar buku pakai koma sebagai desimal ('.' = ribuan), tapi
+    sebagian buku kab/kota (mis. Banyuasin) mencetak pecahan dengan titik
+    ('105.48' = rasio 105,48, bukan 10548) tanpa koma sama sekali di
+    halaman itu. Tanpa koma, titik hanya sah sebagai pemisah ribuan bila
+    diikuti persis 3 digit di tiap kelompok ('42.364'); bila kelompok
+    terakhir bukan 3 digit ('84.66'), itu titik desimal.
+    """
     s = s.strip()
     if not s or DASH.match(s):
         return None
-    s = s.replace(" ", "").replace(".", "").replace(",", ".")
+    s = s.replace(" ", "")
+    if "," in s:
+        s = s.replace(".", "").replace(",", ".")
+    else:
+        parts = s.split(".")
+        if len(parts) > 1 and len(parts[-1]) != 3:
+            s = "".join(parts[:-1]) + "." + parts[-1]
+        else:
+            s = s.replace(".", "")
     try:
         return float(s)
     except ValueError:
@@ -157,7 +173,13 @@ def extract_kecamatan_demografi(books, total_names=()):
                 start = pno
                 break
         if start is None:
-            raise RuntimeError(f"Tabel 3.1.1 tidak ditemukan di {fname}")
+            # buku dipindai sebagai gambar (tanpa lapisan teks) atau tata
+            # letak menyimpang jauh dari pola standar — lewati, jangan
+            # gagalkan seluruh batch provinsi karena satu buku
+            print(f"  WARNING: Tabel 3.1.1 tidak ditemukan di {fname} — dilewati",
+                  file=sys.stderr)
+            doc.close()
+            continue
         for pno in range(start, min(start + 10, doc.page_count)):
             text = doc[pno].get_text()
             fields, rows = parse_stat_page(page_lines(doc[pno]))
@@ -393,12 +415,18 @@ def extract_all():
         if prov["prov_book"]:
             row_kab, row_kota = build_prov_row_maps(names)
             doc = fitz.open(prov["prov_book"])
-            for r in extract_padi_provinsi(doc, row_kab, row_kota):
-                r["nama_kab"] = names[r["kode_kab"]]
-                padi_all.append(r)
-            for r in extract_kendaraan_provinsi(doc, row_kab, row_kota):
-                r["nama_kab"] = names[r["kode_kab"]]
-                kendaraan_all.append(r)
+            try:
+                for r in extract_padi_provinsi(doc, row_kab, row_kota):
+                    r["nama_kab"] = names[r["kode_kab"]]
+                    padi_all.append(r)
+            except RuntimeError as e:
+                print(f"  WARNING: padi provinsi — {e}", file=sys.stderr)
+            try:
+                for r in extract_kendaraan_provinsi(doc, row_kab, row_kota):
+                    r["nama_kab"] = names[r["kode_kab"]]
+                    kendaraan_all.append(r)
+            except RuntimeError as e:
+                print(f"  WARNING: kendaraan provinsi — {e}", file=sys.stderr)
             doc.close()
 
     return {

@@ -705,22 +705,85 @@ def _ijd_score_tematik(row: dict, rules: dict) -> dict:
     rule = rules.get("A")
     if not rule:
         return {"tersedia": False, "keterangan": "Kaidah tematik belum diset di database."}
-    tematik = (row.get("tematik_kawasan_pemda") or "").strip()
+    # A1 di dokumen 14072026 berjudul "Tematik SITIA (Kompetensi)" — pakai
+    # hasil verifikasi kompetensi bila ada, fallback verifikasi Balai, baru
+    # deklarasi Pemda (pola sama dengan RC balai->pemda).
+    tematik, sumber = "", "deklarasi Pemda"
+    for col, label_sumber in (
+        ("tematik_kawasan_kompetensi", "verifikasi kompetensi"),
+        ("tematik_kawasan_balai", "verifikasi Balai"),
+        ("tematik_kawasan_pemda", "deklarasi Pemda"),
+    ):
+        tematik = (row.get(col) or "").strip()
+        if tematik:
+            sumber = label_sumber
+            break
     sub = rule["subs"].get(tematik)
     if not sub:
         keterangan = (
-            f"Kategori tematik '{tematik}' tidak dikenali kaidah." if tematik
+            f"Kategori tematik '{tematik}' ({sumber}) tidak dikenali kaidah." if tematik
             else "Usulan tidak mencantumkan tematik kawasan."
         )
         return {"tersedia": False, "keterangan": keterangan}
-    return {
-        "tersedia": True,
-        "nilai": sub["nilai"],
-        "keterangan": (
-            f"{sub['label']} — hanya mencakup sub-parameter tematik utama (A1/A2); "
-            "tematik tambahan & data dukung (A3/A4) belum tersedia."
-        ),
-    }
+
+    nilai = sub["nilai"]
+    detail = [f"{sub['label']} — sumber: {sumber}"]
+    # A4 data dukung tematik (kaidah 2026: rules ber-sub_kode "A4_<STATUS>",
+    # nilai sudah tertimbang x10%) dari kolom hasil verifikasi kompetensi.
+    # Kaidah tanpa sub A4 (2025) memakai pesan lama apa adanya.
+    if any(k.startswith("A4_") for k in rule["subs"]):
+        status_a4 = (row.get("jenis_data_dukung_tematik_kompetensi") or "").strip().upper()
+        sub_a4 = rule["subs"].get(f"A4_{status_a4}") if status_a4 else None
+        if sub_a4:
+            nilai += sub_a4["nilai"]
+            detail.append(sub_a4["label"])
+        elif status_a4:
+            detail.append(f"A4: status data dukung '{status_a4}' tidak dikenali kaidah")
+        else:
+            detail.append("A4: data dukung belum dinilai verifikasi kompetensi")
+        # A3 tematik tambahan: cocokkan kabupaten/kecamatan usulan ke tabel
+        # kawasan_tematik (data lokus Bappenas); nilai tertinggi dipakai bila
+        # cocok >1 kategori.
+        if any(k.startswith("A3_") for k in rule["subs"]):
+            kode_kab = (row["kode_kecamatan"] // 1000) if row.get("kode_kecamatan") else None
+            if not kode_kab:
+                with db_cursor() as cur:
+                    cur.execute(
+                        "SELECT kode_kabupaten FROM wilayah_mapping "
+                        "WHERE provinsi_sitia = %s AND kabupaten_kota_sitia = %s",
+                        (row.get("provinsi"), row.get("kabupaten_kota")),
+                    )
+                    r = cur.fetchone()
+                kode_kab = r["kode_kabupaten"] if r else None
+            sub_a3 = None
+            if kode_kab:
+                with db_cursor() as cur:
+                    cur.execute(
+                        "SELECT DISTINCT kategori FROM kawasan_tematik WHERE kode_kabupaten = %s "
+                        "AND (kode_kecamatan IS NULL OR kode_kecamatan = %s)",
+                        (kode_kab, row.get("kode_kecamatan")),
+                    )
+                    kategori_cocok = [f"A3_{r['kategori']}" for r in cur.fetchall()]
+                kandidat = [rule["subs"][k] for k in kategori_cocok if k in rule["subs"]]
+                if kandidat:
+                    sub_a3 = max(kandidat, key=lambda s: s["nilai"])
+            if sub_a3:
+                nilai += sub_a3["nilai"]
+                detail.append(sub_a3["label"])
+            else:
+                detail.append(
+                    "A3: tidak ada kawasan tematik tambahan yang cocok (Perkebunan/Perikanan/"
+                    "Transmigrasi/Kawasan Industri Prioritas/PKPN)"
+                )
+        else:
+            detail.append("A3 (tematik tambahan) belum tersedia — menunggu data lokus gdrive")
+        keterangan = "; ".join(detail) + "."
+    else:
+        keterangan = (
+            f"{sub['label']} (sumber: {sumber}) — hanya mencakup sub-parameter tematik "
+            "utama (A1/A2); tematik tambahan & data dukung (A3/A4) belum tersedia."
+        )
+    return {"tersedia": True, "nilai": nilai, "keterangan": keterangan}
 
 
 def _ijd_score_kemantapan(row: dict, rules: dict) -> dict:
@@ -1099,10 +1162,20 @@ def prioritas_nasional_list(provinsi: str = "", limit: int = 50, offset: int = 0
 
 _FISKAL_SKOR = {"SANGAT TINGGI": 10, "TINGGI": 15, "SEDANG": 20, "RENDAH": 25, "SANGAT RENDAH": 30}
 _PAGU_KOMPONEN_PENDING = {
-    "A2": "Panjang jalan tidak mantap (bobot 30) — data kemantapan per provinsi dari PUPR belum tersedia.",
     "A3": "Kawasan pangan strategis (bobot 20) — data KP2B/kawasan pangan belum diimpor.",
     "A5": "Indeks Kemahalan Konstruksi (bobot 15) — publikasi IKK BPS belum diimpor.",
 }
+
+
+def _skor_indeks_ketidakmantapan(pct: float) -> float:
+    """Tabel 7 dokumen 14072026: skor indeks ketidakmantapan jalan daerah."""
+    if pct > 65:
+        return 100
+    if pct >= 40:
+        return 75
+    if pct >= 25:
+        return 50
+    return 25
 
 
 def _norm_prov_nama(s: str) -> str:
@@ -1126,11 +1199,24 @@ def _pagu_provinsi(alokasi_nasional: Optional[float] = None) -> dict:
             "GROUP BY provinsi"
         )
         fiskal = {_norm_prov_nama(r["provinsi"]): r["fiskal"] for r in cur.fetchall()}
+        cur.execute(
+            "SELECT provinsi, SUM(panjang_km) AS total_km, SUM(tidak_mantap_km) AS total_tm "
+            "FROM kemantapan_ijd_2026 GROUP BY provinsi"
+        )
+        kemantapan_raw = {_norm_prov_nama(r["provinsi"]): r for r in cur.fetchall()
+                          if r["total_km"]}
         cur.execute("SELECT DISTINCT provinsi FROM usulan_inpres ORDER BY provinsi")
         frame = [r["provinsi"] for r in cur.fetchall()]
 
+    # A2: pct ketidakmantapan per provinsi -> skor indeks Tabel 7 -> pangsa nasional
+    indeks_ketidakmantapan = {}
+    for key, r in kemantapan_raw.items():
+        pct = float(r["total_tm"] or 0) / float(r["total_km"]) * 100
+        indeks_ketidakmantapan[key] = _skor_indeks_ketidakmantapan(pct)
+
     total_jalan = sum(jalan.get(_norm_prov_nama(p), 0) for p in frame)
     total_fiskal = sum(_FISKAL_SKOR.get((fiskal.get(_norm_prov_nama(p)) or "").upper(), 0) for p in frame)
+    total_indeks = sum(indeks_ketidakmantapan.get(_norm_prov_nama(p), 0) for p in frame)
 
     provinsi_rows, total_skor = [], 0.0
     for p in frame:
@@ -1138,20 +1224,29 @@ def _pagu_provinsi(alokasi_nasional: Optional[float] = None) -> dict:
         km = jalan.get(key)
         f_label = fiskal.get(key)
         f_skor = _FISKAL_SKOR.get((f_label or "").upper())
+        idx = indeks_ketidakmantapan.get(key)
         a1 = km / total_jalan * 100 if km and total_jalan else None
+        a2 = idx / total_indeks * 100 if idx and total_indeks else None
         a4 = f_skor / total_fiskal * 100 if f_skor and total_fiskal else None
         bobot, nilai = 0.0, 0.0
         if a1 is not None:
             bobot += 20
             nilai += a1 * 20
+        if a2 is not None:
+            bobot += 30
+            nilai += a2 * 30
         if a4 is not None:
             bobot += 15
             nilai += a4 * 15
         skor = nilai / bobot if bobot else None
+        pct_tm = (float(kemantapan_raw[key]["total_tm"] or 0) / float(kemantapan_raw[key]["total_km"]) * 100
+                  if key in kemantapan_raw else None)
         provinsi_rows.append({
             "provinsi": p,
             "jalan_daerah_km": km,
             "a1_pangsa_pct": round(a1, 3) if a1 is not None else None,
+            "tidak_mantap_pct": round(pct_tm, 2) if pct_tm is not None else None,
+            "a2_pangsa_pct": round(a2, 3) if a2 is not None else None,
             "kapasitas_fiskal": f_label,
             "a4_pangsa_pct": round(a4, 3) if a4 is not None else None,
             "bobot_tersedia": bobot,
@@ -1178,9 +1273,10 @@ def _pagu_provinsi(alokasi_nasional: Optional[float] = None) -> dict:
         "provinsi": provinsi_rows,
         "komponen_belum_tersedia": _PAGU_KOMPONEN_PENDING,
         "catatan": (
-            "Skor pagu provinsi PARSIAL: baru komponen A1 panjang jalan daerah (bobot 20) dan "
-            "A4 kapasitas fiskal (bobot 15) dari 5 komponen dokumen 14072026; pangsa dinormalisasi "
-            "ulang ke bobot yang tersedia. Bukan penetapan resmi."
+            "Skor pagu provinsi PARSIAL: komponen A1 panjang jalan daerah (bobot 20), A2 panjang "
+            "jalan tidak mantap (bobot 30, dari docs/docs/5_IJD 2026 - DATA.xlsx) dan A4 kapasitas "
+            "fiskal (bobot 15) dari 5 komponen dokumen 14072026 — A3 kawasan pangan & A5 IKK masih "
+            "kosong; pangsa dinormalisasi ulang ke bobot yang tersedia. Bukan penetapan resmi."
         ),
     }
 
@@ -1706,18 +1802,49 @@ def _batas_kec_index() -> dict:
     nama_count = _Counter(_norm_nama_wilayah(m["kecamatan"]) for m in master)
 
     index: dict = {}
+    entries_flat = []
     for m in master:
         n = _norm_nama_wilayah(m["kecamatan"])
         # nama master polos ("SERANG" bisa kabupaten ATAU kota) — beri prefiks
         # dari konvensi kode BPS supaya keduanya tidak menyatu jadi satu entri
         jenis = "KOTA" if m["kode_kabupaten"] % 100 >= 71 else "KAB."
         kab_label = f"{jenis} {m['kabupaten_kota']}"
-        index.setdefault(m["provinsi"], {}).setdefault(kab_label, []).append({
+        entry = {
             "kecamatan": m["kecamatan"],
             "kode_kecamatan": m["kode_kecamatan"],
             "shp_nama": _cari_shp_nama(n),
             "homonim": nama_count[n] > 1,
-        })
+        }
+        index.setdefault(m["provinsi"], {}).setdefault(kab_label, []).append(entry)
+        entries_flat.append(entry)
+
+    # Pass terakhir — fuzzy KONSERVATIF untuk beda ejaan/typo (CIGEMBLONG vs
+    # Cigemlong, TERISI vs Trisi, PALABUHANRATU vs Pelabuhanratu): hanya
+    # menjodohkan nama master yang belum match dengan poligon "yatim" (tidak
+    # diklaim pass manapun), dan hanya bila keduanya saling kandidat terbaik
+    # (mutual best, rasio >= 0.85) supaya tidak ada tebakan ganda.
+    import difflib
+    terpakai = {e["shp_nama"] for e in entries_flat if e["shp_nama"]}
+    orphan = {}  # kunci longgar -> nama asli shp
+    for n_shp, asli in shp_nama.items():
+        if asli not in terpakai:
+            orphan.setdefault(_kunci_longgar(n_shp), asli)
+    belum = {}   # kunci longgar master -> [entry]
+    for e in entries_flat:
+        if not e["shp_nama"]:
+            belum.setdefault(_kunci_longgar(_norm_nama_wilayah(e["kecamatan"])), []).append(e)
+
+    orphan_keys, belum_keys = list(orphan), list(belum)
+    for b in belum_keys:
+        best = difflib.get_close_matches(b, orphan_keys, n=1, cutoff=0.85)
+        if not best:
+            continue
+        o = best[0]
+        balik = difflib.get_close_matches(o, belum_keys, n=1, cutoff=0.85)
+        if balik and balik[0] == b and o in orphan:
+            for e in belum[b]:
+                e["shp_nama"] = orphan.pop(o)
+
     _batas_kec_index_cache = index
     return index
 

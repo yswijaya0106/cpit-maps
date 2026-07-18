@@ -1239,7 +1239,8 @@ IJD_EXPORT_BAPPENAS_HEADERS = [
     "Data referensi penilaian adalah di sheet Kumpulan Data, Row Penilaian Ruas.",
     "DAYA UNGKIT EKONOMI & KINERJA SEKTORAL - NARASI AI\n"
     "(Pelengkap kolom sebelumnya, narasi naratif hasil AI. Kosong bila usulan belum pernah "
-    "digenerate lewat fitur \"Draf Penilaian Bappenas (AI)\" per-usulan.)",
+    "digenerate lewat tombol \"Proses Narasi AI\" (bulk per provinsi) di preview atau fitur "
+    "\"Draf Penilaian Bappenas (AI)\" per-usulan.)",
     "RANGKING DALAM PROVINSI\n"
     "(Urutan prioritas ruas dalam masing-masing provinsi merupakan kesimpulan integratif "
     "dari 2 aspek yaitu nilai strategis dan dampak ekonomi dan sektoral)",
@@ -1488,12 +1489,22 @@ def usulan_inpres_ijd_score_preview(provinsi: str = "", tahun: int = 2026, limit
     offset = max(0, offset)
     _header_full, header_short, data_rows = _ijd_score_bulk_rows(provinsi, tahun)
     page = data_rows[offset:offset + limit]
-    trimmed = []
-    for r in page:
-        trimmed.append([
-            (v[:200] + "…") if isinstance(v, str) and len(v) > 200 else v
-            for v in r
-        ])
+    # Kolom prosa AI: kirim utuh (batas longgar) — frontend menampilkannya
+    # terpotong tapi memberi tooltip berisi teks lengkap saat hover.
+    prose_cols = {i for i, h in enumerate(header_short)
+                  if h in ("Aspek B: Narasi AI", "Kesimpulan Penilaian Bappenas")}
+
+    def _trim(v, i):
+        if not isinstance(v, str):
+            return v
+        # Sel checklist Aspek A/B: JANGAN potong di 200 char — butir tercentang
+        # ([v]) sering di urutan bawah daftar (mis. Kemantapan baris 39) dan
+        # ikut terpotong, membuat poinnya tampak tidak cocok dgn centangnya.
+        # Tinggi sel dikendalikan CSS (.checklist-cell), bukan pemotongan.
+        limit_chars = 1500 if (i in prose_cols or "[v]" in v or "[ ]" in v) else 200
+        return (v[:limit_chars] + "…") if len(v) > limit_chars else v
+
+    trimmed = [[_trim(v, i) for i, v in enumerate(r)] for r in page]
     scope = provinsi or "Nasional"
     return jsonable_encoder({
         "table": "ijd_skor_preview", "label": f"Preview Export Skor IJD — {scope} ({tahun})",

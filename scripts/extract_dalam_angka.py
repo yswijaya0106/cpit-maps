@@ -451,6 +451,9 @@ PRODUKSI_TABLES = {
     ],
     "perkebunan_produksi_ton": [
         (("Produksi Perkebunan", "Menurut Kecamatan", "Jenis Tanaman"), (), None, None),
+        # Varian judul Pandeglang: "Produksi TANAMAN Perkebunan ... (kuintal)"
+        # -- elemen ke-5 opsional = faktor skala satuan (kuintal -> ton).
+        (("Produksi Tanaman Perkebunan", "Menurut Kecamatan", "Jenis Tanaman"), (), None, None, 0.1),
     ],
     "peternakan_produksi_daging_kg": [
         (("Produksi Daging", "Kecamatan"), (), None, None),
@@ -527,6 +530,21 @@ def _extract_kecamatan_table_sum(doc, must_all, forbid, total_names, col_index=N
         ncols = len(marker_idx) - 1
         if col_index is not None and col_index >= ncols:
             continue  # halaman lanjutan dgn kolom lain (jenis tanaman berbeda) -- lewati
+        # Banyak tabel produksi memasang PASANGAN kolom tahun per jenis tanaman
+        # ("2024 | 2025*" berulang, mis. Tabel 5.2.2/5.3.2 perkebunan) --
+        # menjumlah semua kolom berarti dobel hitung 2024+2025. Kalau semua
+        # kolom berlabel tahun (persis ncols baris tahun di header sebelum
+        # marker "(1)"), jumlahkan hanya kolom tahun terbaru. Cuma berlaku utk
+        # col_index=None; pemanggil dgn col_index sudah menunjuk kolom pasti.
+        year_cols = None
+        if col_index is None and ncols > 0:
+            header_years = [int(m.group(1)) for ln in lines[:marker_idx[0]]
+                            if (m := re.fullmatch(r"((?:19|20)\d{2})\s*\*?", ln.strip()))]
+            if len(header_years) >= ncols:
+                years = header_years[-ncols:]
+                if len(set(years)) > 1:
+                    latest = max(years)
+                    year_cols = [i for i, y in enumerate(years) if y == latest]
         name, values = None, []
         for ln in lines[marker_idx[-1] + 1:]:
             if STOPLINE.match(ln):
@@ -537,9 +555,18 @@ def _extract_kecamatan_table_sum(doc, must_all, forbid, total_names, col_index=N
                 values.append(num(ln) or 0)
                 if len(values) == ncols:
                     cname = _clean_name(name)
-                    if not _is_total_row(cname, total_names):
-                        tambahan = values[col_index] if col_index is not None else sum(values)
-                        out[cname] = out.get(cname, 0) + tambahan
+                    if col_index is not None:
+                        tambahan = values[col_index]
+                    elif year_cols is not None:
+                        tambahan = sum(values[i] for i in year_cols)
+                    else:
+                        tambahan = sum(values)
+                    # Baris total kab/prov tidak dibuang lagi, tapi disimpan di
+                    # kunci "__TOTAL__" -- dipakai pemanggil sbg pembanding
+                    # kewajaran (sel typo BPS bisa > total tabelnya sendiri,
+                    # mis. Kelapa Angsana Pandeglang "45.918.000" kuintal).
+                    key = "__TOTAL__" if _is_total_row(cname, total_names) else cname
+                    out[key] = out.get(key, 0) + tambahan
                     name, values = None, []
             else:
                 if name is not None and not values:
@@ -564,6 +591,7 @@ def extract_kecamatan_potensi(books, names, total_names=()):
             found_any = False
             for must_all, forbid in variants:
                 sums = _extract_kecamatan_table_sum(doc, must_all, forbid, totals_here)
+                sums.pop("__TOTAL__", None)  # flag ada/tidak: total tabel tidak dipakai
                 if sums:
                     found_any = True
                 for cname, total in sums.items():
@@ -577,13 +605,21 @@ def extract_kecamatan_potensi(books, names, total_names=()):
                       f"{os.path.basename(path)} — dilewati", file=sys.stderr)
         for field, variants in PRODUKSI_TABLES.items():
             found_any = False
-            for must_all, forbid, col_index, max_pages in variants:
+            for variant in variants:
+                must_all, forbid, col_index, max_pages = variant[:4]
+                scale = variant[4] if len(variant) > 4 else 1  # faktor satuan (kuintal->ton dsb.)
                 sums = _extract_kecamatan_table_sum(doc, must_all, forbid, totals_here, col_index, max_pages)
+                total_ref = sums.pop("__TOTAL__", None)
                 if sums:
                     found_any = True
                 for cname, total in sums.items():
+                    if total_ref and total > total_ref * 1.05:
+                        print(f"  WARNING: {field} '{cname}' = {total} melebihi total tabel "
+                              f"({total_ref}) di {os.path.basename(path)} — kemungkinan typo "
+                              f"BPS, diabaikan", file=sys.stderr)
+                        continue
                     rec = out.setdefault((kode, cname), {})
-                    rec[field] = round(rec.get(field, 0) + total, 2)
+                    rec[field] = round(rec.get(field, 0) + total * scale, 2)
             if not found_any:
                 print(f"  WARNING: tabel produksi '{field}' tidak ditemukan di "
                       f"{os.path.basename(path)} — dilewati", file=sys.stderr)
@@ -603,9 +639,111 @@ def _clamp_dec62(value, field, kode, nama):
     return value
 
 
-def extract_all():
+# --- Panjang jalan per kab/kota (bab 8 Transportasi) ---------------------
+# Tabel 8.1.1 "Panjang Jalan Menurut Tingkat Kewenangan Pemerintahan" +
+# Tabel "Panjang Jalan (Kabupaten) Menurut Kondisi Jalan" -- pembanding
+# independen kemantapan_ijd_2026 (baris 39 sheet Kumpulan Data file 2) dan
+# kandidat komponen A1 (panjang jalan) pagu provinsi. Pola tabelnya BEDA dari
+# tabel per-kecamatan: baris = label kategori (Negara/Provinsi/Kabupaten,
+# Baik/Sedang/Rusak/Rusak Berat), kolom = tahun (2023-2025) -- diambil nilai
+# kolom tahun TERAKHIR. Catatan cakupan: tabel kondisi umumnya hanya untuk
+# jalan kewenangan kab/kota ybs. (judul "Panjang Jalan Kabupaten..."), bukan
+# seluruh jalan di wilayahnya.
+
+_JALAN_STOPLINE = re.compile(r"^(Tabel$|Table |Catatan/Note|Sumber/Source|https?://)")
+
+
+def _label_match(ln, prefix):
+    """Cocokkan label baris dgn toleransi digit footnote yang menempel:
+    "Negara2/State2" cocok dgn prefix "Negara/" (angka catatan kaki BPS
+    ditulis superscript dan menempel ke teks saat diekstrak)."""
+    if prefix.endswith("/"):
+        return re.match(re.escape(prefix[:-1]) + r"\d?\s*/", ln) is not None
+    return ln.startswith(prefix)
+
+
+def _extract_label_year_table(doc, must_all, prefix_fields):
+    """Tabel kecil berpola baris-label x kolom-tahun: return
+    ({field: nilai_tahun_terakhir}, tahun_terakhir) atau ({}, None).
+    prefix_fields dicek berurutan per baris -- taruh prefix yang lebih
+    spesifik dulu ("Rusak Berat/" sebelum "Rusak/"). Baris terjemahan
+    Inggris di antara label dan angka ("Kabupaten2" lalu "Regency2")
+    dilewati; header tahun boleh menempel footnote ("20252" = 2025)."""
+    for pno in range(doc.page_count):
+        text = doc[pno].get_text()
+        if "DAFTAR" in text[:400]:
+            continue
+        norm = re.sub(r"\s+", " ", text)
+        if not all(m in norm for m in must_all):
+            continue
+        lines = page_lines(doc[pno])
+        marker_idx = [i for i, ln in enumerate(lines) if MARKER.match(ln)]
+        if len(marker_idx) < 2:
+            continue
+        nyears = len(marker_idx) - 1
+        years = [int(m.group(1)) for ln in lines[:marker_idx[-1]]
+                 if (m := re.fullmatch(r"((?:19|20)\d{2})\d?\*?", ln.strip()))]
+        out = {}
+        i = marker_idx[-1] + 1
+        while i < len(lines):
+            ln = lines[i]
+            if _JALAN_STOPLINE.match(ln):
+                break
+            field = next((f for p, f in prefix_fields if _label_match(ln, p)), None)
+            if field is None or field in out:
+                i += 1
+                continue
+            vals, j = [], i + 1
+            while j < len(lines) and len(vals) < nyears:
+                if NUMERICISH.match(lines[j]) or DASH.match(lines[j]):
+                    vals.append(num(lines[j]) or 0)
+                elif vals or j - i > 3:
+                    break  # angka sudah putus / label ternyata bukan baris data
+                j += 1
+            if vals:
+                out[field] = vals[-1]  # kolom tahun terakhir
+            i = j
+        if out:
+            return out, (years[-nyears:][-1] if years else 2025)
+    return {}, None
+
+
+def extract_jalan_kabupaten(books):
+    """Panjang jalan per kab/kota: kewenangan (8.1.1) + kondisi (8.1.3)."""
+    rows = []
+    for kode, path in books.items():
+        doc = fitz.open(path)
+        kew, th_kew = _extract_label_year_table(
+            doc, ("Panjang Jalan", "Kewenangan Pemerintahan"), [
+                ("Negara/", "panjang_negara_km"),
+                ("Provinsi/", "panjang_provinsi_km"),
+                ("Kabupaten", "panjang_kabkota_km"),
+                ("Kota", "panjang_kabkota_km"),
+                ("Jumlah/", "panjang_total_km"),
+            ])
+        kon, th_kon = _extract_label_year_table(
+            doc, ("Panjang Jalan", "Menurut Kondisi Jalan"), [
+                ("Baik/", "kondisi_baik_km"),
+                ("Sedang/", "kondisi_sedang_km"),
+                ("Rusak Berat/", "kondisi_rusak_berat_km"),
+                ("Rusak/", "kondisi_rusak_km"),
+                ("Jumlah/", "kondisi_total_km"),
+            ])
+        doc.close()
+        if not kew and not kon:
+            print(f"  WARNING: tabel panjang jalan tidak ditemukan di "
+                  f"{os.path.basename(path)} — dilewati", file=sys.stderr)
+            continue
+        rows.append({"kode_kab": kode, "tahun": th_kon or th_kew or 2025, **kew, **kon})
+    return rows
+
+
+def extract_all(prov_filter=None):
     kecamatan_rows, padi_all, kendaraan_all, potensi_rows = [], [], [], []
+    jalan_rows = []
     for prov in discover_provinces():
+        if prov_filter and prov_filter.lower() not in prov["folder"].lower():
+            continue
         names = prov["names"]
         # nama provinsi polos (baris total di tabel) dari nama folder "36 Banten"
         prov_name = re.sub(r"^\d+\s*", "", prov["folder"]).strip()
@@ -617,6 +755,9 @@ def extract_all():
         demografi = extract_kecamatan_demografi(prov["books"], totals)
         kendaraan_kec = extract_kendaraan_kecamatan(prov["books"], totals)
         potensi = extract_kecamatan_potensi(prov["books"], names, totals)
+        for r in extract_jalan_kabupaten(prov["books"]):
+            r["nama_kab"] = names[r["kode_kab"]]
+            jalan_rows.append(r)
         for (kode, nama), rec in sorted(potensi.items()):
             potensi_rows.append({
                 "kode_kab": kode, "nama_kab": names[kode], "kecamatan": nama,
@@ -670,6 +811,7 @@ def extract_all():
         "kabupaten_padi": padi_all,
         "kabupaten_kendaraan": kendaraan_all,
         "kecamatan_potensi": potensi_rows,
+        "kabupaten_jalan": jalan_rows,
     }
 
 
@@ -735,6 +877,41 @@ def load_mysql(data):
                      r["pertanian_produksi_ton"], r["perkebunan_produksi_ton"],
                      r["peternakan_produksi_daging_kg"], r["peternakan_produksi_telur_kg"],
                      r["perikanan_produksi_ton"]))
+            # Panjang jalan per kab/kota -- tabel dibuat di sini (bukan file
+            # schema terpisah yang harus dijalankan manual) supaya job per
+            # provinsi yang sudah berjalan bisa langsung menulis begitu kode
+            # ini terbaca proses berikutnya; lihat scripts/schema_bps_jalan.sql
+            # utk dokumentasi kolom.
+            cur.execute(
+                """CREATE TABLE IF NOT EXISTS bps_kabupaten_jalan (
+                     kode_kab   CHAR(4)     NOT NULL,
+                     nama_kab   VARCHAR(60) NOT NULL,
+                     tahun      SMALLINT    NOT NULL,
+                     panjang_negara_km      DECIMAL(10,2) NULL,
+                     panjang_provinsi_km    DECIMAL(10,2) NULL,
+                     panjang_kabkota_km     DECIMAL(10,2) NULL,
+                     panjang_total_km       DECIMAL(10,2) NULL,
+                     kondisi_baik_km        DECIMAL(10,2) NULL,
+                     kondisi_sedang_km      DECIMAL(10,2) NULL,
+                     kondisi_rusak_km       DECIMAL(10,2) NULL,
+                     kondisi_rusak_berat_km DECIMAL(10,2) NULL,
+                     kondisi_total_km       DECIMAL(10,2) NULL,
+                     PRIMARY KEY (kode_kab, tahun)
+                   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci""")
+            for r in data.get("kabupaten_jalan", []):
+                cur.execute(
+                    """REPLACE INTO bps_kabupaten_jalan
+                       (kode_kab, nama_kab, tahun, panjang_negara_km, panjang_provinsi_km,
+                        panjang_kabkota_km, panjang_total_km, kondisi_baik_km,
+                        kondisi_sedang_km, kondisi_rusak_km, kondisi_rusak_berat_km,
+                        kondisi_total_km)
+                       VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                    (r["kode_kab"], r["nama_kab"], r["tahun"],
+                     r.get("panjang_negara_km"), r.get("panjang_provinsi_km"),
+                     r.get("panjang_kabkota_km"), r.get("panjang_total_km"),
+                     r.get("kondisi_baik_km"), r.get("kondisi_sedang_km"),
+                     r.get("kondisi_rusak_km"), r.get("kondisi_rusak_berat_km"),
+                     r.get("kondisi_total_km")))
         conn.commit()
     counts = {k: len(v) for k, v in data.items()}
     print(f"Loaded ke MySQL: {counts}", file=sys.stderr)
@@ -749,8 +926,11 @@ def main():
             stream.reconfigure(encoding="utf-8", errors="replace")
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--load", action="store_true", help="muat hasil ke MySQL")
+    ap.add_argument("--provinsi", default=None,
+                    help="hanya folder provinsi yang namanya mengandung teks ini "
+                         "(mis. '36 Banten' atau 'banten'); default semua provinsi")
     args = ap.parse_args()
-    data = extract_all()
+    data = extract_all(args.provinsi)
     # --load dulu SEBELUM print JSON ke stdout -- supaya crash pas nulis ke
     # stdout (mis. konsol Windows default cp1252, tidak bisa encode sebagian
     # karakter nama buku/kecamatan non-Latin1) tidak menyebabkan hasil

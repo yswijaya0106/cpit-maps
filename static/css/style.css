@@ -166,6 +166,19 @@ table.datatable .rownum { color: var(--text-dim); font-size: 11.5px; }
 .bool-cell, td.bool-cell { text-align: center; }
 .bool-true { color: var(--accent); font-size: 15px; }
 .bool-false { color: var(--text-dim); font-size: 15px; opacity: .55; }
+/* Sel checklist Aspek A/B di preview skor IJD — tiap butir [v]/[ ] dari
+   backend dipisah newline; pre-line + ikon (lihat checklistHtml) supaya
+   terbaca sebagai daftar centang, bukan satu baris teks panjang. */
+table.datatable td.checklist-cell {
+  white-space: pre-line; min-width: 340px; line-height: 1.6;
+}
+table.datatable td.checklist-cell > div {
+  max-height: 150px; overflow-y: auto; padding-right: 4px;
+}
+/* Sel prosa AI (Narasi AI / Kesimpulan) — teks lengkap ada di tooltip title */
+table.datatable td.prose-cell { cursor: help; }
+td.checklist-cell .bool-true, td.checklist-cell .bool-false { font-size: 13px; margin-right: 3px; }
+td.checklist-cell .ijd-badge { margin-right: 4px; }
 .datatable-foot {
   display: flex; align-items: center; justify-content: space-between; gap: 12px;
   padding: 10px 16px; border-top: 1px solid var(--border); background: var(--panel);

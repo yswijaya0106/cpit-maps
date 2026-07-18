@@ -389,7 +389,7 @@ function renderPenilaianBappenasHtml(id, data) {
       <div class="ijd-bar-label">${escapeHtml(label)}
         <span class="usulan-badge usulan-badge-ok ijd-badge">poin ${poin} / 2</span></div>
     </div>
-    <p class="usulan-penilaian-narasi">${escapeHtml(narasi || "-")}</p>` +
+    <p class="usulan-penilaian-narasi">${narasi ? checklistHtml(narasi) : "-"}</p>` +
     (narasiAi ? `
     <p class="hint usulan-penilaian-ai-label"><i class="bi bi-stars"></i> Narasi AI</p>
     <p class="usulan-penilaian-narasi usulan-penilaian-narasi-ai">${escapeHtml(narasiAi)}</p>` : "");
@@ -641,6 +641,17 @@ async function ijdPreviewFetchPage() {
   }
 }
 
+// Ubah marker checklist teks polos dari backend ([Poin N] / [v] / [ ]) jadi
+// badge + ikon centang — dipakai sel Aspek A/B di preview dan panel detail.
+// Escape dulu, baru substitusi, supaya markup hasil substitusi tidak ikut
+// ter-escape dan sisa teksnya tetap aman.
+function checklistHtml(text) {
+  return escapeHtml(text)
+    .replace(/\[Poin (\d+)\]/g, '<span class="usulan-badge usulan-badge-ok ijd-badge">Poin $1</span>')
+    .replace(/\[v\]/g, '<i class="bi bi-check-square-fill bool-true"></i>')
+    .replace(/\[ \]/g, '<i class="bi bi-square bool-false"></i>');
+}
+
 function ijdPreviewRender(data) {
   document.getElementById("ijdPreviewTitle").textContent = data.label;
   document.getElementById("ijdPreviewMeta").textContent =
@@ -650,7 +661,13 @@ function ijdPreviewRender(data) {
   const cell = (v) => {
     if (v === null || v === undefined || v === "") return '<td class="null">—</td>';
     if (typeof v === "number") return `<td class="num">${v.toLocaleString("id-ID")}</td>`;
-    return `<td>${escapeHtml(String(v))}</td>`;
+    const s = String(v);
+    // Sel checklist Aspek A/B: marker jadi ikon + tiap butir di baris sendiri.
+    if (/\[Poin \d+\]|\[v\]|\[ \]/.test(s)) return `<td class="checklist-cell"><div>${checklistHtml(s)}</div></td>`;
+    // Teks prosa panjang (Narasi AI, Kesimpulan): tampil terpotong,
+    // teks lengkap di tooltip (title) saat hover.
+    if (s.length > 220) return `<td class="prose-cell" title="${escapeHtml(s)}">${escapeHtml(s.slice(0, 200))}…</td>`;
+    return `<td>${escapeHtml(s)}</td>`;
   };
   const body = data.rows.map((r) => `<tr>${r.map(cell).join("")}</tr>`).join("");
   document.getElementById("ijdPreviewScroll").innerHTML =

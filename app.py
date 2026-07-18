@@ -696,26 +696,35 @@ def bappenas_lokus_a_import(kriteria: str, file: UploadFile = File(...)):
     return {"kriteria": kriteria, "filename": file.filename, "total": len(rows), "match_kabupaten": n_match}
 
 
-def _data_table_geo_where(table: str, provinsi: int, kabupaten: int):
+def _data_table_geo_where(table: str, provinsi: int, kabupaten: int, kriteria: str = ""):
     """WHERE + params dari filter provinsi/kabupaten, kalau tabelnya kebagian
     kode geo (DATA_TABLE_GEO) dan filter diisi. Kabupaten menang kalau
-    keduanya diisi (provinsinya sudah tersirat)."""
+    keduanya diisi (provinsinya sudah tersirat). "kriteria" -- khusus
+    bappenas_lokus_a (dialog "Lokus Bappenas" navbar) -- filter tambahan
+    ANDed di atas geo, supaya dropdown kriteria bisa memfilter preview
+    grid, bukan cuma menentukan target upload xlsx."""
+    clauses, params = [], []
     geo = DATA_TABLE_GEO.get(table)
-    if not geo:
-        return "", []
-    prov_expr, kab_expr = geo
-    if kabupaten:
-        return f"WHERE {kab_expr} = %s", [kabupaten]
-    if provinsi:
-        return f"WHERE {prov_expr} = %s", [provinsi]
-    return "", []
+    if geo:
+        prov_expr, kab_expr = geo
+        if kabupaten:
+            clauses.append(f"{kab_expr} = %s")
+            params.append(kabupaten)
+        elif provinsi:
+            clauses.append(f"{prov_expr} = %s")
+            params.append(provinsi)
+    if kriteria and table == "bappenas_lokus_a":
+        clauses.append("kriteria = %s")
+        params.append(kriteria)
+    where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
+    return where, params
 
 
 @app.get("/api/data/{table}/export/xlsx")
-def data_table_export(table: str, provinsi: int = 0, kabupaten: int = 0):
+def data_table_export(table: str, provinsi: int = 0, kabupaten: int = 0, kriteria: str = ""):
     if table not in DATA_TABLES:
         raise HTTPException(404, "Tabel tidak dikenal")
-    where, params = _data_table_geo_where(table, provinsi, kabupaten)
+    where, params = _data_table_geo_where(table, provinsi, kabupaten, kriteria)
     with db_cursor() as cur:
         cur.execute(f"SHOW COLUMNS FROM `{table}`")
         columns = [c["Field"] for c in cur.fetchall()
@@ -741,12 +750,12 @@ def data_table_export(table: str, provinsi: int = 0, kabupaten: int = 0):
 
 
 @app.get("/api/data/{table}")
-def data_table_rows(table: str, limit: int = 50, offset: int = 0, provinsi: int = 0, kabupaten: int = 0):
+def data_table_rows(table: str, limit: int = 50, offset: int = 0, provinsi: int = 0, kabupaten: int = 0, kriteria: str = ""):
     if table not in DATA_TABLES:
         raise HTTPException(404, "Tabel tidak dikenal")
     limit = max(1, min(limit, 200))
     offset = max(0, offset)
-    where, params = _data_table_geo_where(table, provinsi, kabupaten)
+    where, params = _data_table_geo_where(table, provinsi, kabupaten, kriteria)
     with db_cursor() as cur:
         cur.execute(f"SHOW COLUMNS FROM `{table}`")
         columns = [c["Field"] for c in cur.fetchall()
@@ -2255,10 +2264,14 @@ pada data yang diberikan berisi hasil itu.
 Tugas Anda menyusun DUA teks:
 1. "kesimpulan": integrasi naratif 2-3 kalimat dari aspek_a_hasil DAN aspek_b_hasil APA ADANYA.
 2. "aspek_b_narasi_ai": narasi PELENGKAP khusus Aspek B (Daya Ungkit Ekonomi & Kinerja Sektoral) saja —
-   3-5 kalimat yang lebih mengalir dan meyakinkan (gaya laporan kebijakan), merangkai indikator yang ADA di
-   aspek_b_hasil["indikator_ada"] menjadi cerita dampak ekonomi/sektoral ruas ini (ketahanan pangan,
-   kelancaran logistik, pertumbuhan ekonomi lokal — sesuai definisi Aspek B). Bila indikator_ada kosong,
-   nyatakan dengan jujur belum ada indikator yang didukung data, jangan dibuat seolah ada.
+   gaya laporan kebijakan yang mengalir dan meyakinkan, BUKAN daftar/enumerasi kaku bergaya "Ditemukan N
+   indikator: ...; ...". WAJIB menyinggung SETIAP indikator di aspek_b_hasil["indikator_ada"] — jangan
+   diam-diam melewati sebagian demi keringkasan; kalau indikatornya banyak (>4), gunakan lebih banyak
+   kalimat (boleh sampai 8-10) supaya semua kebagian tempat, dikelompokkan per tema (mis. produksi pangan
+   dijadikan satu kalimat, konektivitas/lalu lintas kalimat lain) alih-alih satu kalimat generik per
+   indikator. Rangkai jadi cerita dampak ekonomi/sektoral ruas ini (ketahanan pangan, kelancaran logistik,
+   pertumbuhan ekonomi lokal — sesuai definisi Aspek B), sertakan angka konkret dari data bila ada. Bila
+   indikator_ada kosong, nyatakan dengan jujur belum ada indikator yang didukung data, jangan dibuat seolah ada.
 
 Kedua teks WAJIB berbasis fakta di aspek_a_hasil/aspek_b_hasil APA ADANYA — jangan mengarang fakta di luar \
 itu, jangan menilai ulang atau mengubah checklist/poin yang sudah diberikan. Sebut secara ringkas kriteria/\
@@ -2487,14 +2500,17 @@ def penilaian_bappenas_generate(usulan_id: int):
 
 PENILAIAN_BULK_SYSTEM_PROMPT = """Anda membantu analis Bappenas menyusun DRAF narasi Aspek B (Daya Ungkit \
 Ekonomi & Kinerja Sektoral) untuk BEBERAPA usulan Inpres Jalan Daerah sekaligus. Untuk SETIAP usulan pada \
-data JSON yang diberikan, susun narasi 3-5 kalimat gaya laporan kebijakan yang mengalir dan meyakinkan: \
-rangkai indikator pada "indikator_ada" beserta angka konkret pada "fakta" menjadi cerita dampak ekonomi/\
-sektoral ruas tersebut (ketahanan pangan, kelancaran logistik, pertumbuhan ekonomi lokal). "fakta" berisi \
+data JSON yang diberikan, susun narasi gaya laporan kebijakan yang mengalir dan meyakinkan — BUKAN \
+enumerasi kaku bergaya "Ditemukan N indikator: ...; ...". Narasi WAJIB menyinggung SETIAP indikator di \
+"indikator_ada" — jangan diam-diam melewati sebagian demi keringkasan; kalau indikatornya banyak (>4), \
+pakai lebih banyak kalimat (boleh sampai 8-10) supaya semua kebagian tempat, dikelompokkan per tema (mis. \
+produksi pangan jadi satu kalimat, konektivitas/lalu lintas kalimat lain) alih-alih satu kalimat generik \
+per indikator. Rangkai indikator beserta angka konkret pada "fakta" menjadi cerita dampak ekonomi/sektoral \
+ruas tersebut (ketahanan pangan, kelancaran logistik, pertumbuhan ekonomi lokal). "fakta" berisi \
 "ringkasan_indikator" plus data BPS pendukung: "demografi_kecamatan_bps" (level kecamatan) serta \
 "padi_kabupaten_bps" dan "kendaraan_kabupaten_bps" (level KABUPATEN/KOTA — bila disebut, WAJIB \
 diatribusikan ke kabupaten/kota, jangan ditulis seolah angka kecamatan atau ruas). Sebut nama kegiatan/\
-koridor, wilayah, dan angka dari data bila relevan. JANGAN menulis enumerasi kaku bergaya \
-"Ditemukan N indikator: ...; ...".
+koridor, wilayah, dan angka dari data bila relevan.
 
 WAJIB berbasis fakta yang diberikan APA ADANYA — jangan mengarang angka atau fakta di luar data. Bila \
 "indikator_ada" sebuah usulan kosong, nyatakan jujur belum ada indikator daya ungkit yang didukung data \
@@ -2505,10 +2521,13 @@ Balas HANYA JSON valid tanpa teks lain, format:
 — satu objek per usulan, "id" disalin apa adanya dari data. Bahasa Indonesia formal."""
 
 # Usulan per panggilan LLM — model diminta membalas array JSON satu objek per
-# usulan, lalu di-upsert per baris. 30 x (3-5 kalimat) butuh ±6-8 ribu token
-# output, makanya panggilan bulk memakai max_tokens lebih besar dari default
-# _llm_plain (lihat _PENILAIAN_BULK_MAX_TOKENS).
-_PENILAIAN_BULK_BATCH = 30
+# usulan, lalu di-upsert per baris. Narasi kini wajib menyinggung SEMUA
+# indikator_ada (bisa sampai 8-10 kalimat utk usulan dgn banyak indikator,
+# bukan 3-5 lagi) -- batch diperkecil dari 30 ke 20 supaya total token
+# output per panggilan LLM tetap wajar di bawah max_tokens (lihat
+# _PENILAIAN_BULK_MAX_TOKENS) tanpa mengubah max_tokens setinggi mungkin
+# risiko melewati batas keras sebagian provider.
+_PENILAIAN_BULK_BATCH = 20
 _PENILAIAN_BULK_MAX_TOKENS = 8192
 
 

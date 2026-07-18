@@ -32,7 +32,9 @@ async function dataViewerToggleMenu() {
   }
   try {
     const tables = await dataViewerLoadTables();
-    menu.innerHTML = tables.map((t) =>
+    // bappenas_lokus_a punya entry point sendiri sekarang (tombol navbar
+    // "Lokus Bappenas") -- tidak perlu dobel muncul di menu "Data" generik.
+    menu.innerHTML = tables.filter((t) => t.name !== "bappenas_lokus_a").map((t) =>
       `<button type="button" class="datatable-menu-item" data-table="${t.name}">
          <span>${t.label}</span>
          <span class="datatable-menu-count">${t.total.toLocaleString("id-ID")}</span>
@@ -161,6 +163,12 @@ function bindDataViewerImport() {
     (value) => {
       dataViewer.importKriteria = value;
       document.getElementById("dataTableImportBtn").disabled = !value;
+      // dropdown kriteria dobel fungsi: selain target upload, juga memfilter
+      // grid preview ke kriteria terpilih (kosong = semua kriteria).
+      if (dataViewer.table === "bappenas_lokus_a") {
+        dataViewer.offset = 0;
+        dataViewerFetchPage();
+      }
     },
   );
 
@@ -202,6 +210,9 @@ async function dataViewerFetchPage() {
     const params = new URLSearchParams({ limit: dataViewer.limit, offset: dataViewer.offset });
     if (dataViewer.provinsi) params.set("provinsi", dataViewer.provinsi);
     if (dataViewer.kabupaten) params.set("kabupaten", dataViewer.kabupaten);
+    if (dataViewer.table === "bappenas_lokus_a" && dataViewer.importKriteria) {
+      params.set("kriteria", dataViewer.importKriteria);
+    }
     const res = await fetch(`/api/data/${dataViewer.table}?${params}`);
     const data = await res.json();
     if (!res.ok) throw new Error(data.detail || "Gagal memuat data");
@@ -250,8 +261,22 @@ function dataViewerRender(data) {
   document.getElementById("dataTableNext").disabled = data.offset + data.limit >= data.total;
 }
 
+async function dataViewerOpenLokusBappenas() {
+  // Entry point navbar terpisah dari menu "Data" -- langsung buka dialog
+  // yang sama dgn table=bappenas_lokus_a terpilih (dropdown kriteria di
+  // panel import dobel fungsi jadi filter preview grid, lihat bindDataViewerImport).
+  try {
+    await dataViewerLoadTables();
+  } catch (err) {
+    toast(err.message, true);
+    return;
+  }
+  dataViewerOpen("bappenas_lokus_a");
+}
+
 function bindDataViewer() {
   document.getElementById("btnDataTable").addEventListener("click", dataViewerToggleMenu);
+  document.getElementById("btnLokusBappenas").addEventListener("click", dataViewerOpenLokusBappenas);
 
   document.getElementById("dataTableMenu").addEventListener("click", (e) => {
     const item = e.target.closest("[data-table]");
@@ -269,6 +294,9 @@ function bindDataViewer() {
     const params = new URLSearchParams();
     if (dataViewer.provinsi) params.set("provinsi", dataViewer.provinsi);
     if (dataViewer.kabupaten) params.set("kabupaten", dataViewer.kabupaten);
+    if (dataViewer.table === "bappenas_lokus_a" && dataViewer.importKriteria) {
+      params.set("kriteria", dataViewer.importKriteria);
+    }
     const qs = params.toString();
     window.location.href = `/api/data/${dataViewer.table}/export/xlsx${qs ? `?${qs}` : ""}`;
   });

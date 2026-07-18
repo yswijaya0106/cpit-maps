@@ -94,6 +94,11 @@ MARKER = re.compile(r"^\(\d+\)$")
 NUMERICISH = re.compile(r"^[\d.,\s]+$")
 DASH = re.compile(r"^[–—-]$")
 STOPLINE = re.compile(r"^(Lanjutan Tabel|Sumber/Source|Catatan/Note|https?://)")
+ROW_NUMBERING = re.compile(r"^\d+\.\s*")  # "1. Kepulauan Mentawai" -> "Kepulauan Mentawai"
+
+
+def strip_row_numbering(name):
+    return ROW_NUMBERING.sub("", name)
 
 # frasa Indonesia -> nama field; urutan kemunculan di blok header halaman =
 # urutan kolom nilai pada halaman itu
@@ -272,30 +277,44 @@ def build_prov_row_maps(names):
 
 
 def parse_prov_rows(lines, ncols, row_kab, row_kota):
-    """Return dict[kode_kab] = [nilai...] utk halaman tabel provinsi."""
+    """Return dict[kode_kab] = [nilai...] utk halaman tabel provinsi. Sama
+    dua varian format yang ditangani extract_kendaraan_provinsi(): nama
+    bilingual dua baris ("Kabupaten Bogor/" + "Bogor Regency") dan baris
+    angka yang menggabungkan >1 nilai kolom dalam satu teks."""
     marker_idx = [i for i, ln in enumerate(lines) if MARKER.match(ln)]
     if not marker_idx:
         return {}
     out, section, name, values = {}, None, None, []
+    awaiting_continuation = False
     for ln in lines[marker_idx[-1] + 1:]:
         if STOPLINE.match(ln):
             break
         if ln.startswith("Kabupaten/"):
-            section, name, values = row_kab, None, []
+            section, name, values, awaiting_continuation = row_kab, None, [], False
             continue
         if ln.startswith("Kota/"):
-            section, name, values = row_kota, None, []
+            section, name, values, awaiting_continuation = row_kota, None, [], False
+            continue
+        if ln.endswith("/") and (ln.startswith("Kabupaten ") or ln.startswith("Kota ")):
+            sect = row_kab if ln.startswith("Kabupaten ") else row_kota
+            prefix_len = len("Kabupaten ") if ln.startswith("Kabupaten ") else len("Kota ")
+            section, name, values = sect, ln[prefix_len:-1], []
+            awaiting_continuation = True
             continue
         if NUMERICISH.match(ln) or DASH.match(ln):
+            awaiting_continuation = False
             if name is None:
                 continue
-            values.append(num(ln))
-            if len(values) == ncols:
-                if section and name in section:
-                    out[section[name]] = values
-                name, values = None, []
+            for tok in ln.split():
+                values.append(num(tok))
+                if len(values) == ncols:
+                    if section and name in section:
+                        out[section[name]] = values
+                    name, values = None, []
+        elif awaiting_continuation:
+            awaiting_continuation = False  # baris kedua nama bilingual (Inggris)
         else:
-            name, values = ln, []
+            name, values = strip_row_numbering(ln), []
     return out
 
 
@@ -322,7 +341,14 @@ def extract_kendaraan_provinsi(doc, row_kab, row_kota):
     """Tabel 9.1.2 provinsi: kendaraan per kab per jenis. Baris per kab = 3
     tahun (2023/2024/2025) x 5 nilai + label tahun di kolom (2)... label tahun
     ('20231', '20242', '2025*,2') ikut tertangkap sebagai baris numerik/nama —
-    tangani khusus."""
+    tangani khusus. Dua varian nama baris teramati antar provinsi:
+      - polos satu baris ("Pandeglang", section header "Kabupaten/Regency")
+      - bilingual dua baris ("Kabupaten Bogor/" lalu "Bogor Regency") — baris
+        kedua (Inggris) harus dilewati, bukan menimpa nama.
+    Sebagian buku (kolom sempit) juga menggabungkan 2 nilai kolom terakhir
+    dalam satu baris teks ('1.433.350  1.664.859') — NUMERICISH tetap cocok
+    (spasi diizinkan), jadi tiap baris numerik dipecah per token, bukan
+    diperlakukan sebagai satu nilai."""
     p = _find_prov_page(doc, "9.1.2", "Kendaraan Bermotor")
     out = {}
     for pno in (p, p + 1):
@@ -331,29 +357,42 @@ def extract_kendaraan_provinsi(doc, row_kab, row_kota):
         if not marker_idx:
             continue
         section, name, tahun, values = None, None, None, []
+        awaiting_continuation = False
         for ln in lines[marker_idx[-1] + 1:]:
             if STOPLINE.match(ln):
                 break
             if ln.startswith("Kabupaten/"):
-                section, name = row_kab, None
+                section, name, awaiting_continuation = row_kab, None, False
                 continue
             if ln.startswith("Kota/"):
-                section, name = row_kota, None
+                section, name, awaiting_continuation = row_kota, None, False
+                continue
+            # baris nama bilingual per-kab, mis. "Kabupaten Bogor/" / "Kota Bogor/"
+            if ln.endswith("/") and (ln.startswith("Kabupaten ") or ln.startswith("Kota ")):
+                sect = row_kab if ln.startswith("Kabupaten ") else row_kota
+                prefix_len = len("Kabupaten ") if ln.startswith("Kabupaten ") else len("Kota ")
+                section, name = sect, ln[prefix_len:-1]
+                tahun, values, awaiting_continuation = None, [], True
                 continue
             m = re.match(r"^(20\d\d)\W*\d?$", ln)  # label tahun: 20231 / 2025*,2
             if m and len(ln) <= 8 and not values:
-                tahun, values = int(m.group(1)), []
+                tahun, values, awaiting_continuation = int(m.group(1)), [], False
                 continue
             if NUMERICISH.match(ln) or DASH.match(ln):
+                awaiting_continuation = False
                 if name is None or tahun is None:
                     continue
-                values.append(num(ln))
-                if len(values) == 5:
-                    if section and name in section:
-                        out[(section[name], tahun)] = values
-                    tahun, values = None, []
+                for tok in ln.split():
+                    values.append(num(tok))
+                    if len(values) == 5:
+                        if section and name in section:
+                            out[(section[name], tahun)] = values
+                        tahun, values = None, []
+            elif awaiting_continuation:
+                # baris kedua nama bilingual (Inggris) — bukan nama baru
+                awaiting_continuation = False
             else:
-                name, tahun, values = ln, None, []
+                name, tahun, values = strip_row_numbering(ln), None, []
     rows = []
     for (kode, tahun), v in sorted(out.items()):
         rows.append({

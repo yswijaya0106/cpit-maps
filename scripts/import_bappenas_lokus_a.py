@@ -11,9 +11,10 @@ SWASEMBADA_PANGAN_RPJMN.
 
 5 kriteria lain (PKPN, PERKEBUNAN, PERIKANAN, TRANSMIGRASI, KI_PRIORITAS)
 SUDAH ada di tabel kawasan_tematik (scripts/import_kawasan_tematik.py) --
-TIDAK diduplikasi di sini. BBM_1_HARGA belum diimpor sama sekali (sumber
-"Lokus IJD BBM 1 HARGA" cuma teks bebas + koordinat, tidak ada kolom
-kabupaten/kota bersih).
+TIDAK diduplikasi di sini. BBM_1_HARGA (sheet "Lokus IJD BBM 1 HARGA", cuma
+5 baris nasional per 17 Jul 2026, teks bebas + koordinat tanpa kolom
+kabupaten/kota bersih) diimpor via regex "Kab./Kec. <nama>" pada gabungan
+seluruh sel per baris -- lihat import_bbm_1_harga().
 
 Semua fungsi import_* punya signature seragam (wb, ctx) -> list-of-rows
 (ctx = dict kab_idx/kec_idx/kab_by_name/prov_idx dari build_master_index())
@@ -329,6 +330,94 @@ def import_swasembada_pangan_lokus(wb, ctx, sumber_file="6_Usulan Lokus IJD 2026
     return out
 
 
+_KEC_RX = re.compile(
+    r"Kec(?:amatan)?\.?\s+([A-Za-zÀ-ÿ][\w'-]*(?:\s+[A-Za-zÀ-ÿ][\w'-]*)*?)"
+    r"(?=\s*(?:,|\.|\n|\||$|Kab\b|Kel\b))", re.I)
+_KAB_RX = re.compile(
+    r"Kab(?:upaten)?\.?\s+([A-Za-zÀ-ÿ][\w'-]*(?:\s+[A-Za-zÀ-ÿ][\w'-]*)*?)"
+    r"(?=\s*(?:,|\.|\n|\||$|Kec\b|Kel\b|Provinsi\b|Jalan\b))", re.I)
+
+
+def import_bbm_1_harga(wb, ctx, sumber_file="6_Usulan Lokus IJD 2026 Sektor Bappenas.xlsx"):
+    """Sheet "Lokus IJD BBM 1 HARGA" -- HANYA 5 baris nasional (per 17 Jul
+    2026), TANPA kolom kabupaten/kecamatan bersih: lokasi ada di teks bebas
+    tersebar di beberapa kolom ("Ruas Jalan"/"Identifikasi Ruas"/"Lokasi
+    Ruas yang Rusak" Dari-Ke/"Lokasi Yang dituju"), dan header sel gabung
+    bikin index kolom antar baris tidak konsisten -- makanya SELURUH sel per
+    baris digabung jadi satu teks lalu dicari pola "Kab./Kabupaten X" &
+    "Kec./Kecamatan X" dgn regex, bukan baca kolom tetap. Kolom "Provinsi"
+    (index 7) konsisten terisi bersih di kelima baris -- dipakai sbg batas
+    provinsi supaya nama kab/kec pendek tidak salah cocok ke provinsi lain.
+
+    Kabupaten yang disingkat di sumbernya (mis. "Kab. Lutra" utk "Luwu
+    Utara") gagal cocok by name -- fallback: cocokkan kecamatan hasil regex
+    ke SEMUA kabupaten di provinsi itu (kec_by_prov), pakai kalau hasilnya
+    unik. Baris yang menyebut >1 kabupaten tanpa kecamatan spesifik (mis.
+    "wilayah Kab. Dogiyai, Kab. Deiyai, dan Kab. Paniai") menghasilkan
+    BEBERAPA baris keluaran, satu per kabupaten yang match, level KABUPATEN
+    (bukan lokasi pasti -- SENGAJA beda dari pola kriteria lain yg 1 baris
+    sumber = 1 baris keluaran).
+
+    Regex ini diverifikasi manual cocok 5/5 baris sumber (17 Jul 2026) --
+    KALAU sumbernya bertambah baris/berubah format, cek ulang manual,
+    jangan percaya regex begitu saja."""
+    ws = wb["Lokus IJD BBM 1 HARGA"]
+    kab_idx, kec_idx = ctx["kab_idx"], ctx["kec_idx"]
+    kec_by_prov = ctx.get("_kec_by_prov")
+    if kec_by_prov is None:
+        kec_by_prov = {}
+        for (kode_kab, nama_kec_norm), kode_kec in kec_idx.items():
+            kec_by_prov.setdefault((kode_kab // 100, nama_kec_norm), set()).add((kode_kab, kode_kec))
+        ctx["_kec_by_prov"] = kec_by_prov
+
+    out = []
+    for row in ws.iter_rows(min_row=3, values_only=True):
+        if not row or len(row) < 8:
+            continue
+        provinsi = clean(row[7])
+        if not provinsi:
+            continue
+        blob = " | ".join(clean(v) or "" for v in row)
+        kab_candidates = list(dict.fromkeys(m.strip() for m in _KAB_RX.findall(blob)))
+        kec_candidates = list(dict.fromkeys(m.strip() for m in _KEC_RX.findall(blob)))
+        kode_prov = ctx["prov_idx"].get(norm_prov(provinsi))
+
+        matched_kabs = []
+        for kabc in kab_candidates:
+            m = match_kab(kab_idx, provinsi, kabc)
+            if m:
+                matched_kabs.append(m["kode_kabupaten"])
+        matched_kabs = list(dict.fromkeys(matched_kabs))
+
+        if not matched_kabs and kec_candidates:
+            for kecc in kec_candidates:
+                cands = kec_by_prov.get((kode_prov, norm(kecc)))
+                if cands and len(cands) == 1:
+                    matched_kabs = [next(iter(cands))[0]]
+                    break
+
+        if len(matched_kabs) > 1:
+            for kode_kab in matched_kabs:
+                out.append(_row("BBM_1_HARGA", "KABUPATEN", provinsi, None, None,
+                                 kode_prov, kode_kab, None, clean(row[3]), sumber_file, ws.title))
+            continue
+
+        kode_kab = matched_kabs[0] if matched_kabs else None
+        kode_kec = None
+        if kode_kab:
+            for kecc in kec_candidates:
+                kode_kec = match_kec(kec_idx, kode_kab, kecc)
+                if kode_kec:
+                    break
+        level = "KECAMATAN" if kode_kec else "KABUPATEN"
+        out.append(_row("BBM_1_HARGA", level, provinsi,
+                         kab_candidates[0] if kab_candidates else None,
+                         kec_candidates[0] if kode_kec else None,
+                         kode_prov, kode_kab, kode_kec,
+                         clean(row[3]), sumber_file, ws.title))
+    return out
+
+
 def import_swasembada_pangan_rpjmn(wb, ctx, sumber_file="Lampiran IV RPJMN 2025-2029.xlsx"):
     """Sheet2 "Lampiran IV RPJMN 2025-2029.xlsx" -- cuma kolom KAB/KOTA
     (tanpa provinsi terpisah) -- dicocokkan by nama kabupaten saja."""
@@ -398,6 +487,11 @@ KRITERIA_SOURCES = {
         "label": "Lokus Swasembada Pangan (6_Usulan Lokus IJD 2026, sheet Lokus Swasembada Pangan)",
         "file": "6_Usulan Lokus IJD 2026 Sektor Bappenas.xlsx",
         "importer": import_swasembada_pangan_lokus,
+    },
+    "BBM_1_HARGA": {
+        "label": "BBM Satu Harga (6_Usulan Lokus IJD 2026, sheet Lokus IJD BBM 1 HARGA — regex teks bebas)",
+        "file": "6_Usulan Lokus IJD 2026 Sektor Bappenas.xlsx",
+        "importer": import_bbm_1_harga,
     },
 }
 

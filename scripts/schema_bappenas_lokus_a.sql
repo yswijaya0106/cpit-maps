@@ -13,13 +13,16 @@
 --
 -- kriteria = salah satu dari:
 --   LOKPRI_RPJMN, PKSN, PERBATASAN, SR, SEKOLAH_GARUDA, KNMP, KDMP,
---   SWASEMBADA_PANGAN_RPJMN (baru, diimpor script ini)
+--   SWASEMBADA_PANGAN_RPJMN, BBM_1_HARGA (diimpor script ini)
 --   PKPN, PERKEBUNAN, PERIKANAN, TRANSMIGRASI, KI_PRIORITAS (SUDAH ada di
 --   kawasan_tematik dari import_kawasan_tematik.py -- TIDAK diduplikasi di
 --   sini, scorer Aspek A membaca kawasan_tematik langsung utk kategori ini)
---   BBM_1_HARGA (belum diimpor -- sumber "Lokus IJD BBM 1 HARGA" cuma
---   deskripsi ruas bebas teks + koordinat, tidak ada kolom kabupaten/kota
---   bersih utk dicocokkan by nama; butuh pendekatan lain, mis. spasial)
+-- BBM_1_HARGA: sumber "Lokus IJD BBM 1 HARGA" cuma 5 baris nasional, teks
+-- bebas + koordinat tanpa kolom kabupaten/kota bersih -- dicocokkan via
+-- regex "Kab./Kec. <nama>" pada gabungan sel per baris (lihat
+-- import_bbm_1_harga() di import_bappenas_lokus_a.py), diverifikasi manual
+-- 5/5 baris. Baris yg menyebut >1 kabupaten (tanpa kecamatan spesifik)
+-- menghasilkan beberapa baris keluaran level KABUPATEN, satu per kabupaten.
 
 USE route_gis;
 

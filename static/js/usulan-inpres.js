@@ -597,25 +597,37 @@ async function ijdPreviewOpen(provinsi) {
 async function ijdPreviewProsesNarasiAi() {
   if (!ijdPreview.provinsi) return;
   const btn = document.getElementById("ijdPreviewNarasiAi");
+  const force = document.getElementById("ijdPreviewNarasiForce").checked;
   btn.disabled = true;
   btn.innerHTML = '<i class="bi bi-hourglass-split"></i> Memproses…';
   let total = 0;
+  let afterId = 0;
   try {
-    // Backend memproses SATU batch (±10 usulan, 1 panggilan LLM) per request;
+    // Backend memproses SATU batch (±20 usulan, 1 panggilan LLM) per request;
     // loop di sini sampai sisa 0 supaya ada progres dan tidak kena timeout.
+    // force=true (checkbox "Timpa narasi lama") memproses ULANG semua usulan
+    // provinsi ini walau sudah punya narasi -- backend pakai kursor id
+    // (next_after_id) supaya tiap panggilan maju, bukan mengulang batch
+    // pertama selamanya.
     for (;;) {
-      const res = await fetch(
-        `/api/usulan-inpres/penilaian-bappenas/bulk?provinsi=${encodeURIComponent(ijdPreview.provinsi)}`,
-        { method: "POST" });
+      const params = new URLSearchParams({ provinsi: ijdPreview.provinsi });
+      if (force) {
+        params.set("force", "true");
+        params.set("after_id", afterId);
+      }
+      const res = await fetch(`/api/usulan-inpres/penilaian-bappenas/bulk?${params}`, { method: "POST" });
       const data = await res.json();
       if (!res.ok) throw new Error(data.detail || "Gagal memproses narasi AI");
       total += data.diproses;
+      afterId = data.next_after_id ?? afterId;
       if (data.sisa <= 0) break;
       btn.innerHTML = `<i class="bi bi-hourglass-split"></i> Memproses… (sisa ${data.sisa})`;
     }
     toast(total
       ? `Narasi AI Aspek B selesai: ${total} usulan diproses.`
-      : "Semua usulan provinsi ini sudah punya narasi AI Aspek B.");
+      : force
+        ? "Tidak ada usulan untuk diproses di provinsi ini."
+        : "Semua usulan provinsi ini sudah punya narasi AI Aspek B — centang \"Timpa narasi lama\" untuk memproses ulang.");
     await ijdPreviewFetchPage();
   } catch (err) {
     toast(err.message, true);

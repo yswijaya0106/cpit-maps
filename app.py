@@ -1967,6 +1967,7 @@ BAPPENAS_KRITERIA_LABEL = {
     "KDMP": "Koperasi Desa Merah Putih (KDMP)",
     "KI_PRIORITAS": "Kawasan Industri Prioritas (PSN/Hilirisasi/RPJMN/Dirgantara)",
     "SWASEMBADA_PANGAN_RPJMN": "Kawasan Komoditas Unggulan Swasembada Pangan RPJMN",
+    "BBM_1_HARGA": "Lokasi Mendukung Distribusi BBM Satu Harga",
 }
 _BAPPENAS_KAWASAN_TEMATIK_KATEGORI = ("PKPN", "TRANSMIGRASI", "KI_PRIORITAS")
 
@@ -2590,30 +2591,44 @@ def _bappenas_fakta_pendukung(row: dict, aspek_b: dict) -> dict:
 
 
 @app.post("/api/usulan-inpres/penilaian-bappenas/bulk")
-def penilaian_bappenas_bulk(provinsi: str = ""):
+def penilaian_bappenas_bulk(provinsi: str = "", force: bool = False, after_id: int = 0):
     """Generate narasi AI Aspek B massal — SATU batch (<= _PENILAIAN_BULK_BATCH
     usulan, satu panggilan LLM) per request; frontend memanggil berulang sampai
     sisa=0 supaya ada progres dan request tidak kena timeout. SENGAJA hanya
     per provinsi (bukan nasional) supaya pemakaian kuota LLM terkendali.
-    Usulan yang sudah punya aspek_b_narasi_ai dilewati (resume-able, tidak
-    menimpa). Aspek A/B rule-based ikut di-upsert supaya panel detail tetap
-    utuh; "kesimpulan" TETAP hanya digenerate per-usulan lewat
+    Default resume-able: usulan yang sudah punya aspek_b_narasi_ai dilewati,
+    TIDAK ditimpa. force=true membalik itu — proses ULANG semua usulan
+    provinsi ini walau sudah punya narasi (dipakai setelah prompt/kaidah
+    narasi berubah, mis. narasi lama dari sebelum prompt diperluas supaya
+    menyinggung SEMUA indikator_ada, bukan cuma 3-5 kalimat pilihan model).
+    Aspek A/B rule-based ikut di-upsert supaya panel detail tetap utuh;
+    "kesimpulan" TETAP hanya digenerate per-usulan lewat
     POST /api/usulan-inpres/{id}/penilaian-bappenas."""
     provinsi = (provinsi or "").strip()
     if not provinsi:
         raise HTTPException(400, "Proses bulk narasi AI hanya bisa per provinsi — pilih filter provinsi dulu.")
     _ensure_penilaian_table()
+    # force=True mengabaikan filter "narasi belum ada" (jadi TIDAK menyusut
+    # otomatis antar panggilan) — pakai kursor id (after_id) supaya batch
+    # berikutnya maju, bukan mengulang batch pertama selamanya.
     with db_cursor() as cur:
-        cur.execute(
-            "SELECT u.* FROM usulan_inpres u "
-            "LEFT JOIN penilaian_bappenas_ai p ON p.usulan_id = u.id "
-            "WHERE u.provinsi = %s AND (p.aspek_b_narasi_ai IS NULL OR p.aspek_b_narasi_ai = '') "
-            "ORDER BY u.id",
-            (provinsi,),
-        )
+        if force:
+            cur.execute(
+                "SELECT u.* FROM usulan_inpres u "
+                "WHERE u.provinsi = %s AND u.id > %s ORDER BY u.id",
+                (provinsi, after_id),
+            )
+        else:
+            cur.execute(
+                "SELECT u.* FROM usulan_inpres u "
+                "LEFT JOIN penilaian_bappenas_ai p ON p.usulan_id = u.id "
+                "WHERE u.provinsi = %s AND (p.aspek_b_narasi_ai IS NULL OR p.aspek_b_narasi_ai = '') "
+                "ORDER BY u.id",
+                (provinsi,),
+            )
         pending = cur.fetchall()
     if not pending:
-        return {"diproses": 0, "sisa": 0, "provinsi": provinsi}
+        return {"diproses": 0, "sisa": 0, "provinsi": provinsi, "next_after_id": after_id}
 
     rows = pending[:_PENILAIAN_BULK_BATCH]
     hasil = {}
@@ -2675,8 +2690,9 @@ def penilaian_bappenas_bulk(provinsi: str = ""):
         # lindungi frontend dari loop tak berujung kalau model menjawab tapi id-nya salah semua
         raise HTTPException(502, f"{provider} menjawab, tetapi tidak ada narasi valid untuk batch ini.")
     _ijd_bulk_cache.clear()  # narasi AI baru -> preview & export xlsx kadaluarsa
-    return {"diproses": diproses, "sisa": len(pending) - diproses,
-            "provider": provider, "model": model, "provinsi": provinsi}
+    return {"diproses": diproses, "sisa": len(pending) - (len(rows) if force else diproses),
+            "provider": provider, "model": model, "provinsi": provinsi,
+            "next_after_id": rows[-1]["id"] if force and rows else after_id}
 
 
 _KML_COORD_RE = re.compile(

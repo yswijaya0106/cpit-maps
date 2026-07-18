@@ -123,6 +123,11 @@ html, body {
 .datatable-meta { font-size: 12px; color: var(--text-dim); margin-right: auto; }
 .datatable-filters { display: flex; align-items: center; gap: 6px; }
 .datatable-filters .maplayer-combo { width: 170px; flex: 0 0 auto; }
+.ijd-narasi-force {
+  display: flex; align-items: center; gap: 5px;
+  font-size: 12px; color: var(--text-dim); white-space: nowrap; cursor: pointer;
+}
+.ijd-narasi-force input { cursor: pointer; }
 .datatable-filters .maplayer-combo-toggle { padding: 6px 8px; font-size: 12px; }
 .datatable-filters .maplayer-combo-toggle span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .datatable-filters .maplayer-combo-toggle:disabled { opacity: .5; cursor: not-allowed; }

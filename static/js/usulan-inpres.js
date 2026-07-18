@@ -582,8 +582,47 @@ const ijdPreview = { provinsi: "", offset: 0, limit: 50, total: 0 };
 async function ijdPreviewOpen(provinsi) {
   ijdPreview.provinsi = provinsi || "";
   ijdPreview.offset = 0;
+  // Proses bulk narasi AI HANYA per provinsi (kuota LLM terkendali) —
+  // tanpa filter provinsi tombolnya dimatikan, bukan disembunyikan,
+  // supaya user tahu fiturnya ada dan apa syaratnya.
+  const btnNarasi = document.getElementById("ijdPreviewNarasiAi");
+  btnNarasi.disabled = !ijdPreview.provinsi;
+  btnNarasi.title = ijdPreview.provinsi
+    ? `Generate narasi AI Aspek B untuk usulan ${ijdPreview.provinsi} yang belum punya narasi`
+    : "Hanya bisa per provinsi — pilih filter provinsi di panel Jelajahi dulu";
   document.getElementById("ijdPreviewOverlay").hidden = false;
   await ijdPreviewFetchPage();
+}
+
+async function ijdPreviewProsesNarasiAi() {
+  if (!ijdPreview.provinsi) return;
+  const btn = document.getElementById("ijdPreviewNarasiAi");
+  btn.disabled = true;
+  btn.innerHTML = '<i class="bi bi-hourglass-split"></i> Memproses…';
+  let total = 0;
+  try {
+    // Backend memproses SATU batch (±10 usulan, 1 panggilan LLM) per request;
+    // loop di sini sampai sisa 0 supaya ada progres dan tidak kena timeout.
+    for (;;) {
+      const res = await fetch(
+        `/api/usulan-inpres/penilaian-bappenas/bulk?provinsi=${encodeURIComponent(ijdPreview.provinsi)}`,
+        { method: "POST" });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || "Gagal memproses narasi AI");
+      total += data.diproses;
+      if (data.sisa <= 0) break;
+      btn.innerHTML = `<i class="bi bi-hourglass-split"></i> Memproses… (sisa ${data.sisa})`;
+    }
+    toast(total
+      ? `Narasi AI Aspek B selesai: ${total} usulan diproses.`
+      : "Semua usulan provinsi ini sudah punya narasi AI Aspek B.");
+    await ijdPreviewFetchPage();
+  } catch (err) {
+    toast(err.message, true);
+  } finally {
+    btn.disabled = !ijdPreview.provinsi;
+    btn.innerHTML = '<i class="bi bi-stars"></i> Proses Narasi AI';
+  }
 }
 
 async function ijdPreviewFetchPage() {
@@ -654,6 +693,7 @@ function bindIjdPreview() {
     if (ijdPreview.provinsi) params.set("provinsi", ijdPreview.provinsi);
     window.location.href = `/api/usulan-inpres/ijd-score/export/xlsx?${params}`;
   });
+  document.getElementById("ijdPreviewNarasiAi").addEventListener("click", ijdPreviewProsesNarasiAi);
 }
 
 document.addEventListener("DOMContentLoaded", bindIjdPreview);

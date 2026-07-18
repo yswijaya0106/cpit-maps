@@ -43,6 +43,13 @@ import import_bappenas_lokus_a as bappenas_lokus_xlsx  # noqa: E402
 
 from db import db_cursor  # noqa: E402
 import chat_providers  # noqa: E402
+# _llm_plain/_plain_* (penilaian Bappenas AI) masih tinggal di app.py dan
+# butuh konstanta model/URL yang ikut pindah ke chat_providers saat refactor
+# Fase 2 — tanpa import ini semua fitur AI Bappenas NameError.
+from chat_providers import (  # noqa: E402
+    GROQ_MODEL, GROQ_API_URL, GROK_MODEL, GROK_API_URL,
+    OPENAI_MODEL, CLAUDE_MODEL, GEMINI_MODEL,
+)
 
 app = FastAPI(title="Route to SHP Converter")
 
@@ -2207,52 +2214,54 @@ Balas HANYA JSON valid tanpa teks lain, format:
 Bahasa Indonesia formal, sebut angka/kriteria dari data bila relevan."""
 
 
-def _plain_openai_compatible(url: str, key: str, model: str, system: str, user: str) -> str:
+def _plain_openai_compatible(url: str, key: str, model: str, system: str, user: str, max_tokens: int = 2048) -> str:
     resp = requests.post(
         url, headers={"Authorization": f"Bearer {key}"},
-        json={"model": model, "temperature": 0.4,
+        json={"model": model, "temperature": 0.4, "max_tokens": max_tokens,
               "messages": [{"role": "system", "content": system},
                            {"role": "user", "content": user}]},
-        timeout=90,
+        timeout=180,
     )
     resp.raise_for_status()
     return resp.json()["choices"][0]["message"]["content"]
 
 
-def _plain_claude(key: str, system: str, user: str) -> str:
+def _plain_claude(key: str, system: str, user: str, max_tokens: int = 2048) -> str:
     client = anthropic.Anthropic(api_key=key)
     resp = client.messages.create(
-        model=CLAUDE_MODEL, max_tokens=2048, system=system,
+        model=CLAUDE_MODEL, max_tokens=max_tokens, system=system,
         messages=[{"role": "user", "content": user}],
     )
     return "".join(b.text for b in resp.content if b.type == "text")
 
 
-def _plain_gemini(key: str, system: str, user: str) -> str:
+def _plain_gemini(key: str, system: str, user: str, max_tokens: int = 2048) -> str:
     resp = requests.post(
         f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent?key={key}",
         json={"system_instruction": {"parts": [{"text": system}]},
-              "contents": [{"parts": [{"text": user}]}]},
-        timeout=90,
+              "contents": [{"parts": [{"text": user}]}],
+              "generationConfig": {"maxOutputTokens": max_tokens}},
+        timeout=180,
     )
     resp.raise_for_status()
     return resp.json()["candidates"][0]["content"]["parts"][0]["text"]
 
 
-def _llm_plain(system: str, user: str) -> tuple:
+def _llm_plain(system: str, user: str, max_tokens: int = 2048) -> tuple:
     """Satu completion polos (tanpa tools) lewat provider pertama yang
-    tersedia — urutan sama dengan _chat_providers. Return (provider, model, teks)."""
+    tersedia — urutan sama dengan _chat_providers. Return (provider, model, teks).
+    max_tokens dinaikkan oleh pemanggil yang outputnya panjang (narasi bulk)."""
     attempts = []
     if os.getenv("GROQ_API_KEY"):
-        attempts.append(("Groq", GROQ_MODEL, lambda: _plain_openai_compatible(GROQ_API_URL, os.getenv("GROQ_API_KEY"), GROQ_MODEL, system, user)))
+        attempts.append(("Groq", GROQ_MODEL, lambda: _plain_openai_compatible(GROQ_API_URL, os.getenv("GROQ_API_KEY"), GROQ_MODEL, system, user, max_tokens)))
     if os.getenv("GROK_API_KEY"):
-        attempts.append(("Grok", GROK_MODEL, lambda: _plain_openai_compatible(GROK_API_URL, os.getenv("GROK_API_KEY"), GROK_MODEL, system, user)))
+        attempts.append(("Grok", GROK_MODEL, lambda: _plain_openai_compatible(GROK_API_URL, os.getenv("GROK_API_KEY"), GROK_MODEL, system, user, max_tokens)))
     if os.getenv("OPEN_AI_API_KEY"):
-        attempts.append(("OpenAI", OPENAI_MODEL, lambda: _plain_openai_compatible("https://api.openai.com/v1/chat/completions", os.getenv("OPEN_AI_API_KEY"), OPENAI_MODEL, system, user)))
+        attempts.append(("OpenAI", OPENAI_MODEL, lambda: _plain_openai_compatible("https://api.openai.com/v1/chat/completions", os.getenv("OPEN_AI_API_KEY"), OPENAI_MODEL, system, user, max_tokens)))
     if os.getenv("CLOUDE_API_KEY"):
-        attempts.append(("Claude", CLAUDE_MODEL, lambda: _plain_claude(os.getenv("CLOUDE_API_KEY"), system, user)))
+        attempts.append(("Claude", CLAUDE_MODEL, lambda: _plain_claude(os.getenv("CLOUDE_API_KEY"), system, user, max_tokens)))
     if os.getenv("GEMINI_API_KEY"):
-        attempts.append(("Gemini", GEMINI_MODEL, lambda: _plain_gemini(os.getenv("GEMINI_API_KEY"), system, user)))
+        attempts.append(("Gemini", GEMINI_MODEL, lambda: _plain_gemini(os.getenv("GEMINI_API_KEY"), system, user, max_tokens)))
     if not attempts:
         raise HTTPException(500, "Tidak ada API key LLM di .env (GROQ/GROK/OPEN_AI/CLOUDE/GEMINI_API_KEY).")
     errors = []
@@ -2419,6 +2428,181 @@ def penilaian_bappenas_generate(usulan_id: int):
         )
     _ijd_bulk_cache.clear()  # kesimpulan/narasi AI baru -> preview & export xlsx kadaluarsa
     return penilaian_bappenas_get(usulan_id)
+
+
+PENILAIAN_BULK_SYSTEM_PROMPT = """Anda membantu analis Bappenas menyusun DRAF narasi Aspek B (Daya Ungkit \
+Ekonomi & Kinerja Sektoral) untuk BEBERAPA usulan Inpres Jalan Daerah sekaligus. Untuk SETIAP usulan pada \
+data JSON yang diberikan, susun narasi 3-5 kalimat gaya laporan kebijakan yang mengalir dan meyakinkan: \
+rangkai indikator pada "indikator_ada" beserta angka konkret pada "fakta" menjadi cerita dampak ekonomi/\
+sektoral ruas tersebut (ketahanan pangan, kelancaran logistik, pertumbuhan ekonomi lokal). "fakta" berisi \
+"ringkasan_indikator" plus data BPS pendukung: "demografi_kecamatan_bps" (level kecamatan) serta \
+"padi_kabupaten_bps" dan "kendaraan_kabupaten_bps" (level KABUPATEN/KOTA — bila disebut, WAJIB \
+diatribusikan ke kabupaten/kota, jangan ditulis seolah angka kecamatan atau ruas). Sebut nama kegiatan/\
+koridor, wilayah, dan angka dari data bila relevan. JANGAN menulis enumerasi kaku bergaya \
+"Ditemukan N indikator: ...; ...".
+
+WAJIB berbasis fakta yang diberikan APA ADANYA — jangan mengarang angka atau fakta di luar data. Bila \
+"indikator_ada" sebuah usulan kosong, nyatakan jujur belum ada indikator daya ungkit yang didukung data \
+untuk lokasi itu, jangan dibuat seolah ada.
+
+Balas HANYA JSON valid tanpa teks lain, format:
+[{"id": <id usulan>, "narasi": "..."}, ...]
+— satu objek per usulan, "id" disalin apa adanya dari data. Bahasa Indonesia formal."""
+
+# Usulan per panggilan LLM — model diminta membalas array JSON satu objek per
+# usulan, lalu di-upsert per baris. 30 x (3-5 kalimat) butuh ±6-8 ribu token
+# output, makanya panggilan bulk memakai max_tokens lebih besar dari default
+# _llm_plain (lihat _PENILAIAN_BULK_MAX_TOKENS).
+_PENILAIAN_BULK_BATCH = 30
+_PENILAIAN_BULK_MAX_TOKENS = 8192
+
+
+def _bappenas_fakta_pendukung(row: dict, aspek_b: dict) -> dict:
+    """Data pendukung BPS untuk narasi AI Aspek B (bulk) — melengkapi
+    aspek_b["keterangan"] (yang sudah memuat angka kecamatan_data_turunan +
+    bps_kecamatan_potensi_tematik) dengan angka level kecamatan
+    (penduduk_kecamatan, bps_kecamatan_demografi) dan level kabupaten
+    (bps_kabupaten_padi, bps_kabupaten_kendaraan). Nilai yang tidak tersedia
+    dihilangkan dari dict supaya prompt tetap ringkas. Cakupan bps_* mengikuti
+    isi dalam_angka/ (parsial per provinsi) — tidak apa-apa kosong."""
+    kode_kec = row.get("kode_kecamatan")
+    kode_kab = _bappenas_kode_kab(row)
+    fakta = {"ringkasan_indikator": aspek_b["keterangan"]}
+
+    nama_kec = None
+    if kode_kec:
+        with db_cursor() as cur:
+            cur.execute(
+                "SELECT kecamatan FROM penduduk_kecamatan "
+                "WHERE kode_kecamatan=%s ORDER BY tahun DESC LIMIT 1",
+                (kode_kec,),
+            )
+            pk = cur.fetchone()
+        if pk:
+            nama_kec = pk["kecamatan"]
+            fakta["kecamatan"] = nama_kec
+    # bps_kecamatan_demografi tidak punya kode_kecamatan — dicocokkan lewat
+    # kode_kab + nama kecamatan master; gagal cocok = lewati saja (best-effort).
+    if kode_kab and nama_kec:
+        with db_cursor() as cur:
+            cur.execute(
+                "SELECT tahun, jumlah_penduduk, laju_pertumbuhan_pct, kepadatan_per_km2, "
+                "rasio_jenis_kelamin FROM bps_kecamatan_demografi "
+                "WHERE kode_kab=%s AND UPPER(kecamatan)=UPPER(%s) ORDER BY tahun DESC LIMIT 1",
+                (str(kode_kab), nama_kec),
+            )
+            demo = cur.fetchone()
+        if demo:
+            fakta["demografi_kecamatan_bps"] = {k: v for k, v in demo.items() if v is not None}
+    if kode_kab:
+        with db_cursor() as cur:
+            cur.execute(
+                "SELECT tahun, luas_panen_ha, produktivitas_ku_ha, produksi_ton "
+                "FROM bps_kabupaten_padi WHERE kode_kab=%s ORDER BY tahun DESC LIMIT 1",
+                (str(kode_kab),),
+            )
+            padi = cur.fetchone()
+            cur.execute(
+                "SELECT tahun, mobil_penumpang, bus, mobil_barang, sepeda_motor, jumlah "
+                "FROM bps_kabupaten_kendaraan WHERE kode_kab=%s ORDER BY tahun DESC LIMIT 1",
+                (str(kode_kab),),
+            )
+            kendaraan = cur.fetchone()
+        if padi:
+            fakta["padi_kabupaten_bps"] = {k: v for k, v in padi.items() if v is not None}
+        if kendaraan:
+            fakta["kendaraan_kabupaten_bps"] = {k: v for k, v in kendaraan.items() if v is not None}
+    return fakta
+
+
+@app.post("/api/usulan-inpres/penilaian-bappenas/bulk")
+def penilaian_bappenas_bulk(provinsi: str = ""):
+    """Generate narasi AI Aspek B massal — SATU batch (<= _PENILAIAN_BULK_BATCH
+    usulan, satu panggilan LLM) per request; frontend memanggil berulang sampai
+    sisa=0 supaya ada progres dan request tidak kena timeout. SENGAJA hanya
+    per provinsi (bukan nasional) supaya pemakaian kuota LLM terkendali.
+    Usulan yang sudah punya aspek_b_narasi_ai dilewati (resume-able, tidak
+    menimpa). Aspek A/B rule-based ikut di-upsert supaya panel detail tetap
+    utuh; "kesimpulan" TETAP hanya digenerate per-usulan lewat
+    POST /api/usulan-inpres/{id}/penilaian-bappenas."""
+    provinsi = (provinsi or "").strip()
+    if not provinsi:
+        raise HTTPException(400, "Proses bulk narasi AI hanya bisa per provinsi — pilih filter provinsi dulu.")
+    _ensure_penilaian_table()
+    with db_cursor() as cur:
+        cur.execute(
+            "SELECT u.* FROM usulan_inpres u "
+            "LEFT JOIN penilaian_bappenas_ai p ON p.usulan_id = u.id "
+            "WHERE u.provinsi = %s AND (p.aspek_b_narasi_ai IS NULL OR p.aspek_b_narasi_ai = '') "
+            "ORDER BY u.id",
+            (provinsi,),
+        )
+        pending = cur.fetchall()
+    if not pending:
+        return {"diproses": 0, "sisa": 0, "provinsi": provinsi}
+
+    rows = pending[:_PENILAIAN_BULK_BATCH]
+    hasil = {}
+    payload = []
+    for row in rows:
+        aspek_a = _bappenas_aspek_a_lokus(row)
+        aspek_b = _bappenas_aspek_b_ekonomi(row)
+        hasil[row["id"]] = (aspek_a, aspek_b)
+        payload.append({
+            "id": row["id"],
+            "nama_kegiatan": row.get("nama_kegiatan"),
+            "nama_koridor": row.get("nama_koridor"),
+            "provinsi": row.get("provinsi"),
+            "kabupaten_kota": row.get("kabupaten_kota"),
+            "jenis_penanganan": row.get("jenis_penanganan"),
+            "panjang_penanganan_km": row.get("panjang_penanganan_pemda"),
+            "indikator_ada": [BAPPENAS_ASPEK_B_INDIKATOR_LABEL.get(k, k) for k in aspek_b["indikator_ada"]],
+            "fakta": _bappenas_fakta_pendukung(row, aspek_b),
+        })
+
+    provider, model, teks = _llm_plain(
+        PENILAIAN_BULK_SYSTEM_PROMPT, json.dumps(jsonable_encoder(payload), ensure_ascii=False),
+        max_tokens=_PENILAIAN_BULK_MAX_TOKENS,
+    )
+    teks = re.sub(r"^```(?:json)?\s*|\s*```$", "", teks.strip())
+    try:
+        narasi_by_id = {int(item["id"]): (item.get("narasi") or "").strip()
+                        for item in json.loads(teks)}
+    except (ValueError, KeyError, TypeError) as e:
+        raise HTTPException(502, f"Jawaban {provider} tidak sesuai format JSON narasi bulk: {e}")
+
+    diproses = 0
+    with db_cursor() as cur:
+        for row in rows:
+            narasi = narasi_by_id.get(row["id"])
+            if not narasi:
+                continue  # id tidak dijawab model — dicoba ulang di batch berikutnya
+            aspek_a, aspek_b = hasil[row["id"]]
+            poin_a = _bappenas_poin_from_total(aspek_a["total_kriteria"])
+            poin_b = _bappenas_poin_from_total(aspek_b["total_indikator"])
+            # kesimpulan sengaja TIDAK disentuh (kolom per-usulan, lihat docstring)
+            cur.execute(
+                "INSERT INTO penilaian_bappenas_ai (usulan_id, aspek_a_poin, aspek_a_checklist, "
+                "aspek_a_total_kriteria, aspek_a_narasi, aspek_b_poin, aspek_b_checklist, "
+                "aspek_b_total_indikator, aspek_b_narasi, aspek_b_narasi_ai, total_poin, provider, model) "
+                "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) "
+                "ON DUPLICATE KEY UPDATE aspek_a_poin=VALUES(aspek_a_poin), "
+                "aspek_a_checklist=VALUES(aspek_a_checklist), aspek_a_total_kriteria=VALUES(aspek_a_total_kriteria), "
+                "aspek_a_narasi=VALUES(aspek_a_narasi), aspek_b_poin=VALUES(aspek_b_poin), "
+                "aspek_b_checklist=VALUES(aspek_b_checklist), aspek_b_total_indikator=VALUES(aspek_b_total_indikator), "
+                "aspek_b_narasi=VALUES(aspek_b_narasi), aspek_b_narasi_ai=VALUES(aspek_b_narasi_ai), "
+                "total_poin=VALUES(total_poin), provider=VALUES(provider), model=VALUES(model)",
+                (row["id"], poin_a, aspek_a["checklist"], aspek_a["total_kriteria"], aspek_a["narasi"],
+                 poin_b, aspek_b["checklist"], aspek_b["total_indikator"], aspek_b["narasi"],
+                 narasi, poin_a + poin_b, provider, model),
+            )
+            diproses += 1
+    if diproses == 0:
+        # lindungi frontend dari loop tak berujung kalau model menjawab tapi id-nya salah semua
+        raise HTTPException(502, f"{provider} menjawab, tetapi tidak ada narasi valid untuk batch ini.")
+    _ijd_bulk_cache.clear()  # narasi AI baru -> preview & export xlsx kadaluarsa
+    return {"diproses": diproses, "sisa": len(pending) - diproses,
+            "provider": provider, "model": model, "provinsi": provinsi}
 
 
 _KML_COORD_RE = re.compile(

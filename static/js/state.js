@@ -18,7 +18,13 @@ const state = {
   usulanBounds: null,  // akumulasi bounds semua usulan yang sudah ditampilkan, supaya klik berikutnya tidak "menyembunyikan" yang sebelumnya
   usulanBrowse: { provinsi: "", q: "", offset: 0, limit: 50, total: 0 },
   browseUsulanPolylines: [], // geometri usulan yang sedang dilihat di panel "Jelajahi Usulan Inpres"
-  mapLayers: { active: {}, colors: {}, opacity: {}, labels: {}, selectedProvinsi: null, selectedKabupaten: null }, // overlay peta referensi (SHP) dari folder Maps/: active[layerName] = google.maps.Data
+  mapLayers: { active: {}, colors: {}, opacity: {}, labels: {}, meta: {}, selectedProvinsi: null, selectedKabupaten: null },
+  // overlay peta referensi (SHP) dari folder Maps/ — bisa multi-provinsi/kabupaten aktif
+  // sekaligus, jadi active/opacity/meta dikunci pakai layerKey = "provinsi::kabupaten::layer"
+  // (bukan cuma nama layer mentah, supaya layer bernama sama di kabupaten berbeda tidak
+  // tabrakan): active[layerKey] = google.maps.Data, meta[layerKey] = {provinsi,kabupaten,layer}.
+  // colors/labels tetap dikunci nama layer mentah (meta[key].layer) supaya layer bertipe
+  // sama tetap konsisten warnanya lintas kabupaten.
   mapTool: null,        // "identify" | "select" | "measure-distance" | "measure-area" | null
   measure: { path: [], overlay: null },
   selectedFeatures: [], // [{layer, feature}] — hasil tool "select" pada layer overlay

@@ -14,6 +14,14 @@ function bindMapToolsToolbar() {
   document.getElementById("mapLegendClose").addEventListener("click", () => {
     document.getElementById("mapLegend").hidden = true;
   });
+  document.getElementById("mapLegendClearAll").addEventListener("click", () => {
+    clearActiveMapLayers();
+  });
+  document.getElementById("mapLegendList").addEventListener("click", (e) => {
+    const btn = e.target.closest(".map-legend-item-remove");
+    if (!btn) return;
+    hideMapLayer(btn.dataset.key);
+  });
 
   document.getElementById("btnMeasureFinish").addEventListener("click", finishMeasure);
   document.getElementById("btnMeasureClear").addEventListener("click", clearMeasure);
@@ -80,7 +88,7 @@ function showIdentifyInfo(layerName, feature, latLng) {
   const container = document.createElement("div");
   container.className = "identify-info";
   container.innerHTML = `
-    <div class="identify-info-title">${escapeHtml(state.mapLayers.labels[layerName] || layerName)}</div>
+    <div class="identify-info-title">${escapeHtml(mapLayerDisplayLabel(layerName))}</div>
     ${body}
   `;
   const kodeKec = feature.getProperty("KODE_KECAMATAN");
@@ -132,16 +140,19 @@ function attachKecamatanJoin(container, kodeKec) {
         bodyEl.innerHTML = `<div class="hint">Tidak ada baris di tabel ini untuk kecamatan tsb.</div>`;
         return;
       }
+      const boolCols = data.columns.map(isBoolDbCol);
+      const joinCell = (v, j) =>
+        boolCols[j] && (v === 0 || v === 1) ? boolCellHtml(v) : escapeHtml(String(v ?? "—"));
       if (data.rows.length === 1) {
         // satu baris -> tampilkan tegak (kolom: nilai) biar muat di popup
         bodyEl.innerHTML = `<table class="identify-table">${data.columns.map((c, i) =>
-          `<tr><th>${escapeHtml(c)}</th><td>${escapeHtml(String(data.rows[0][i] ?? "—"))}</td></tr>`
+          `<tr><th>${escapeHtml(c)}</th><td>${joinCell(data.rows[0][i], i)}</td></tr>`
         ).join("")}</table>`;
       } else {
         bodyEl.innerHTML = `<div class="identify-join-scroll"><table class="identify-table identify-join-table">
           <thead><tr>${data.columns.map((c) => `<th>${escapeHtml(c)}</th>`).join("")}</tr></thead>
           <tbody>${data.rows.map((r) =>
-            `<tr>${r.map((v) => `<td>${escapeHtml(String(v ?? "—"))}</td>`).join("")}</tr>`
+            `<tr>${r.map((v, j) => `<td>${joinCell(v, j)}</td>`).join("")}</tr>`
           ).join("")}</tbody></table></div>
           <div class="hint">${data.rows.length} baris</div>`;
       }
@@ -214,9 +225,9 @@ function renderSelectionPanel() {
     const row = document.createElement("div");
     row.className = "map-selection-item";
     row.innerHTML = `
-      <span class="maplayer-swatch" style="background:${mapLayerColor(layer)}"></span>
+      <span class="maplayer-swatch" style="background:${mapLayerColor(mapLayerRawName(layer))}"></span>
       <span class="map-selection-item-label">${escapeHtml(String(label))}</span>
-      <span class="map-selection-item-layer">${escapeHtml(state.mapLayers.labels[layer] || layer)}</span>
+      <span class="map-selection-item-layer">${escapeHtml(mapLayerDisplayLabel(layer))}</span>
     `;
     listEl.appendChild(row);
   });
@@ -287,18 +298,32 @@ function clearMeasure() {
 function updateMapLegend() {
   const listEl = document.getElementById("mapLegendList");
   if (!listEl) return;
-  const layers = Object.keys(state.mapLayers.active);
-  if (!layers.length) {
+  const keys = Object.keys(state.mapLayers.active);
+  if (!keys.length) {
     listEl.innerHTML = `<div class="maplayer-loading">Belum ada layer overlay aktif</div>`;
     return;
   }
+  // Kalau layer bernama sama aktif di >1 kabupaten sekaligus, beri nama
+  // kabupatennya juga di legend supaya baris-baris itu bisa dibedakan
+  // (dan di-uncheck satu-satu) — bukan cuma "N layer aktif" tanpa rincian
+  // sumbernya, gaya panel TOC ArcGIS.
+  const rawCounts = {};
+  keys.forEach((k) => {
+    const raw = mapLayerRawName(k);
+    rawCounts[raw] = (rawCounts[raw] || 0) + 1;
+  });
   listEl.innerHTML = "";
-  layers.forEach((layer) => {
+  keys.forEach((key) => {
+    const meta = state.mapLayers.meta[key];
+    const raw = mapLayerRawName(key);
+    const label = mapLayerDisplayLabel(key)
+      + (meta && rawCounts[raw] > 1 ? ` — ${meta.kabupaten || meta.provinsi}` : "");
     const row = document.createElement("div");
     row.className = "map-legend-item";
     row.innerHTML = `
-      <span class="maplayer-swatch" style="background:${mapLayerColor(layer)}"></span>
-      <span class="map-legend-item-label">${escapeHtml(state.mapLayers.labels[layer] || layer)}</span>
+      <span class="maplayer-swatch" style="background:${mapLayerColor(raw)}"></span>
+      <span class="map-legend-item-label">${escapeHtml(label)}</span>
+      <button type="button" class="map-legend-item-remove" data-key="${escapeHtml(key)}" title="Matikan layer ini"><i class="bi bi-x-lg"></i></button>
     `;
     listEl.appendChild(row);
   });

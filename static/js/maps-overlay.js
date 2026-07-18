@@ -3,14 +3,48 @@
    dropdown dibuka (bukan sekali saat load halaman) — supaya file yang
    ditambah/dipindah di folder tersebut otomatis muncul tanpa reload. */
 
-const MAP_LAYER_PALETTE = ["#4f7cff", "#22d3a5", "#ffb648", "#ff5c7c", "#a78bfa", "#38bdf8", "#f472b6", "#facc15"];
+const MAP_LAYER_PALETTE = [
+  "#4f7cff", "#22d3a5", "#ffb648", "#ff5c7c", "#a78bfa", "#38bdf8", "#f472b6", "#facc15",
+  "#34d399", "#fb923c", "#818cf8", "#2dd4bf", "#e879f9", "#a3e635", "#f87171", "#60a5fa",
+];
 
+// Warna dari palet HANYA dipesan buat layer yang benar-benar diaktifkan (dipanggil
+// dari applyLayerStyle/legend/seleksi) -- kalau dipesan juga tiap kali daftar
+// checkbox di-render (termasuk yang belum dicentang), slot 8-16 warnanya cepat
+// habis begitu user browsing puluhan tipe layer RBI lintas kabupaten, dan layer
+// aktif yang index-nya bentrok modulo panjang palet jadi keliatan sama warnanya
+// walau beda layer (bug yang dilaporkan user). Preview swatch di daftar pilihan
+// (belum aktif) pakai mapLayerPreviewColor di bawah, TIDAK memesan slot palet.
 function mapLayerColor(layerName) {
   if (!state.mapLayers.colors[layerName]) {
     const idx = Object.keys(state.mapLayers.colors).length % MAP_LAYER_PALETTE.length;
     state.mapLayers.colors[layerName] = MAP_LAYER_PALETTE[idx];
   }
   return state.mapLayers.colors[layerName];
+}
+
+// Warna preview murni dari hash nama layer -- stabil per nama, tapi TIDAK
+// menyentuh state.mapLayers.colors (jadi tidak mengurangi slot palet buat
+// layer yang benar-benar aktif). Dipakai di daftar checkbox pilihan layer.
+function mapLayerPreviewColor(layerName) {
+  let hash = 0;
+  for (let i = 0; i < layerName.length; i++) hash = (hash * 31 + layerName.charCodeAt(i)) >>> 0;
+  return MAP_LAYER_PALETTE[hash % MAP_LAYER_PALETTE.length];
+}
+
+/* Kunci komposit provinsi+kabupaten+layer -- lihat catatan di state.js.
+   Fungsi kecil di bawah dipakai di sini dan map-tools.js (legend/seleksi/
+   identify) untuk menerjemahkan layerKey balik ke nama layer mentah
+   (dipakai buat warna/label yang memang mau konsisten lintas kabupaten). */
+function mapLayerKey(provinsi, kabupaten, layer) {
+  return `${provinsi}::${kabupaten}::${layer}`;
+}
+function mapLayerRawName(layerKey) {
+  return state.mapLayers.meta[layerKey]?.layer || layerKey;
+}
+function mapLayerDisplayLabel(layerKey) {
+  const raw = mapLayerRawName(layerKey);
+  return state.mapLayers.labels[raw] || raw;
 }
 
 async function initMapLayersControl() {
@@ -23,30 +57,33 @@ async function initMapLayersControl() {
 
   control.hidden = false;
   bindMapLayerToggle();
-  bindMapLayerCombo("mapLayerProvinsiField", "mapLayerProvinsiToggle", "mapLayerProvinsiPanel", async () => {
+  bindMapLayerCombo("mapLayerProvinsiField", "mapLayerProvinsiToggle", "mapLayerProvinsiPanel", "mapLayerProvinsiLabel", async () => {
     await refreshMapLayerProvinces();
   }, async (provinsi) => {
+    // Ganti provinsi/kabupaten yang sedang di-browse HANYA mengganti daftar
+    // layer yang ditampilkan buat dipilih — layer yang sudah aktif dari
+    // provinsi/kabupaten lain TETAP tampil di peta (multi-select lintas
+    // provinsi/kabupaten, bukan cuma satu konteks pada satu waktu).
     state.mapLayers.selectedProvinsi = provinsi;
     state.mapLayers.selectedKabupaten = null;
-    clearActiveMapLayers();
     await refreshMapLayerKabupaten();
     await refreshMapLayerList();
   });
-  bindMapLayerCombo("mapLayerKabupatenField", "mapLayerKabupatenToggle", "mapLayerKabupatenPanel", async () => {
+  bindMapLayerCombo("mapLayerKabupatenField", "mapLayerKabupatenToggle", "mapLayerKabupatenPanel", "mapLayerKabupatenLabel", async () => {
     await refreshMapLayerKabupaten();
   }, async (kabupaten) => {
     state.mapLayers.selectedKabupaten = kabupaten;
-    clearActiveMapLayers();
     await refreshMapLayerList();
   });
 }
 
 /* ---------- combo dropdown mechanics ---------- */
 
-function bindMapLayerCombo(fieldId, toggleId, panelId, onOpen, onSelect) {
+function bindMapLayerCombo(fieldId, toggleId, panelId, labelId, onOpen, onSelect) {
   const field = document.getElementById(fieldId);
   const toggle = document.getElementById(toggleId);
   const panel = document.getElementById(panelId);
+  const label = document.getElementById(labelId);
 
   toggle.addEventListener("click", async (e) => {
     e.stopPropagation();
@@ -64,6 +101,11 @@ function bindMapLayerCombo(fieldId, toggleId, panelId, onOpen, onSelect) {
     if (!opt) return;
     panel.hidden = true;
     field.classList.remove("open");
+    // Update label & selected state langsung, jangan tunggu panel dibuka lagi
+    // (fillComboPanel baru jalan saat onOpen berikutnya).
+    panel.querySelectorAll(".maplayer-combo-option.selected").forEach((o) => o.classList.remove("selected"));
+    opt.classList.add("selected");
+    label.textContent = opt.textContent;
     onSelect(opt.dataset.value);
   });
 }
@@ -177,16 +219,17 @@ async function refreshMapLayerList() {
     listEl.innerHTML = "";
     layers.forEach((l) => {
       state.mapLayers.labels[l.layer] = l.label;
+      const key = mapLayerKey(provinsi, kabupaten, l.layer);
       const row = document.createElement("label");
       row.className = "maplayer-item";
-      const isActive = !!state.mapLayers.active[l.layer];
-      const opacity = state.mapLayers.opacity[l.layer] ?? 1;
+      const isActive = !!state.mapLayers.active[key];
+      const opacity = state.mapLayers.opacity[key] ?? 1;
       row.innerHTML = `
         <input type="checkbox" ${isActive ? "checked" : ""} data-provinsi="${escapeHtml(provinsi)}" data-kabupaten="${escapeHtml(kabupaten)}" data-layer="${escapeHtml(l.layer)}" />
-        <span class="maplayer-swatch" style="background:${mapLayerColor(l.layer)}"></span>
+        <span class="maplayer-swatch" style="background:${isActive ? mapLayerColor(l.layer) : mapLayerPreviewColor(l.layer)}"></span>
         <span class="maplayer-item-label">${escapeHtml(l.label)}</span>
         <span class="maplayer-item-size">${l.size_mb != null ? `${l.size_mb} MB` : ""}</span>
-        <input type="range" class="maplayer-opacity" min="0" max="1" step="0.05" value="${opacity}" data-layer="${escapeHtml(l.layer)}" title="Transparansi layer" ${isActive ? "" : "hidden"} />
+        <input type="range" class="maplayer-opacity" min="0" max="1" step="0.05" value="${opacity}" data-provinsi="${escapeHtml(provinsi)}" data-kabupaten="${escapeHtml(kabupaten)}" data-layer="${escapeHtml(l.layer)}" title="Transparansi layer" ${isActive ? "" : "hidden"} />
       `;
       listEl.appendChild(row);
     });
@@ -242,7 +285,7 @@ function bindMapLayerToggle() {
     if (cb.checked) {
       await showMapLayer(provinsi, kabupaten, layer);
     } else {
-      hideMapLayer(layer);
+      hideMapLayer(mapLayerKey(provinsi, kabupaten, layer));
     }
     cb.disabled = false;
     updateMapLayerLabel();
@@ -253,7 +296,8 @@ function bindMapLayerToggle() {
   listEl.addEventListener("input", (e) => {
     const range = e.target.closest(".maplayer-opacity");
     if (!range) return;
-    setLayerOpacity(range.dataset.layer, parseFloat(range.value));
+    const { provinsi, kabupaten, layer } = range.dataset;
+    setLayerOpacity(mapLayerKey(provinsi, kabupaten, layer), parseFloat(range.value));
   });
 }
 
@@ -264,7 +308,11 @@ function updateMapLayerLabel() {
 }
 
 async function showMapLayer(provinsi, kabupaten, layer) {
-  if (state.mapLayers.active[layer]) return;
+  const key = mapLayerKey(provinsi, kabupaten, layer);
+  if (state.mapLayers.active[key]) return;
+  // Diisi di awal (bukan cuma saat sukses) supaya listCheckboxFor bisa
+  // menemukan checkbox-nya lagi kalau load gagal/kosong di bawah.
+  state.mapLayers.meta[key] = { provinsi, kabupaten, layer };
 
   try {
     const url = `/api/maps/layer?provinsi=${encodeURIComponent(provinsi)}&kabupaten=${encodeURIComponent(kabupaten)}&layer=${encodeURIComponent(layer)}`;
@@ -277,8 +325,9 @@ async function showMapLayer(provinsi, kabupaten, layer) {
       // pesan ini pengguna mengira show/hide layer tidak berfungsi, padahal
       // memang tidak ada yang bisa ditampilkan.
       toast(`Layer "${geojson.label || layer}" tidak memiliki data geometri (file kosong)`, true);
-      const cb = listCheckboxFor(layer);
+      const cb = listCheckboxFor(key);
       if (cb) cb.checked = false;
+      delete state.mapLayers.meta[key];
       return;
     }
 
@@ -303,11 +352,12 @@ async function showMapLayer(provinsi, kabupaten, layer) {
         return;
       }
       if (e.stop) e.stop();
-      onFeatureClick(layer, e.feature, e.latLng);
+      onFeatureClick(key, e.feature, e.latLng);
     });
 
-    state.mapLayers.active[layer] = data;
-    applyLayerStyle(layer);
+    state.mapLayers.active[key] = data;
+    state.mapLayers.meta[key] = { provinsi, kabupaten, layer };
+    applyLayerStyle(key);
     if (layer.startsWith("BATASKEC__")) updateKecamatanLintasan();
     updateMapLegend();
 
@@ -322,8 +372,9 @@ async function showMapLayer(provinsi, kabupaten, layer) {
   } catch (err) {
     console.error(err);
     toast("Gagal memuat layer peta", true);
-    const cb = listCheckboxFor(layer);
+    const cb = listCheckboxFor(key);
     if (cb) cb.checked = false;
+    delete state.mapLayers.meta[key];
   }
 }
 
@@ -374,8 +425,8 @@ function _featureOuterRings(feature) {
    diaktifkan. */
 function updateKecamatanLintasan() {
   const pts = _routeSamplePoints();
-  Object.entries(state.mapLayers.active).forEach(([layerName, data]) => {
-    if (!layerName.startsWith("BATASKEC__")) return;
+  Object.entries(state.mapLayers.active).forEach(([key, data]) => {
+    if (!mapLayerRawName(key).startsWith("BATASKEC__")) return;
     data.forEach((feature) => {
       let kena = false;
       if (pts.length) {
@@ -397,15 +448,15 @@ function updateKecamatanLintasan() {
       }
       feature.setProperty("DILINTASI_RUTE", kena ? "YA" : null);
     });
-    applyLayerStyle(layerName);
+    applyLayerStyle(key);
   });
 }
 
-function applyLayerStyle(layer) {
-  const data = state.mapLayers.active[layer];
+function applyLayerStyle(key) {
+  const data = state.mapLayers.active[key];
   if (!data) return;
-  const color = mapLayerColor(layer);
-  const opacity = state.mapLayers.opacity[layer] ?? 1;
+  const color = mapLayerColor(mapLayerRawName(key));
+  const opacity = state.mapLayers.opacity[key] ?? 1;
   data.setStyle((feature) => {
     if (feature.getProperty("DILINTASI_RUTE") === "YA") {
       return {
@@ -433,27 +484,50 @@ function applyLayerStyle(layer) {
   });
 }
 
-function setLayerOpacity(layer, value) {
-  state.mapLayers.opacity[layer] = value;
-  applyLayerStyle(layer);
+function setLayerOpacity(key, value) {
+  state.mapLayers.opacity[key] = value;
+  applyLayerStyle(key);
 }
 
-function hideMapLayer(layer) {
-  const data = state.mapLayers.active[layer];
+function hideMapLayer(key) {
+  const data = state.mapLayers.active[key];
   if (!data) return;
   data.setMap(null);
-  delete state.mapLayers.active[layer];
-  clearSelectionForLayer(layer);
+  delete state.mapLayers.active[key];
+  delete state.mapLayers.opacity[key];
+  delete state.mapLayers.meta[key];
+  clearSelectionForLayer(key);
+  updateMapLayerLabel();
   updateMapLegend();
+  // Kalau checkbox layer ini sedang tampil (konteks provinsi/kabupaten yang
+  // sama sedang di-browse), sinkronkan tampilannya juga.
+  const cb = listCheckboxFor(key);
+  if (cb) {
+    cb.checked = false;
+    const range = cb.closest(".maplayer-item")?.querySelector(".maplayer-opacity");
+    if (range) range.hidden = true;
+  }
 }
 
+// Matikan SEMUA layer overlay aktif sekaligus (dipakai tombol "Hapus semua"
+// di panel legend, bukan lagi dipanggil otomatis saat ganti provinsi/
+// kabupaten yang di-browse — itu sekarang cuma ganti daftar pilihan, bukan
+// mematikan layer yang sudah aktif).
 function clearActiveMapLayers() {
-  Object.keys(state.mapLayers.active).forEach((layer) => clearSelectionForLayer(layer));
+  Object.keys(state.mapLayers.active).forEach((key) => clearSelectionForLayer(key));
   Object.values(state.mapLayers.active).forEach((data) => data.setMap(null));
   state.mapLayers.active = {};
+  state.mapLayers.opacity = {};
+  state.mapLayers.meta = {};
+  updateMapLayerLabel();
   updateMapLegend();
 }
 
-function listCheckboxFor(layer) {
-  return document.querySelector(`.maplayer-item input[data-layer="${CSS.escape(layer)}"]`);
+function listCheckboxFor(key) {
+  const meta = state.mapLayers.meta[key];
+  if (!meta) return null;
+  return document.querySelector(
+    `.maplayer-item input[data-provinsi="${CSS.escape(meta.provinsi)}"]`
+    + `[data-kabupaten="${CSS.escape(meta.kabupaten)}"][data-layer="${CSS.escape(meta.layer)}"]`
+  );
 }

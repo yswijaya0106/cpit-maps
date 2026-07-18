@@ -12,10 +12,18 @@ USE route_gis;
 
 CREATE TABLE IF NOT EXISTS penilaian_bappenas_ai (
   usulan_id      BIGINT UNSIGNED PRIMARY KEY,
-  aspek_a_poin   TINYINT NULL,      -- 0/1/2
-  aspek_a_narasi TEXT NULL,
-  aspek_b_poin   TINYINT NULL,      -- 0/1/2
-  aspek_b_narasi TEXT NULL,
+  aspek_a_poin   TINYINT NULL,      -- 0/1/2 -- SEKARANG deterministik dari aspek_a_total_kriteria
+                                     -- (bukan LLM lagi, lihat _bappenas_aspek_a_lokus() di app.py)
+  aspek_a_checklist TINYINT(1) NULL,     -- ada >=1 kriteria lokus yang cocok?
+  aspek_a_total_kriteria TINYINT UNSIGNED NULL, -- jumlah kriteria lokus yang cocok (dari 11 yg diimplementasi)
+  aspek_a_narasi TEXT NULL,         -- rule-based: daftar kriteria cocok + potensi tematik (bps_kecamatan_potensi_tematik)
+  aspek_b_poin   TINYINT NULL,      -- 0/1/2 -- SEKARANG deterministik dari aspek_b_total_indikator
+                                     -- (bukan LLM lagi, lihat _bappenas_aspek_b_ekonomi() di app.py)
+  aspek_b_checklist TINYINT(1) NULL,      -- ada >=1 indikator daya ungkit ekonomi yang didukung data?
+  aspek_b_total_indikator TINYINT UNSIGNED NULL, -- jumlah indikator yang didukung data (dari 12 yg diimplementasi)
+  aspek_b_narasi TEXT NULL,         -- rule-based: daftar indikator ada + jumlah penduduk/kendaraan
+  aspek_b_narasi_ai TEXT NULL,      -- narasi naratif/persuasif hasil AI, PELENGKAP aspek_b_narasi
+                                     -- (rule-based) -- bukan pengganti, tidak boleh mengarang fakta baru
   total_poin     TINYINT NULL,      -- A + B (0-4)
   kesimpulan     TEXT NULL,
   provider       VARCHAR(20) NULL,  -- Groq/Grok/OpenAI/Claude/Gemini

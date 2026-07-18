@@ -71,6 +71,36 @@
       <div class="datatable-head">
         <h3 id="dataTableTitle"><i class="bi bi-table"></i> <span></span></h3>
         <span class="datatable-meta" id="dataTableMeta"></span>
+        <div class="datatable-filters" id="dataTableFilters" hidden>
+          <div class="maplayer-combo" id="dataTableFilterProvinsiField">
+            <button type="button" class="maplayer-combo-toggle" id="dataTableFilterProvinsiToggle">
+              <span id="dataTableFilterProvinsiLabel">Semua provinsi</span>
+              <i class="bi bi-chevron-down"></i>
+            </button>
+            <div class="maplayer-combo-panel" id="dataTableFilterProvinsiPanel" hidden></div>
+          </div>
+          <div class="maplayer-combo" id="dataTableFilterKabupatenField">
+            <button type="button" class="maplayer-combo-toggle" id="dataTableFilterKabupatenToggle">
+              <span id="dataTableFilterKabupatenLabel">Semua kabupaten</span>
+              <i class="bi bi-chevron-down"></i>
+            </button>
+            <div class="maplayer-combo-panel" id="dataTableFilterKabupatenPanel" hidden></div>
+          </div>
+        </div>
+        <div class="datatable-import" id="dataTableImport" hidden>
+          <div class="maplayer-combo" id="dataTableImportKriteriaField">
+            <button type="button" class="maplayer-combo-toggle" id="dataTableImportKriteriaToggle">
+              <span id="dataTableImportKriteriaLabel">Pilih kriteria...</span>
+              <i class="bi bi-chevron-down"></i>
+            </button>
+            <div class="maplayer-combo-panel" id="dataTableImportKriteriaPanel" hidden></div>
+          </div>
+          <button type="button" class="btn btn-ghost btn-sm" id="dataTableImportBtn" disabled>
+            <i class="bi bi-file-earmark-arrow-up"></i> Import xlsx
+          </button>
+          <input type="file" id="dataTableImportFile" accept=".xlsx" hidden />
+        </div>
+        <button type="button" class="btn btn-ghost btn-sm" id="dataTableExport"><i class="bi bi-file-earmark-excel"></i> Export Excel</button>
         <button type="button" class="icon-btn" id="dataTableClose" aria-label="Tutup"><i class="bi bi-x-lg"></i></button>
       </div>
       <div class="datatable-scroll" id="dataTableScroll"></div>
@@ -88,6 +118,36 @@
           <button type="button" class="btn btn-ghost btn-sm" id="dataTablePrev"><i class="bi bi-chevron-left"></i> Sebelumnya</button>
           <span id="dataTablePageInfo"></span>
           <button type="button" class="btn btn-ghost btn-sm" id="dataTableNext">Berikutnya <i class="bi bi-chevron-right"></i></button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="datatable-overlay" id="ijdPreviewOverlay" hidden>
+    <div class="datatable-modal">
+      <div class="datatable-head">
+        <h3><i class="bi bi-file-earmark-bar-graph"></i> <span id="ijdPreviewTitle">Preview Export Skor IJD</span></h3>
+        <span class="datatable-meta" id="ijdPreviewMeta"></span>
+        <button type="button" class="btn btn-primary btn-sm" id="ijdPreviewExport">
+          <i class="bi bi-file-earmark-excel"></i> Export Excel
+        </button>
+        <button type="button" class="icon-btn" id="ijdPreviewClose" aria-label="Tutup"><i class="bi bi-x-lg"></i></button>
+      </div>
+      <div class="datatable-scroll" id="ijdPreviewScroll"></div>
+      <div class="datatable-foot">
+        <div class="datatable-pagesize">
+          Baris per halaman:
+          <select id="ijdPreviewPageSize">
+            <option value="25">25</option>
+            <option value="50" selected>50</option>
+            <option value="100">100</option>
+            <option value="200">200</option>
+          </select>
+        </div>
+        <div class="datatable-pager">
+          <button type="button" class="btn btn-ghost btn-sm" id="ijdPreviewPrev"><i class="bi bi-chevron-left"></i> Sebelumnya</button>
+          <span id="ijdPreviewPageInfo"></span>
+          <button type="button" class="btn btn-ghost btn-sm" id="ijdPreviewNext">Berikutnya <i class="bi bi-chevron-right"></i></button>
         </div>
       </div>
     </div>
@@ -207,6 +267,7 @@
           <div class="usulan-io-row">
             <button id="btnUsulanImport" class="btn btn-ghost btn-sm"><i class="bi bi-upload"></i> Import XLSX</button>
             <button id="btnUsulanExport" class="btn btn-ghost btn-sm"><i class="bi bi-download"></i> Export XLSX</button>
+            <button id="btnUsulanExportIjdScore" class="btn btn-ghost btn-sm"><i class="bi bi-file-earmark-bar-graph"></i> Export Skor IJD (xlsx)</button>
             <input type="file" id="usulanImportFile" accept=".xlsx" hidden />
           </div>
           <div class="usulan-browse-filters">
@@ -251,7 +312,8 @@
 
       <div class="map-legend" id="mapLegend" hidden>
         <div class="map-panel-header">
-          <span>Legend</span>
+          <span>Legend — Layer Aktif</span>
+          <button type="button" class="maplayer-clearall" id="mapLegendClearAll" title="Matikan semua layer overlay"><i class="bi bi-x-square"></i> Hapus semua</button>
           <button type="button" class="maplayer-close" id="mapLegendClose" aria-label="Tutup legend"><i class="bi bi-x-lg"></i></button>
         </div>
         <div class="map-legend-list" id="mapLegendList"></div>

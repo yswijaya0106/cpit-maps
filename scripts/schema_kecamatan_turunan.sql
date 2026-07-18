@@ -6,6 +6,11 @@
 --                                   (baru provinsi yang ada di dalam_angka/)
 --   - bps_kabupaten_kendaraan     : kendaraan per kabupaten -> disagregasi
 --                                   proporsional penduduk, DITANDAI estimasi=1
+--   - bps_kecamatan_potensi_tematik : flag ada/tidak potensi Pertanian/
+--                                   Perkebunan/Peternakan/Perikanan (dasar
+--                                   IJD A3 "Tematik Tambahan", parsial —
+--                                   provinsi/kab yang bukunya ada di
+--                                   dalam_angka/ DAN polanya sudah dikenali)
 -- Nilai langsung dari publikasi BPS diberi flag estimasi=0; hasil bagi
 -- proporsional (kunci alokasi = pangsa penduduk kecamatan) diberi flag
 -- estimasi=1 dan tidak boleh disajikan tanpa penanda itu.
@@ -22,6 +27,10 @@ CREATE TABLE IF NOT EXISTS kecamatan_data_turunan (
   luas_km2             DECIMAL(10,2) NULL,      -- turunan penduduk/kepadatan
   kendaraan_total      INT UNSIGNED NULL,       -- dasar fallback C.A3
   kendaraan_estimasi   TINYINT NULL,            -- 0=angka BPS per kecamatan, 1=disagregasi dari kabupaten
+  potensi_pertanian    TINYINT(1) NULL,         -- dasar IJD A3_PERTANIAN (Tabel 5.1.2/5.1.3 > 0)
+  potensi_perkebunan   TINYINT(1) NULL,         -- dasar IJD A3_PERKEBUNAN (Tabel 5.3.1 > 0)
+  potensi_peternakan   TINYINT(1) NULL,         -- dasar IJD A3_PETERNAKAN (Tabel 5.4.1 > 0)
+  potensi_perikanan    TINYINT(1) NULL,         -- dasar IJD A3_PERIKANAN (Tabel 5.5.2/5.5.3 > 0)
   built_at             DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
                        ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (kode_kecamatan, tahun),

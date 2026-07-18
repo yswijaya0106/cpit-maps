@@ -17,13 +17,25 @@ Yang diekstrak:
     jenis, 2023-2025 (A3 rasio kepemilikan kendaraan level kabupaten).
   - Tabel "Kendaraan Bermotor Menurut Kecamatan" (tidak semua kab/kota
     menyediakan) : total kendaraan bermotor per KECAMATAN.
+  - Tabel 5.1.2/5.1.3 (Padi Sawah/Ladang), 5.3.1 (Luas Areal Perkebunan),
+    5.4.1 (Populasi Ternak), 5.5.2/5.5.3 (Prasarana Budidaya/Produksi
+    Perikanan Laut) tiap buku kab/kota : dijadikan flag biner "ada potensi"
+    per KECAMATAN (bukan volume) -- dasar sub-parameter A3 "Tematik
+    Tambahan" IJD 2026 utk kategori Pertanian/Perkebunan/Peternakan/
+    Perikanan (lihat scripts/schema_bps_potensi_tematik.sql).
+  - Tabel produksi tahun berjalan per KECAMATAN (beda dari tabel flag *_ada
+    di atas utk Perkebunan/Peternakan) : 5.1.2+5.1.3 kolom Produksi (ton),
+    5.3.2 Produksi Perkebunan (ton), 5.4.4 Produksi Daging (kg), 5.5.3
+    Perikanan Laut kolom Jumlah Produksi (ton) -- utk tampilan di viewer
+    "Data", tidak dipakai skoring IJD.
 
 Pemakaian:
     python scripts/extract_dalam_angka.py            # ekstrak -> JSON di stdout
     python scripts/extract_dalam_angka.py --load     # ekstrak + muat ke MySQL
 
 Loader butuh kredensial MySQL dari .env (sama dengan app.py) dan schema dari
-scripts/schema_bps_kemanfaatan.sql sudah dijalankan.
+scripts/schema_bps_kemanfaatan.sql serta scripts/schema_bps_potensi_tematik.sql
+sudah dijalankan.
 """
 import argparse
 import json
@@ -37,6 +49,17 @@ DALAM_ANGKA_DIR = os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "dalam_angka")
 
 BOOK_RX = re.compile(r"^(\d{4})\s+(.+?)\s+Dalam Angka\s+\d{4}\.pdf$", re.I)
+# Sebagian buku provinsi (bukan kab/kota) diunduh dengan nama file slug web
+# ("provinsi-sumatera-utara-dalam-angka-2026.pdf") alih-alih pola
+# "<kode0000> <Nama> Dalam Angka <tahun>.pdf" — tidak punya kode 4 digit sama
+# sekali, jadi dicek terpisah dari BOOK_RX.
+PROV_BOOK_SLUG_RX = re.compile(r"^provinsi-.+-dalam-angka-\d{4}\.pdf$", re.I)
+# Sebagian buku provinsi punya kode dengan digit ekstra ("16200 Kalimantan
+# Tengah..." alih-alih "6200 Kalimantan Tengah...") — BOOK_RX (persis 4
+# digit) tidak match. Kode-nya sendiri tidak dipakai (prov_book cuma 1 path
+# per provinsi, tidak keyed by kode seperti buku kab/kota), jadi longgarkan
+# jumlah digit di sini asal masih diakhiri "00".
+PROV_BOOK_CODE_RX = re.compile(r"^\d+00\s+.+?\s+Dalam Angka\s+\d{4}\.pdf$", re.I)
 
 
 def discover_provinces(base=DALAM_ANGKA_DIR):
@@ -51,6 +74,8 @@ def discover_provinces(base=DALAM_ANGKA_DIR):
         for fname in sorted(os.listdir(fpath)):
             m = BOOK_RX.match(fname)
             if not m:
+                if not prov_book and (PROV_BOOK_SLUG_RX.match(fname) or PROV_BOOK_CODE_RX.match(fname)):
+                    prov_book = os.path.join(fpath, fname)
                 continue
             kode, nama = m.group(1), m.group(2).strip()
             if kode.endswith("00"):
@@ -82,20 +107,30 @@ FIELD_PHRASES = [
 
 
 def num(s):
-    """'1.007,63' -> 1007.63 ; '–' -> None.
+    """'1.007,63' -> 1007.63 ; '2,620.24' -> 2620.24 ; '–' -> None.
 
-    Sebagian besar buku pakai koma sebagai desimal ('.' = ribuan), tapi
-    sebagian buku kab/kota (mis. Banyuasin) mencetak pecahan dengan titik
-    ('105.48' = rasio 105,48, bukan 10548) tanpa koma sama sekali di
-    halaman itu. Tanpa koma, titik hanya sah sebagai pemisah ribuan bila
-    diikuti persis 3 digit di tiap kelompok ('42.364'); bila kelompok
-    terakhir bukan 3 digit ('84.66'), itu titik desimal.
+    Sebagian besar buku pakai koma sebagai desimal ('.' = ribuan, gaya
+    Indonesia), tapi ada dua pengecualian:
+      - sebagian buku kab/kota (mis. Banyuasin) mencetak pecahan dengan titik
+        ('105.48' = rasio 105,48, bukan 10548) tanpa koma sama sekali di
+        halaman itu. Tanpa koma, titik hanya sah sebagai pemisah ribuan bila
+        diikuti persis 3 digit di tiap kelompok ('42.364'); bila kelompok
+        terakhir bukan 3 digit ('84.66'), itu titik desimal.
+      - sebagian tabel (mis. Kota Serang, Perikanan) pakai gaya Inggris
+        ('2,620.24' = 2620.24, koma ribuan/titik desimal) -- kalau titik DAN
+        koma sama-sama ada, yang muncul TERAKHIR di string itu desimalnya
+        (baik "1.234,56" gaya Indonesia maupun "1,234.56" gaya Inggris).
     """
     s = s.strip()
     if not s or DASH.match(s):
         return None
     s = s.replace(" ", "")
-    if "," in s:
+    if "," in s and "." in s:
+        if s.rfind(",") > s.rfind("."):
+            s = s.replace(".", "").replace(",", ".")
+        else:
+            s = s.replace(",", "")
+    elif "," in s:
         s = s.replace(".", "").replace(",", ".")
     else:
         parts = s.split(".")
@@ -382,8 +417,194 @@ def extract_kendaraan_kecamatan(books, total_names=()):
     return out
 
 
+POTENSI_TABLES = {
+    "pertanian_ada": [
+        (("Padi Sawah", "Menurut Kecamatan"), ()),
+        (("Padi Ladang", "Menurut Kecamatan"), ()),
+    ],
+    "perkebunan_ada": [
+        (("Perkebunan", "Menurut Kecamatan", "Jenis Tanaman"), ()),
+    ],
+    "peternakan_ada": [
+        (("Populasi Ternak", "Kecamatan"), ()),
+    ],
+    "perikanan_ada": [
+        (("Prasarana Produksi Budidaya Perikanan", "Kecamatan"), ()),
+        (("Perikanan Laut", "Kecamatan"), ("Nilai Tukar",)),
+        (("Produksi Ikan", "Penangkapan", "Kecamatan"), ()),
+    ],
+}
+
+# Angka produksi tahun berjalan per kategori -- tabel BEDA dari POTENSI_TABLES
+# utk Perkebunan/Peternakan (yang dipakai utk "ada" itu tabel luas areal/
+# populasi, bukan produksi) dan KOLOM SPESIFIK (bukan sum semua kolom) utk
+# Pertanian/Perikanan yang tabelnya mencampur kolom luas (ha) dgn produksi
+# (ton) atau produksi (ton) dgn nilai rupiah dalam satu tabel yang sama --
+# menjumlah semua kolom di situ akan mencampur satuan. col_index=None berarti
+# sum semua kolom (aman krn semua kolom situ memang sama-sama produksi per
+# jenis tanaman/ternak, satuan konsisten).
+PRODUKSI_TABLES = {
+    "pertanian_produksi_ton": [
+        (("Padi Sawah", "Menurut Kecamatan"), (), 2, None),   # kolom ke-3: Produksi (Ton)
+        (("Padi Ladang", "Menurut Kecamatan"), (), 2, None),
+        (("Jagung", "Menurut Kecamatan"), (), 2, None),        # sama pola 3-kolom Luas Tanam/Panen/Produksi
+    ],
+    "perkebunan_produksi_ton": [
+        (("Produksi Perkebunan", "Menurut Kecamatan", "Jenis Tanaman"), (), None, None),
+    ],
+    "peternakan_produksi_daging_kg": [
+        (("Produksi Daging", "Kecamatan"), (), None, None),
+    ],
+    "peternakan_produksi_telur_kg": [
+        (("Produksi Telur", "Kecamatan"), (), None, None),
+    ],
+    "perikanan_produksi_ton": [
+        (("Perikanan Laut", "Kecamatan"), ("Nilai Tukar",), 0, None),  # kolom ke-1: Jumlah Produksi (Ton) -- laut saja
+        # varian lain (mis. Kota Serang): "Produksi Ikan Menurut Tempat
+        # Penangkapan/Budidaya" -- kolom Laut(Pelabuhan)+Laut(Non Pelabuhan)+
+        # Sungai+Rawa/Danau (tangkap darat & laut) di HALAMAN PERTAMA saja;
+        # halaman "lanjutan"-nya ganti makna jadi budidaya (tambak/kolam/
+        # sawah) -- max_pages=1 supaya tidak ikut tercampur ke angka tangkap.
+        (("Produksi Ikan", "Penangkapan", "Kecamatan"), (), None, 1),
+    ],
+}
+
+
+def _find_kecamatan_table_start(doc, must_all, forbid=()):
+    """Cari halaman judul tabel "X Menurut Kecamatan" mana pun posisi judulnya
+    dalam halaman (sebagian buku menaruh judul di footer halaman data,
+    bukan di atas -- lihat Tabel 5.1.2 Aceh Besar). Return (pno, text,
+    table_no) atau (None, None, None)."""
+    for pno in range(doc.page_count):
+        text = doc[pno].get_text()
+        if "DAFTAR" in text[:400]:
+            continue
+        if "\nKecamatan\n" not in text or "(2)" not in text:
+            continue
+        # judul tabel kadang terbungkus baris (mis. "Padi \nSawah") -- bandingkan
+        # dgn whitespace dirapatkan supaya newline di tengah frasa tidak lolos.
+        norm = re.sub(r"\s+", " ", text)
+        if not all(s in norm for s in must_all):
+            continue
+        if any(s in norm for s in forbid):
+            continue
+        m = re.search(r"Table\s+(\d+\.\d+\.\d+)", text)
+        return pno, text, (m.group(1) if m else None)
+    return None, None, None
+
+
+def _extract_kecamatan_table_sum(doc, must_all, forbid, total_names, col_index=None, max_pages=None):
+    """Jumlahkan kolom numerik per kecamatan pada tabel yang judulnya cocok
+    must_all/forbid, termasuk halaman lanjutan ("Lanjutan Tabel"). Dengan
+    col_index=None, semua kolom pada baris dijumlahkan (dipakai utk deteksi
+    "ada potensi" tanpa peduli satuan kolom); dengan col_index=<int>, cuma
+    kolom itu yang diambil (dipakai utk angka produksi bersatuan tunggal,
+    mis. kolom "Produksi" di tabel Luas Tanam/Luas Panen/Produksi -- jangan
+    dijumlah dgn kolom luas yg satuannya beda). max_pages=1 membatasi cuma
+    halaman pertama (tanpa ikut "Lanjutan Tabel") -- dipakai kalau halaman
+    lanjutan sebenarnya kelompok kolom yang beda makna (mis. Tabel 5.4.1 Kota
+    Serang: hal.1 = tangkap laut/sungai, "lanjutan"-nya = budidaya tambak/
+    kolam -- beda kategori, jangan dijumlah jadi satu). Sama seperti
+    extract_kendaraan_kecamatan tapi generik utk tabel manapun berpola
+    satu-token-per-baris dgn marker (1)(2)(3)."""
+    start, text0, table_no = _find_kecamatan_table_start(doc, must_all, forbid)
+    if start is None:
+        return {}
+    rx_lanjut = re.compile(r"Lanjutan Tabel/Continued Table " + re.escape(table_no)) if table_no else None
+    out = {}
+    for pno in range(start, min(start + 12, doc.page_count)):
+        if max_pages is not None and pno >= start + max_pages:
+            break
+        text = doc[pno].get_text()
+        if pno > start:
+            is_lanjutan = rx_lanjut.search(text) if rx_lanjut else "Lanjutan Tabel" in text[:400]
+            if not is_lanjutan:
+                break
+        lines = page_lines(doc[pno])
+        marker_idx = [i for i, ln in enumerate(lines) if MARKER.match(ln)]
+        if len(marker_idx) < 2:
+            continue
+        ncols = len(marker_idx) - 1
+        if col_index is not None and col_index >= ncols:
+            continue  # halaman lanjutan dgn kolom lain (jenis tanaman berbeda) -- lewati
+        name, values = None, []
+        for ln in lines[marker_idx[-1] + 1:]:
+            if STOPLINE.match(ln):
+                break
+            if NUMERICISH.match(ln) or DASH.match(ln):
+                if name is None:
+                    continue
+                values.append(num(ln) or 0)
+                if len(values) == ncols:
+                    cname = _clean_name(name)
+                    if not _is_total_row(cname, total_names):
+                        tambahan = values[col_index] if col_index is not None else sum(values)
+                        out[cname] = out.get(cname, 0) + tambahan
+                    name, values = None, []
+            else:
+                if name is not None and not values:
+                    continue
+                name, values = ln, []
+    return out
+
+
+def extract_kecamatan_potensi(books, names, total_names=()):
+    """4 kategori A3 (pertanian/perkebunan/peternakan/perikanan) -> dict
+    keyed (kode_kab, kecamatan) = {field: bool|float}. Flag "*_ada" (bool):
+    kecamatan yang tidak muncul di tabel terkait sama sekali tidak masuk
+    dict utk field itu (dianggap False saat load). Field "*_produksi_*"
+    (float, dari PRODUKSI_TABLES): angka produksi tahun berjalan, None kalau
+    tabel produksinya tidak ditemukan/tidak dipublikasikan buku ybs."""
+    out = {}
+    for kode, path in books.items():
+        doc = fitz.open(path)
+        kab_bare = re.sub(r"^(Kabupaten|Kota)\s+", "", names.get(kode, ""))
+        totals_here = set(total_names) | {kab_bare}
+        for field, variants in POTENSI_TABLES.items():
+            found_any = False
+            for must_all, forbid in variants:
+                sums = _extract_kecamatan_table_sum(doc, must_all, forbid, totals_here)
+                if sums:
+                    found_any = True
+                for cname, total in sums.items():
+                    rec = out.setdefault((kode, cname), {})
+                    if total and total > 0:
+                        rec[field] = True
+                    else:
+                        rec.setdefault(field, False)
+            if not found_any:
+                print(f"  WARNING: tabel potensi '{field}' tidak ditemukan di "
+                      f"{os.path.basename(path)} — dilewati", file=sys.stderr)
+        for field, variants in PRODUKSI_TABLES.items():
+            found_any = False
+            for must_all, forbid, col_index, max_pages in variants:
+                sums = _extract_kecamatan_table_sum(doc, must_all, forbid, totals_here, col_index, max_pages)
+                if sums:
+                    found_any = True
+                for cname, total in sums.items():
+                    rec = out.setdefault((kode, cname), {})
+                    rec[field] = round(rec.get(field, 0) + total, 2)
+            if not found_any:
+                print(f"  WARNING: tabel produksi '{field}' tidak ditemukan di "
+                      f"{os.path.basename(path)} — dilewati", file=sys.stderr)
+        doc.close()
+    return out
+
+
+def _clamp_dec62(value, field, kode, nama):
+    """Baris "total kota" yang lolos _is_total_row (nama buku tak selalu diawali
+    "Kota "/"Kabupaten ") kadang menghasilkan angka acak di kolom persentase —
+    DECIMAL(6,2) di skema hanya muat s.d. 9999.99; buang ke None drpd gagalkan
+    seluruh batch load."""
+    if value is not None and abs(value) > 9999.99:
+        print(f"  WARNING: {field}={value} di luar jangkauan wajar untuk {nama} ({kode}) — diabaikan (None)",
+              file=sys.stderr)
+        return None
+    return value
+
+
 def extract_all():
-    kecamatan_rows, padi_all, kendaraan_all = [], [], []
+    kecamatan_rows, padi_all, kendaraan_all, potensi_rows = [], [], [], []
     for prov in discover_provinces():
         names = prov["names"]
         # nama provinsi polos (baris total di tabel) dari nama folder "36 Banten"
@@ -395,6 +616,21 @@ def extract_all():
 
         demografi = extract_kecamatan_demografi(prov["books"], totals)
         kendaraan_kec = extract_kendaraan_kecamatan(prov["books"], totals)
+        potensi = extract_kecamatan_potensi(prov["books"], names, totals)
+        for (kode, nama), rec in sorted(potensi.items()):
+            potensi_rows.append({
+                "kode_kab": kode, "nama_kab": names[kode], "kecamatan": nama,
+                "tahun": 2025,
+                "pertanian_ada": rec.get("pertanian_ada", False),
+                "perkebunan_ada": rec.get("perkebunan_ada", False),
+                "peternakan_ada": rec.get("peternakan_ada", False),
+                "perikanan_ada": rec.get("perikanan_ada", False),
+                "pertanian_produksi_ton": rec.get("pertanian_produksi_ton"),
+                "perkebunan_produksi_ton": rec.get("perkebunan_produksi_ton"),
+                "peternakan_produksi_daging_kg": rec.get("peternakan_produksi_daging_kg"),
+                "peternakan_produksi_telur_kg": rec.get("peternakan_produksi_telur_kg"),
+                "perikanan_produksi_ton": rec.get("perikanan_produksi_ton"),
+            })
         for (kode, nama), rec in sorted(demografi.items()):
             penduduk = rec.get("penduduk")
             kepadatan = rec.get("kepadatan_per_km2")
@@ -402,10 +638,10 @@ def extract_all():
                 "kode_kab": kode, "nama_kab": names[kode], "kecamatan": nama,
                 "tahun": 2025,
                 "jumlah_penduduk": int(penduduk) if penduduk is not None else None,
-                "laju_pertumbuhan_pct": rec.get("laju_pertumbuhan_pct"),
-                "persentase_penduduk": rec.get("persentase_penduduk"),
+                "laju_pertumbuhan_pct": _clamp_dec62(rec.get("laju_pertumbuhan_pct"), "laju_pertumbuhan_pct", kode, nama),
+                "persentase_penduduk": _clamp_dec62(rec.get("persentase_penduduk"), "persentase_penduduk", kode, nama),
                 "kepadatan_per_km2": kepadatan,
-                "rasio_jenis_kelamin": rec.get("rasio_jenis_kelamin"),
+                "rasio_jenis_kelamin": _clamp_dec62(rec.get("rasio_jenis_kelamin"), "rasio_jenis_kelamin", kode, nama),
                 "luas_km2_derived": round(penduduk / kepadatan, 2)
                     if penduduk and kepadatan else None,
                 "total_kendaraan": int(kendaraan_kec[(kode, nama)])
@@ -433,6 +669,7 @@ def extract_all():
         "kecamatan_demografi": kecamatan_rows,
         "kabupaten_padi": padi_all,
         "kabupaten_kendaraan": kendaraan_all,
+        "kecamatan_potensi": potensi_rows,
     }
 
 
@@ -483,19 +720,50 @@ def load_mysql(data):
                     (r["kode_kab"], r["nama_kab"], r["tahun"],
                      r["mobil_penumpang"], r["bus"], r["mobil_barang"],
                      r["sepeda_motor"], r["jumlah"]))
+            for r in data["kecamatan_potensi"]:
+                cur.execute(
+                    """REPLACE INTO bps_kecamatan_potensi_tematik
+                       (kode_kab, nama_kab, kecamatan, tahun, pertanian_ada,
+                        perkebunan_ada, peternakan_ada, perikanan_ada,
+                        pertanian_produksi_ton, perkebunan_produksi_ton,
+                        peternakan_produksi_daging_kg, peternakan_produksi_telur_kg,
+                        perikanan_produksi_ton)
+                       VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                    (r["kode_kab"], r["nama_kab"], r["kecamatan"], r["tahun"],
+                     r["pertanian_ada"], r["perkebunan_ada"],
+                     r["peternakan_ada"], r["perikanan_ada"],
+                     r["pertanian_produksi_ton"], r["perkebunan_produksi_ton"],
+                     r["peternakan_produksi_daging_kg"], r["peternakan_produksi_telur_kg"],
+                     r["perikanan_produksi_ton"]))
         conn.commit()
     counts = {k: len(v) for k, v in data.items()}
     print(f"Loaded ke MySQL: {counts}", file=sys.stderr)
 
 
 def main():
+    # Konsol Windows default ke cp1252, yang tidak bisa encode sebagian nama
+    # buku/kecamatan (mis. huruf Turki "İ" yang pernah bikin crash) -- paksa
+    # UTF-8 di stdout/stderr biar print+dump JSON aman lintas platform.
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="replace")
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--load", action="store_true", help="muat hasil ke MySQL")
     args = ap.parse_args()
     data = extract_all()
-    json.dump(data, sys.stdout, ensure_ascii=False, indent=1)
+    # --load dulu SEBELUM print JSON ke stdout -- supaya crash pas nulis ke
+    # stdout (mis. konsol Windows default cp1252, tidak bisa encode sebagian
+    # karakter nama buku/kecamatan non-Latin1) tidak menyebabkan hasil
+    # ekstraksi yang sudah susah payah didapat (bisa berjam-jam utk cakupan
+    # nasional) hilang percuma krn belum sempat tersimpan ke MySQL.
     if args.load:
         load_mysql(data)
+    try:
+        json.dump(data, sys.stdout, ensure_ascii=False, indent=1)
+    except UnicodeEncodeError as e:
+        print(f"\n(dump JSON ke stdout dilewati -- encoding konsol tidak mendukung "
+              f"karakter tertentu: {e}; data {'sudah tersimpan ke MySQL' if args.load else 'ada di memori tapi tidak tercetak'})",
+              file=sys.stderr)
 
 
 if __name__ == "__main__":

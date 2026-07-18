@@ -84,7 +84,9 @@ html, body {
   min-width: 320px; max-height: 60vh; overflow-y: auto;
   background: var(--panel); border: 1px solid var(--border);
   border-radius: 12px; box-shadow: var(--shadow); padding: 6px;
+  scrollbar-width: none; -ms-overflow-style: none; /* tetap bisa scroll, scrollbar disembunyikan */
 }
+.datatable-menu::-webkit-scrollbar { display: none; }
 .datatable-menu-item {
   display: flex; justify-content: space-between; align-items: center; gap: 12px;
   width: 100%; padding: 9px 12px; border: 0; border-radius: 8px;
@@ -119,10 +121,34 @@ html, body {
 .datatable-head h3 { margin: 0; font-size: 15px; font-weight: 700; }
 .datatable-head h3 i { color: var(--primary); margin-right: 4px; }
 .datatable-meta { font-size: 12px; color: var(--text-dim); margin-right: auto; }
+.datatable-filters { display: flex; align-items: center; gap: 6px; }
+.datatable-filters .maplayer-combo { width: 170px; flex: 0 0 auto; }
+.datatable-filters .maplayer-combo-toggle { padding: 6px 8px; font-size: 12px; }
+.datatable-filters .maplayer-combo-toggle span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.datatable-filters .maplayer-combo-toggle:disabled { opacity: .5; cursor: not-allowed; }
+.datatable-import { display: flex; align-items: center; gap: 6px; }
+.datatable-import .maplayer-combo { width: 260px; flex: 0 0 auto; }
+.datatable-import .maplayer-combo-toggle { padding: 6px 8px; font-size: 12px; }
+.datatable-import .maplayer-combo-toggle span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.datatable-import .btn:disabled { opacity: .5; cursor: not-allowed; }
 /* .icon-btn dasarnya display:none (tombol toggle sidebar mobile) — tombol
    close modal Data menumpang kelas itu, jadi harus dimunculkan eksplisit. */
 .datatable-head .icon-btn { display: flex; flex: 0 0 auto; }
-.datatable-scroll { flex: 1; overflow: auto; }
+.datatable-scroll {
+  flex: 1; overflow: auto;
+  scrollbar-width: thin; scrollbar-color: var(--primary) transparent; /* Firefox */
+}
+.datatable-scroll::-webkit-scrollbar { width: 10px; height: 10px; }
+.datatable-scroll::-webkit-scrollbar-track { background: rgba(255,255,255,.03); border-radius: 10px; margin: 2px; }
+.datatable-scroll::-webkit-scrollbar-thumb {
+  background: linear-gradient(90deg, var(--primary), var(--accent));
+  border-radius: 10px; border: 2px solid var(--bg); background-clip: padding-box;
+}
+.datatable-scroll::-webkit-scrollbar-thumb:hover {
+  background: linear-gradient(90deg, var(--primary-dark), var(--accent));
+  background-clip: padding-box;
+}
+.datatable-scroll::-webkit-scrollbar-corner { background: transparent; }
 .datatable-loading { padding: 32px; text-align: center; color: var(--text-dim); font-size: 13px; }
 table.datatable { border-collapse: collapse; font-size: 12.5px; min-width: 100%; }
 table.datatable th, table.datatable td {
@@ -137,6 +163,9 @@ table.datatable tbody tr:hover { background: rgba(255,255,255,.04); }
 table.datatable td.num { text-align: right; font-variant-numeric: tabular-nums; }
 table.datatable td.null { color: var(--text-dim); text-align: center; }
 table.datatable .rownum { color: var(--text-dim); font-size: 11.5px; }
+.bool-cell, td.bool-cell { text-align: center; }
+.bool-true { color: var(--accent); font-size: 15px; }
+.bool-false { color: var(--text-dim); font-size: 15px; opacity: .55; }
 .datatable-foot {
   display: flex; align-items: center; justify-content: space-between; gap: 12px;
   padding: 10px 16px; border-top: 1px solid var(--border); background: var(--panel);
@@ -205,7 +234,9 @@ table.datatable .rownum { color: var(--text-dim); font-size: 11.5px; }
   max-height: 240px; overflow-y: auto;
   background: #232d52; border: 1px solid var(--border); border-radius: 10px;
   box-shadow: var(--shadow); z-index: 50; padding: 5px;
+  scrollbar-width: none; -ms-overflow-style: none; /* tetap bisa scroll, scrollbar disembunyikan */
 }
+.maplayer-combo-panel::-webkit-scrollbar { display: none; }
 .maplayer-combo-option {
   padding: 8px 10px; font-size: 12.5px; border-radius: 7px; cursor: pointer;
   color: var(--text); white-space: nowrap;
@@ -242,20 +273,32 @@ table.datatable .rownum { color: var(--text-dim); font-size: 11.5px; }
 .maptool-sep { height: 1px; background: var(--border); margin: 2px 4px; }
 
 .map-panel-header {
-  display: flex; align-items: center; justify-content: space-between;
+  display: flex; align-items: center; gap: 8px;
   font-size: 12.5px; font-weight: 600; color: var(--text); padding: 2px 2px 0;
 }
+.map-panel-header .maplayer-close { margin-left: auto; }
 
 .map-legend {
-  position: absolute; top: 14px; right: 62px; z-index: 6; width: 220px;
+  position: absolute; top: 14px; right: 62px; z-index: 6; width: 240px;
   max-height: 280px; display: flex; flex-direction: column; gap: 8px;
   background: #1b2440; border: 1px solid var(--border); border-radius: 10px;
   box-shadow: var(--shadow); padding: 10px;
 }
 .map-legend[hidden] { display: none; }
+.maplayer-clearall {
+  background: none; border: none; outline: none; color: var(--text-dim);
+  font-size: 10.5px; font-weight: 500; cursor: pointer; padding: 4px 6px;
+  border-radius: 6px; display: flex; align-items: center; gap: 4px; white-space: nowrap;
+}
+.maplayer-clearall:hover { color: var(--danger); background: rgba(255,92,124,.12); }
 .map-legend-list { display: flex; flex-direction: column; gap: 6px; overflow-y: auto; max-height: 220px; }
 .map-legend-item { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--text); }
-.map-legend-item-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.map-legend-item-label { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.map-legend-item-remove {
+  flex: 0 0 auto; background: none; border: none; outline: none; color: var(--text-dim);
+  font-size: 11px; cursor: pointer; padding: 3px; line-height: 1; border-radius: 5px;
+}
+.map-legend-item-remove:hover { color: var(--danger); background: rgba(255,92,124,.12); }
 
 .map-measure-result {
   position: absolute; top: 14px; left: 50%; transform: translateX(-50%); z-index: 6;
@@ -684,6 +727,14 @@ table.datatable .rownum { color: var(--text-dim); font-size: 11.5px; }
 .usulan-penilaian-narasi {
   margin: 2px 0 8px; font-size: 12.5px; line-height: 1.55;
   color: var(--text-dim); white-space: pre-wrap;
+}
+.usulan-penilaian-ai-label {
+  margin: 4px 0 2px; font-size: 11.5px; font-weight: 600; color: var(--primary);
+}
+.usulan-penilaian-narasi-ai {
+  background: color-mix(in srgb, var(--primary) 8%, transparent);
+  border-left: 2px solid var(--primary); padding: 6px 8px; border-radius: 4px;
+  color: var(--text);
 }
 .usulan-note-toggle { cursor: pointer; text-decoration: underline dotted; text-underline-offset: 2px; }
 .usulan-note-toggle:hover { color: var(--primary); }

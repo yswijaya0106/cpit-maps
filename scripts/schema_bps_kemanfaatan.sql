@@ -21,7 +21,7 @@ USE route_gis;
 
 CREATE TABLE IF NOT EXISTS bps_kecamatan_demografi (
   kode_kab            CHAR(4)      NOT NULL,   -- kode BPS kab/kota (3601..3674)
-  nama_kab            VARCHAR(40)  NOT NULL,
+  nama_kab            VARCHAR(60)  NOT NULL,   -- mis. "Kabupaten Kepulauan Siau Tagulandang Biaro" (42 char)
   kecamatan           VARCHAR(60)  NOT NULL,   -- nama sesuai buku Dalam Angka
   tahun               SMALLINT     NOT NULL,
   jumlah_penduduk     INT          NULL,
@@ -36,7 +36,7 @@ CREATE TABLE IF NOT EXISTS bps_kecamatan_demografi (
 
 CREATE TABLE IF NOT EXISTS bps_kabupaten_padi (
   kode_kab            CHAR(4)      NOT NULL,
-  nama_kab            VARCHAR(40)  NOT NULL,
+  nama_kab            VARCHAR(60)  NOT NULL,   -- mis. "Kabupaten Kepulauan Siau Tagulandang Biaro" (42 char)
   tahun               SMALLINT     NOT NULL,
   luas_panen_ha       DECIMAL(12,2) NULL,      -- NULL = "-" di sumber (Tangsel)
   produktivitas_ku_ha DECIMAL(8,2) NULL,       -- kuintal/ha (GKG)

@@ -4,6 +4,20 @@ function escapeHtml(str) {
   return String(str).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 }
 
+// Kolom flag biner (TINYINT(1), mis. "pertanian_ada", "kendaraan_estimasi") di
+// tabel-tabel database -- dipakai data-viewer.js (viewer "Data") DAN map-tools.js
+// (join atribut kecamatan di popup identify) supaya render 0/1 sbg ikon konsisten
+// di kedua tempat, bukan cuma salah satu.
+const DB_BOOL_COL_RX = /_ada$|_estimasi$/i;
+function isBoolDbCol(colName) {
+  return DB_BOOL_COL_RX.test(colName);
+}
+function boolCellHtml(value) {
+  return value === 1
+    ? '<i class="bi bi-check-circle-fill bool-true" title="Ya"></i>'
+    : '<i class="bi bi-x-circle bool-false" title="Tidak"></i>';
+}
+
 function formatDuration(minutes) {
   const h = Math.floor(minutes / 60);
   const m = Math.round(minutes % 60);

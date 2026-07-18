@@ -66,16 +66,34 @@ INSERT INTO ijd_scoring_rules (tahun_berlaku, parameter_kode, parameter_label, b
 (2026, 'A', 'Tematik dan Data Dukungnya', 30, 'A4_TIDAK ADA', 'A4 Tidak ada data dukung tematik (0 x 10%)', 0.0)
 ON DUPLICATE KEY UPDATE parameter_label=VALUES(parameter_label), bobot_maks=VALUES(bobot_maks), kondisi_label=VALUES(kondisi_label), nilai=VALUES(nilai);
 
--- A3. Tematik Tambahan (bobot internal 20%) — Tabel 2 baris 14-23. Sumber:
--- tabel kawasan_tematik (scripts/import_kawasan_tematik.py, dari data lokus
--- Bappenas) — usulan yang kabupaten/kecamatannya cocok dengan kawasan
--- tematik ini dapat kontribusi A3 sesuai kategori (nilai tertinggi bila
--- cocok >1 kategori). sub_kode = "A3_<kategori tabel kawasan_tematik>".
--- Kategori PETERNAKAN, MBG, ENERGI_TERBARUKAN, BBM_SATU_HARGA, dan
--- KAWASAN_STRATEGIS belum ada sumber datanya (sheet lokus tak sesuai
--- granularitas/di luar cakupan file yang tersedia).
+-- A3. Tematik Tambahan (bobot internal 20%) — Tabel 2 baris 14-23 dokumen
+-- 14072026. PENTING: daftar resmi A3 mulai dari Perkebunan (item 14) —
+-- "Pertanian" TIDAK ADA di A3 sama sekali (beda dari A1 yang punya
+-- Pertanian sbg item 1). Sempat ditambahkan sub_kode A3_PERTANIAN by
+-- ekstrapolasi (analogi ke A1) saat fitur potensi Dalam Angka dibangun,
+-- lalu DIHAPUS setelah dicek ulang persis terhadap Tabel 2 PDF — supaya
+-- kaidah aplikasi tidak menyimpang dari dokumen resmi. Kalau kelak memang
+-- perlu dimasukkan, itu keputusan kebijakan (bukan bug baca dokumen),
+-- konfirmasi ke pemilik kaidah dulu.
+--
+-- DUA sumber independen, dicocokkan sekaligus oleh _ijd_score_tematik()
+-- (nilai tertinggi dipakai bila cocok >1 kategori DAN >1 sumber):
+--   (a) tabel kawasan_tematik (scripts/import_kawasan_tematik.py, data lokus
+--       Bappenas) -- cakupan Perkebunan/Perikanan/Transmigrasi/KI Prioritas/
+--       PKPN, dicocokkan by kabupaten/kecamatan.
+--   (b) kecamatan_data_turunan.potensi_* (scripts/extract_dalam_angka.py,
+--       Tabel 5.3.1/5.4.1/5.5.x BPS Dalam Angka -- flag ada/tidak produksi
+--       sektoral per kecamatan) -- cakupan Perkebunan/Peternakan/Perikanan,
+--       PARSIAL (baru provinsi yang bukunya ada di dalam_angka/ DAN pola
+--       tabelnya sudah dikenali ekstraktor). potensi_pertanian TETAP
+--       diekstrak & disimpan (dipakai tampilan viewer "Data"), tapi
+--       SENGAJA tidak dicocokkan ke skor A3 di sini.
+-- sub_kode = "A3_<kategori>". Kategori MBG, ENERGI_TERBARUKAN, BBM_SATU_HARGA,
+-- dan KAWASAN_STRATEGIS masih belum ada sumber datanya sama sekali (bukan
+-- statistik BPS, bukan sheet lokus Bappenas yang tersedia).
 INSERT INTO ijd_scoring_rules (tahun_berlaku, parameter_kode, parameter_label, bobot_maks, sub_kode, kondisi_label, nilai) VALUES
 (2026, 'A', 'Tematik dan Data Dukungnya', 30, 'A3_PERKEBUNAN', 'A3 Swasembada Pangan - Perkebunan (100 x 20%)', 20.0),
+(2026, 'A', 'Tematik dan Data Dukungnya', 30, 'A3_PETERNAKAN', 'A3 Swasembada Pangan - Peternakan (100 x 20%)', 20.0),
 (2026, 'A', 'Tematik dan Data Dukungnya', 30, 'A3_PERIKANAN', 'A3 Swasembada Pangan - Perikanan (100 x 20%)', 20.0),
 (2026, 'A', 'Tematik dan Data Dukungnya', 30, 'A3_TRANSMIGRASI', 'A3 Kawasan Produktif Lainnya - Kawasan Transmigrasi (75 x 20%)', 15.0),
 (2026, 'A', 'Tematik dan Data Dukungnya', 30, 'A3_KI_PRIORITAS', 'A3 Kawasan Produktif Lainnya - Kawasan Industri Prioritas RPJMN (50 x 20%)', 10.0),

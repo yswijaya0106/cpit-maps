@@ -384,14 +384,17 @@ function renderPenilaianBappenasHtml(id, data) {
         <i class="bi bi-stars"></i> Buat draf penilaian (AI)</button>`;
     return html;
   }
-  const aspek = (label, poin, narasi) => `
+  const aspek = (label, poin, narasi, narasiAi) => `
     <div class="ijd-bar-row">
       <div class="ijd-bar-label">${escapeHtml(label)}
         <span class="usulan-badge usulan-badge-ok ijd-badge">poin ${poin} / 2</span></div>
     </div>
-    <p class="usulan-penilaian-narasi">${escapeHtml(narasi || "-")}</p>`;
+    <p class="usulan-penilaian-narasi">${escapeHtml(narasi || "-")}</p>` +
+    (narasiAi ? `
+    <p class="hint usulan-penilaian-ai-label"><i class="bi bi-stars"></i> Narasi AI</p>
+    <p class="usulan-penilaian-narasi usulan-penilaian-narasi-ai">${escapeHtml(narasiAi)}</p>` : "");
   html += aspek("A. Prioritas & Nilai Strategis", data.aspek_a_poin, data.aspek_a_narasi);
-  html += aspek("B. Daya Ungkit Ekonomi & Sektoral", data.aspek_b_poin, data.aspek_b_narasi);
+  html += aspek("B. Daya Ungkit Ekonomi & Sektoral", data.aspek_b_poin, data.aspek_b_narasi, data.aspek_b_narasi_ai);
   html += `<div class="ijd-bar-row"><div class="ijd-bar-label">Kesimpulan
       <span class="usulan-badge usulan-badge-ok ijd-badge">total ${data.total_poin} / 4</span></div></div>
     <p class="usulan-penilaian-narasi">${escapeHtml(data.kesimpulan || "-")}</p>
@@ -565,7 +568,95 @@ function bindUsulanImportExport() {
   document.getElementById("btnUsulanExport").addEventListener("click", () => {
     window.location.href = "/api/usulan-inpres/export/xlsx";
   });
+  document.getElementById("btnUsulanExportIjdScore").addEventListener("click", () => {
+    // Ikut filter provinsi yang lagi aktif di panel Jelajahi — kosong = nasional.
+    // Tampilkan preview dulu (bukan langsung unduh) supaya isinya bisa dicek.
+    ijdPreviewOpen(state.usulanBrowse.provinsi || "");
+  });
 }
+
+/* --- Preview "Output Penilaian" (Skor IJD) sebelum export xlsx --------- */
+
+const ijdPreview = { provinsi: "", offset: 0, limit: 50, total: 0 };
+
+async function ijdPreviewOpen(provinsi) {
+  ijdPreview.provinsi = provinsi || "";
+  ijdPreview.offset = 0;
+  document.getElementById("ijdPreviewOverlay").hidden = false;
+  await ijdPreviewFetchPage();
+}
+
+async function ijdPreviewFetchPage() {
+  const scroll = document.getElementById("ijdPreviewScroll");
+  scroll.innerHTML = '<div class="datatable-loading"><i class="bi bi-hourglass-split"></i> Menghitung skor...</div>';
+  try {
+    const params = new URLSearchParams({ limit: ijdPreview.limit, offset: ijdPreview.offset });
+    if (ijdPreview.provinsi) params.set("provinsi", ijdPreview.provinsi);
+    const res = await fetch(`/api/usulan-inpres/ijd-score/preview?${params}`);
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || "Gagal memuat preview");
+    ijdPreview.total = data.total;
+    ijdPreviewRender(data);
+  } catch (err) {
+    scroll.innerHTML = `<div class="datatable-loading">${escapeHtml(err.message)}</div>`;
+  }
+}
+
+function ijdPreviewRender(data) {
+  document.getElementById("ijdPreviewTitle").textContent = data.label;
+  document.getElementById("ijdPreviewMeta").textContent =
+    `${data.total.toLocaleString("id-ID")} usulan`;
+
+  const head = data.columns.map((c) => `<th>${escapeHtml(c)}</th>`).join("");
+  const cell = (v) => {
+    if (v === null || v === undefined || v === "") return '<td class="null">—</td>';
+    if (typeof v === "number") return `<td class="num">${v.toLocaleString("id-ID")}</td>`;
+    return `<td>${escapeHtml(String(v))}</td>`;
+  };
+  const body = data.rows.map((r) => `<tr>${r.map(cell).join("")}</tr>`).join("");
+  document.getElementById("ijdPreviewScroll").innerHTML =
+    `<table class="datatable"><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>`;
+
+  const page = Math.floor(data.offset / data.limit) + 1;
+  const pages = Math.max(1, Math.ceil(data.total / data.limit));
+  document.getElementById("ijdPreviewPageInfo").textContent = `Halaman ${page} dari ${pages.toLocaleString("id-ID")}`;
+  document.getElementById("ijdPreviewPrev").disabled = data.offset <= 0;
+  document.getElementById("ijdPreviewNext").disabled = data.offset + data.limit >= data.total;
+}
+
+function bindIjdPreview() {
+  const overlay = document.getElementById("ijdPreviewOverlay");
+  document.getElementById("ijdPreviewClose").addEventListener("click", () => (overlay.hidden = true));
+  overlay.addEventListener("click", (e) => {
+    if (e.target === overlay) overlay.hidden = true;
+  });
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && !overlay.hidden) overlay.hidden = true;
+  });
+
+  document.getElementById("ijdPreviewPrev").addEventListener("click", () => {
+    ijdPreview.offset = Math.max(0, ijdPreview.offset - ijdPreview.limit);
+    ijdPreviewFetchPage();
+  });
+  document.getElementById("ijdPreviewNext").addEventListener("click", () => {
+    if (ijdPreview.offset + ijdPreview.limit < ijdPreview.total) {
+      ijdPreview.offset += ijdPreview.limit;
+      ijdPreviewFetchPage();
+    }
+  });
+  document.getElementById("ijdPreviewPageSize").addEventListener("change", (e) => {
+    ijdPreview.limit = parseInt(e.target.value, 10);
+    ijdPreview.offset = 0;
+    ijdPreviewFetchPage();
+  });
+  document.getElementById("ijdPreviewExport").addEventListener("click", () => {
+    const params = new URLSearchParams();
+    if (ijdPreview.provinsi) params.set("provinsi", ijdPreview.provinsi);
+    window.location.href = `/api/usulan-inpres/ijd-score/export/xlsx?${params}`;
+  });
+}
+
+document.addEventListener("DOMContentLoaded", bindIjdPreview);
 
 function bindUsulanBrowse() {
   loadUsulanProvinsiOptions();

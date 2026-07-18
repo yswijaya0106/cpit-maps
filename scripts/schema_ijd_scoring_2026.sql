@@ -150,6 +150,28 @@ INSERT INTO ijd_scoring_rules (tahun_berlaku, parameter_kode, parameter_label, b
 (2026, 'C', 'Kemanfaatan', 25, 'A2_LT3', 'Produktivitas padi < 3 ton/ha (20 x 12%)', 2.4)
 ON DUPLICATE KEY UPDATE parameter_label=VALUES(parameter_label), bobot_maks=VALUES(bobot_maks), kondisi_label=VALUES(kondisi_label), nilai=VALUES(nilai);
 
+-- C.A3 Lalu Lintas (bobot 30%, Tabel 4 dokumen 14072026 halaman 4) — dua opsi
+-- ukur: LHR (diutamakan dokumen, tapi "sedang diminta"/G5, belum ada sumber
+-- nasional) dan Kepemilikan Kendaraan per km jalan (dokumen: "*Apabila
+-- tidak didapatkan data kepemilikan kendaraan maka dapat menggunakan rasio
+-- dari data kepemilikan kendaraan per kabupaten" — jadi rasio KABUPATEN
+-- resmi jadi fallback, bukan proksi liar). Hanya Kepemilikan Kendaraan yang
+-- diseed di sini, memakai SELURUH bobot A3 (30%) sebagai substitusi
+-- sementara LHR (pola sama dgn CPIT "Kumpulan Data" baris 60: "untuk saat
+-- ini menggunakan data kepemilikan kendaraan dengan bobot 100"). Kendaraan
+-- per km = bps_kabupaten_kendaraan.jumlah ÷ bps_kabupaten_jalan.panjang_total_km
+-- (keduanya dari scripts/extract_dalam_angka.py, level KABUPATEN). LHR asli
+-- SENGAJA belum diseed — tidak ada sumber data nasional. Nilai DISIMPAN
+-- SUDAH TERTIMBANG ke skala 0-100 parameter C (mis. >1.000/km: 100 x 30% =
+-- 30.0). Ambang diterapkan di _ijd_score_kemanfaatan() app.py.
+INSERT INTO ijd_scoring_rules (tahun_berlaku, parameter_kode, parameter_label, bobot_maks, sub_kode, kondisi_label, nilai) VALUES
+(2026, 'C', 'Kemanfaatan', 25, 'A3_GT1000', 'Kepemilikan kendaraan > 1.000/km — potensi kemacetan berat (100 x 30%)', 30.0),
+(2026, 'C', 'Kemanfaatan', 25, 'A3_600_1000', 'Kepemilikan kendaraan 600-1.000/km — butuh peningkatan kapasitas (80 x 30%)', 24.0),
+(2026, 'C', 'Kemanfaatan', 25, 'A3_300_600', 'Kepemilikan kendaraan 300-600/km — mulai padat (60 x 30%)', 18.0),
+(2026, 'C', 'Kemanfaatan', 25, 'A3_100_300', 'Kepemilikan kendaraan 100-300/km — kondisi normal (40 x 30%)', 12.0),
+(2026, 'C', 'Kemanfaatan', 25, 'A3_LT100', 'Kepemilikan kendaraan < 100/km — jalan sangat longgar (20 x 30%)', 6.0)
+ON DUPLICATE KEY UPDATE parameter_label=VALUES(parameter_label), bobot_maks=VALUES(bobot_maks), kondisi_label=VALUES(kondisi_label), nilai=VALUES(nilai);
+
 -- E. Kegiatan IJD Sebelumnya / Penuntasan (bobot 10) — Tabel 6. Basis per
 -- ruas: cocok dengan kegiatan DPP IJD TA 2025 (tabel dpp_ijd_2025) = lanjutan.
 INSERT INTO ijd_scoring_rules (tahun_berlaku, parameter_kode, parameter_label, bobot_maks, sub_kode, kondisi_label, nilai) VALUES

@@ -1048,11 +1048,14 @@ def _ijd_score_kemanfaatan(row: dict, rules: dict, ctx: dict = None) -> dict:
     """Parameter C kaidah 2026 — sub A1 (kepadatan penduduk kecamatan, bobot
     35%) + A2 produktivitas padi kabupaten (proksi "Produktivitas Ton/Ha",
     bobot 12% dari 35% A2 -- Indeks Penanaman 11% & Luas Lahan 12% masih
-    menunggu data). Nilai rules sudah tertimbang. Butuh relasi
-    usulan_inpres.kode_kecamatan (interim manual, menunggu SHP batas
-    kecamatan); A1 dari kecamatan_data_turunan, A2 dari bps_kabupaten_padi
-    (dalam_angka/) -- lihat scripts/schema_ijd_scoring_2026.sql. Sub A3
-    lalu lintas menunggu data."""
+    menunggu data) + A3 lalu lintas (kepemilikan kendaraan per km jalan
+    kabupaten, substitusi LHR yang belum ada sumber -- dokumen resmi
+    mengizinkan rasio kabupaten sbg fallback). Nilai rules sudah tertimbang.
+    Butuh relasi usulan_inpres.kode_kecamatan (interim manual, menunggu SHP
+    batas kecamatan); A1 dari kecamatan_data_turunan, A2 dari
+    bps_kabupaten_padi, A3 dari bps_kabupaten_kendaraan ÷
+    bps_kabupaten_jalan (semua dalam_angka/) -- lihat
+    scripts/schema_ijd_scoring_2026.sql."""
     rule = rules.get("C")
     if not rule:
         return {"tersedia": False, "keterangan": "Kaidah kemanfaatan belum diset di database."}
@@ -1126,9 +1129,42 @@ def _ijd_score_kemanfaatan(row: dict, rules: dict, ctx: dict = None) -> dict:
             detail.append(f"{sub_a2['label']} (produktivitas padi kab. {ku_ha/10:.1f} ton/ha, proksi kabupaten)")
         else:
             detail.append("A2: produktivitas padi kabupaten belum tersedia (buku Dalam Angka belum diimpor)")
-        detail.append("Indeks Penanaman & Luas Lahan (sub A2) dan Lalu Lintas (A3) belum tersedia.")
+        detail.append("Indeks Penanaman & Luas Lahan (sub A2) belum tersedia.")
     else:
-        detail.append("hanya sub A1 kepadatan; produktivitas (A2) & lalu lintas (A3) belum tersedia.")
+        detail.append("Produktivitas (A2) belum tersedia.")
+
+    if any(k.startswith("A3_") for k in rule["subs"]):
+        kode_kab = kode_kec // 1000
+        rasio = (ctx["kendaraan_per_km_by_kab"].get(kode_kab) if ctx and "kendaraan_per_km_by_kab" in ctx
+                 else None)
+        if rasio is None and not (ctx and "kendaraan_per_km_by_kab" in ctx):
+            with db_cursor() as cur:
+                cur.execute(
+                    "SELECT k.jumlah / j.panjang_total_km AS per_km FROM bps_kabupaten_kendaraan k "
+                    "JOIN bps_kabupaten_jalan j ON j.kode_kab = k.kode_kab "
+                    "WHERE k.kode_kab = %s AND j.panjang_total_km > 0 "
+                    "ORDER BY k.tahun DESC LIMIT 1",
+                    (f"{kode_kab:04d}",),
+                )
+                r = cur.fetchone()
+                rasio = float(r["per_km"]) if r else None
+        if rasio is not None:
+            if rasio > 1000:
+                sub_a3 = rule["subs"]["A3_GT1000"]
+            elif rasio >= 600:
+                sub_a3 = rule["subs"]["A3_600_1000"]
+            elif rasio >= 300:
+                sub_a3 = rule["subs"]["A3_300_600"]
+            elif rasio >= 100:
+                sub_a3 = rule["subs"]["A3_100_300"]
+            else:
+                sub_a3 = rule["subs"]["A3_LT100"]
+            nilai += sub_a3["nilai"]
+            detail.append(f"{sub_a3['label']} (kepemilikan kendaraan kab. {rasio:,.0f}/km, proksi kabupaten)")
+        else:
+            detail.append("A3: rasio kendaraan/km kabupaten belum tersedia (data kendaraan atau panjang jalan belum lengkap)")
+    else:
+        detail.append("Lalu lintas (A3) belum tersedia.")
 
     return {"tersedia": True, "nilai": nilai, "keterangan": "; ".join(detail) + "."}
 
@@ -1431,6 +1467,20 @@ def _ijd_score_bulk_rows(provinsi: str, tahun: int):
             for r in cur.fetchall():
                 produktivitas_padi_by_kab.setdefault(int(r["kode_kab"]), r)  # tahun terbaru menang
 
+    # Kepemilikan kendaraan per km jalan kabupaten (C.A3, substitusi LHR —
+    # lihat _ijd_score_kemanfaatan).
+    kendaraan_per_km_by_kab = {}
+    if kode_kab_set:
+        with db_cursor() as cur:
+            cur.execute(
+                "SELECT k.kode_kab, k.jumlah / j.panjang_total_km AS per_km FROM bps_kabupaten_kendaraan k "
+                "JOIN bps_kabupaten_jalan j ON j.kode_kab = k.kode_kab "
+                "WHERE k.kode_kab IN %s AND j.panjang_total_km > 0 ORDER BY k.tahun DESC",
+                (tuple(kode_kab_set),),
+            )
+            for r in cur.fetchall():
+                kendaraan_per_km_by_kab.setdefault(int(r["kode_kab"]), float(r["per_km"]))  # tahun terbaru menang
+
     # kepadatan_by_kec juga menyimpan kolom potensi_* (satu query, satu tabel
     # sumber) — dipakai ulang sebagai ctx["potensi_by_kec"] utk A3.
     ctx = {"kab_by_wilayah": kab_by_wilayah, "kawasan_by_kab": kawasan_by_kab,
@@ -1438,7 +1488,8 @@ def _ijd_score_bulk_rows(provinsi: str, tahun: int):
            "potensi_produksi_by_kec": potensi_produksi_by_kec,
            "bappenas_lokus_by_kab": bappenas_lokus_by_kab, "bappenas_lokus_by_prov": bappenas_lokus_by_prov,
            "kemantapan_kab_set": kemantapan_kab_set,
-           "produktivitas_padi_by_kab": produktivitas_padi_by_kab}
+           "produktivitas_padi_by_kab": produktivitas_padi_by_kab,
+           "kendaraan_per_km_by_kab": kendaraan_per_km_by_kab}
     hasil = [(row, _compute_ijd_score(row, tahun, rules, ctx)) for row in rows]
     # Skor tertinggi dulu; usulan tanpa skor (semua parameter belum tersedia) di akhir.
     hasil.sort(key=lambda x: (x[1]["skor_ternormalisasi_100"] is None,

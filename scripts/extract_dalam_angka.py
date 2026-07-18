@@ -32,10 +32,21 @@ Yang diekstrak:
 Pemakaian:
     python scripts/extract_dalam_angka.py            # ekstrak -> JSON di stdout
     python scripts/extract_dalam_angka.py --load     # ekstrak + muat ke MySQL
+    python scripts/extract_dalam_angka.py --load --workers 4  # paralel per provinsi
 
 Loader butuh kredensial MySQL dari .env (sama dengan app.py) dan schema dari
 scripts/schema_bps_kemanfaatan.sql serta scripts/schema_bps_potensi_tematik.sql
 sudah dijalankan.
+
+--workers N (default 1, sekuensial -- sama seperti sebelumnya): parsing PDF
+per provinsi CPU-bound & saling independen (tidak ada provinsi yang baca
+file provinsi lain), jadi aman dibagi ke N proses OS lewat
+ProcessPoolExecutor -- BUKAN threading, karena GIL bikin threading biasa
+tidak mempercepat kerja CPU-bound seperti parsing regex/teks. Tiap worker
+proses mengembalikan hasil murni di memori (list of dict); MySQL TETAP
+ditulis sekali di proses utama setelah semua worker selesai (load_mysql()
+tidak dipanggil per-worker) -- proses tidak bisa berbagi koneksi pymysql,
+dan tidak perlu: menulis di akhir jauh lebih murah drpd parsing PDF-nya.
 """
 import argparse
 import json
@@ -777,73 +788,81 @@ def extract_jalan_kabupaten(books):
     return rows
 
 
-def extract_all(prov_filter=None):
-    kecamatan_rows, padi_all, kendaraan_all, potensi_rows = [], [], [], []
-    jalan_rows = []
-    for prov in discover_provinces():
-        if prov_filter and prov_filter.lower() not in prov["folder"].lower():
-            continue
-        names = prov["names"]
-        # nama provinsi polos (baris total di tabel) dari nama folder "36 Banten"
-        prov_name = re.sub(r"^\d+\s*", "", prov["folder"]).strip()
-        totals = {prov_name}
-        print(f"Memproses {prov['folder']}: {len(prov['books'])} buku kab/kota"
-              + ("" if prov["prov_book"] else " (buku provinsi TIDAK ada)"),
-              file=sys.stderr)
+_EMPTY_EXTRACT = {
+    "kecamatan_demografi": [], "kabupaten_padi": [], "kabupaten_kendaraan": [],
+    "kecamatan_potensi": [], "kabupaten_jalan": [],
+}
 
-        demografi = extract_kecamatan_demografi(prov["books"], totals)
-        kendaraan_kec = extract_kendaraan_kecamatan(prov["books"], totals)
-        potensi = extract_kecamatan_potensi(prov["books"], names, totals)
-        for r in extract_jalan_kabupaten(prov["books"]):
-            r["nama_kab"] = names[r["kode_kab"]]
-            jalan_rows.append(r)
-        for (kode, nama), rec in sorted(potensi.items()):
-            potensi_rows.append({
-                "kode_kab": kode, "nama_kab": names[kode], "kecamatan": nama,
-                "tahun": 2025,
-                "pertanian_ada": rec.get("pertanian_ada", False),
-                "perkebunan_ada": rec.get("perkebunan_ada", False),
-                "peternakan_ada": rec.get("peternakan_ada", False),
-                "perikanan_ada": rec.get("perikanan_ada", False),
-                "pertanian_produksi_ton": rec.get("pertanian_produksi_ton"),
-                "perkebunan_produksi_ton": rec.get("perkebunan_produksi_ton"),
-                "peternakan_produksi_daging_kg": rec.get("peternakan_produksi_daging_kg"),
-                "peternakan_produksi_telur_kg": rec.get("peternakan_produksi_telur_kg"),
-                "perikanan_produksi_ton": rec.get("perikanan_produksi_ton"),
-            })
-        for (kode, nama), rec in sorted(demografi.items()):
-            penduduk = rec.get("penduduk")
-            kepadatan = rec.get("kepadatan_per_km2")
-            kecamatan_rows.append({
-                "kode_kab": kode, "nama_kab": names[kode], "kecamatan": nama,
-                "tahun": 2025,
-                "jumlah_penduduk": int(penduduk) if penduduk is not None else None,
-                "laju_pertumbuhan_pct": _clamp_dec62(rec.get("laju_pertumbuhan_pct"), "laju_pertumbuhan_pct", kode, nama),
-                "persentase_penduduk": _clamp_dec62(rec.get("persentase_penduduk"), "persentase_penduduk", kode, nama),
-                "kepadatan_per_km2": kepadatan,
-                "rasio_jenis_kelamin": _clamp_dec62(rec.get("rasio_jenis_kelamin"), "rasio_jenis_kelamin", kode, nama),
-                "luas_km2_derived": round(penduduk / kepadatan, 2)
-                    if penduduk and kepadatan else None,
-                "total_kendaraan": int(kendaraan_kec[(kode, nama)])
-                    if (kode, nama) in kendaraan_kec else None,
-            })
 
-        if prov["prov_book"]:
-            row_kab, row_kota = build_prov_row_maps(names)
-            doc = fitz.open(prov["prov_book"])
-            try:
-                for r in extract_padi_provinsi(doc, row_kab, row_kota):
-                    r["nama_kab"] = names[r["kode_kab"]]
-                    padi_all.append(r)
-            except RuntimeError as e:
-                print(f"  WARNING: padi provinsi — {e}", file=sys.stderr)
-            try:
-                for r in extract_kendaraan_provinsi(doc, row_kab, row_kota):
-                    r["nama_kab"] = names[r["kode_kab"]]
-                    kendaraan_all.append(r)
-            except RuntimeError as e:
-                print(f"  WARNING: kendaraan provinsi — {e}", file=sys.stderr)
-            doc.close()
+def _extract_province(prov):
+    """Ekstrak SATU provinsi -- unit kerja worker ProcessPoolExecutor
+    (lihat extract_all). Provinsi lain sama sekali tidak disentuh (tidak
+    ada file/tabel/state yang di-share), jadi aman dipanggil paralel tanpa
+    locking apa pun. TIDAK menulis ke MySQL di sini -- return murni dict
+    hasil, digabung & ditulis sekali oleh main process (koneksi pymysql
+    tidak bisa dibagi antar proses)."""
+    kecamatan_rows, padi_all, kendaraan_all, potensi_rows, jalan_rows = [], [], [], [], []
+    names = prov["names"]
+    # nama provinsi polos (baris total di tabel) dari nama folder "36 Banten"
+    prov_name = re.sub(r"^\d+\s*", "", prov["folder"]).strip()
+    totals = {prov_name}
+    print(f"Memproses {prov['folder']}: {len(prov['books'])} buku kab/kota"
+          + ("" if prov["prov_book"] else " (buku provinsi TIDAK ada)"),
+          file=sys.stderr)
+
+    demografi = extract_kecamatan_demografi(prov["books"], totals)
+    kendaraan_kec = extract_kendaraan_kecamatan(prov["books"], totals)
+    potensi = extract_kecamatan_potensi(prov["books"], names, totals)
+    for r in extract_jalan_kabupaten(prov["books"]):
+        r["nama_kab"] = names[r["kode_kab"]]
+        jalan_rows.append(r)
+    for (kode, nama), rec in sorted(potensi.items()):
+        potensi_rows.append({
+            "kode_kab": kode, "nama_kab": names[kode], "kecamatan": nama,
+            "tahun": 2025,
+            "pertanian_ada": rec.get("pertanian_ada", False),
+            "perkebunan_ada": rec.get("perkebunan_ada", False),
+            "peternakan_ada": rec.get("peternakan_ada", False),
+            "perikanan_ada": rec.get("perikanan_ada", False),
+            "pertanian_produksi_ton": rec.get("pertanian_produksi_ton"),
+            "perkebunan_produksi_ton": rec.get("perkebunan_produksi_ton"),
+            "peternakan_produksi_daging_kg": rec.get("peternakan_produksi_daging_kg"),
+            "peternakan_produksi_telur_kg": rec.get("peternakan_produksi_telur_kg"),
+            "perikanan_produksi_ton": rec.get("perikanan_produksi_ton"),
+        })
+    for (kode, nama), rec in sorted(demografi.items()):
+        penduduk = rec.get("penduduk")
+        kepadatan = rec.get("kepadatan_per_km2")
+        kecamatan_rows.append({
+            "kode_kab": kode, "nama_kab": names[kode], "kecamatan": nama,
+            "tahun": 2025,
+            "jumlah_penduduk": int(penduduk) if penduduk is not None else None,
+            "laju_pertumbuhan_pct": _clamp_dec62(rec.get("laju_pertumbuhan_pct"), "laju_pertumbuhan_pct", kode, nama),
+            "persentase_penduduk": _clamp_dec62(rec.get("persentase_penduduk"), "persentase_penduduk", kode, nama),
+            "kepadatan_per_km2": kepadatan,
+            "rasio_jenis_kelamin": _clamp_dec62(rec.get("rasio_jenis_kelamin"), "rasio_jenis_kelamin", kode, nama),
+            "luas_km2_derived": round(penduduk / kepadatan, 2)
+                if penduduk and kepadatan else None,
+            "total_kendaraan": int(kendaraan_kec[(kode, nama)])
+                if (kode, nama) in kendaraan_kec else None,
+        })
+
+    if prov["prov_book"]:
+        row_kab, row_kota = build_prov_row_maps(names)
+        doc = fitz.open(prov["prov_book"])
+        try:
+            for r in extract_padi_provinsi(doc, row_kab, row_kota):
+                r["nama_kab"] = names[r["kode_kab"]]
+                padi_all.append(r)
+        except RuntimeError as e:
+            print(f"  WARNING: padi provinsi — {e}", file=sys.stderr)
+        try:
+            for r in extract_kendaraan_provinsi(doc, row_kab, row_kota):
+                r["nama_kab"] = names[r["kode_kab"]]
+                kendaraan_all.append(r)
+        except RuntimeError as e:
+            print(f"  WARNING: kendaraan provinsi — {e}", file=sys.stderr)
+        doc.close()
 
     return {
         "kecamatan_demografi": kecamatan_rows,
@@ -852,6 +871,37 @@ def extract_all(prov_filter=None):
         "kecamatan_potensi": potensi_rows,
         "kabupaten_jalan": jalan_rows,
     }
+
+
+def _merge_extract(acc, part):
+    for k in acc:
+        acc[k].extend(part[k])
+
+
+def extract_all(prov_filter=None, workers=1):
+    provinces = [p for p in discover_provinces()
+                 if not prov_filter or prov_filter.lower() in p["folder"].lower()]
+    merged = {k: [] for k in _EMPTY_EXTRACT}
+
+    if workers <= 1 or len(provinces) <= 1:
+        for prov in provinces:
+            _merge_extract(merged, _extract_province(prov))
+        return merged
+
+    # ProcessPoolExecutor, BUKAN threading -- parsing PDF itu CPU-bound
+    # (regex/iterasi teks), GIL bikin threading biasa tidak mempercepat
+    # kerja begini. Tiap provinsi baca file sendiri & tidak share state,
+    # jadi partisi per-provinsi ini aman tanpa locking.
+    from concurrent.futures import ProcessPoolExecutor, as_completed
+    with ProcessPoolExecutor(max_workers=workers) as pool:
+        futures = {pool.submit(_extract_province, prov): prov for prov in provinces}
+        for fut in as_completed(futures):
+            prov = futures[fut]
+            try:
+                _merge_extract(merged, fut.result())
+            except Exception as e:
+                print(f"  ERROR provinsi {prov['folder']} — dilewati: {e}", file=sys.stderr)
+    return merged
 
 
 def load_mysql(data):
@@ -968,8 +1018,12 @@ def main():
     ap.add_argument("--provinsi", default=None,
                     help="hanya folder provinsi yang namanya mengandung teks ini "
                          "(mis. '36 Banten' atau 'banten'); default semua provinsi")
+    ap.add_argument("--workers", type=int, default=1,
+                    help="jumlah proses paralel utk parsing PDF per provinsi "
+                         "(default 1 = sekuensial, sama seperti sebelumnya). "
+                         "MySQL tetap ditulis sekali di akhir, bukan per-worker.")
     args = ap.parse_args()
-    data = extract_all(args.provinsi)
+    data = extract_all(args.provinsi, workers=args.workers)
     # --load dulu SEBELUM print JSON ke stdout -- supaya crash pas nulis ke
     # stdout (mis. konsol Windows default cp1252, tidak bisa encode sebagian
     # karakter nama buku/kecamatan non-Latin1) tidak menyebabkan hasil

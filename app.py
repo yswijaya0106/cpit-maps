@@ -1036,12 +1036,14 @@ def _ijd_score_rc(row: dict, rules: dict, ctx: dict = None) -> dict:
 
 
 def _ijd_score_kemanfaatan(row: dict, rules: dict, ctx: dict = None) -> dict:
-    """Parameter C kaidah 2026 — baru sub A1 (kepadatan penduduk kecamatan,
-    bobot internal 35%; nilai rules sudah tertimbang). Butuh relasi
+    """Parameter C kaidah 2026 — sub A1 (kepadatan penduduk kecamatan, bobot
+    35%) + A2 produktivitas padi kabupaten (proksi "Produktivitas Ton/Ha",
+    bobot 12% dari 35% A2 -- Indeks Penanaman 11% & Luas Lahan 12% masih
+    menunggu data). Nilai rules sudah tertimbang. Butuh relasi
     usulan_inpres.kode_kecamatan (interim manual, menunggu SHP batas
-    kecamatan) dan kepadatan di kecamatan_data_turunan (dari buku Dalam
-    Angka di dalam_angka/). Sub A2 produktivitas & A3 lalu lintas menunggu
-    data — lihat scripts/schema_ijd_scoring_2026.sql."""
+    kecamatan); A1 dari kecamatan_data_turunan, A2 dari bps_kabupaten_padi
+    (dalam_angka/) -- lihat scripts/schema_ijd_scoring_2026.sql. Sub A3
+    lalu lintas menunggu data."""
     rule = rules.get("C")
     if not rule:
         return {"tersedia": False, "keterangan": "Kaidah kemanfaatan belum diset di database."}
@@ -1084,14 +1086,42 @@ def _ijd_score_kemanfaatan(row: dict, rules: dict, ctx: dict = None) -> dict:
     else:
         sub_kode = "A1_LT100"
     sub = rule["subs"][sub_kode]
-    return {
-        "tersedia": True,
-        "nilai": sub["nilai"],
-        "keterangan": (
-            f"Kec. {kec['kecamatan']}: {sub['label']} (kepadatan {kepadatan:,.0f} jiwa/km2) — "
-            "hanya sub A1 kepadatan; produktivitas (A2) & lalu lintas (A3) belum tersedia."
-        ),
-    }
+    nilai = sub["nilai"]
+    detail = [f"Kec. {kec['kecamatan']}: {sub['label']} (kepadatan {kepadatan:,.0f} jiwa/km2)"]
+
+    if any(k.startswith("A2_") for k in rule["subs"]):
+        kode_kab = kode_kec // 1000
+        padi = (ctx["produktivitas_padi_by_kab"].get(kode_kab) if ctx and "produktivitas_padi_by_kab" in ctx
+                else None)
+        if padi is None and not (ctx and "produktivitas_padi_by_kab" in ctx):
+            with db_cursor() as cur:
+                cur.execute(
+                    "SELECT nama_kab, produktivitas_ku_ha FROM bps_kabupaten_padi "
+                    "WHERE kode_kab = %s ORDER BY tahun DESC LIMIT 1",
+                    (f"{kode_kab:04d}",),
+                )
+                padi = cur.fetchone()
+        if padi and padi.get("produktivitas_ku_ha") is not None:
+            ku_ha = float(padi["produktivitas_ku_ha"])
+            if ku_ha > 60:
+                sub_a2 = rule["subs"]["A2_GT6"]
+            elif ku_ha >= 50:
+                sub_a2 = rule["subs"]["A2_5_6"]
+            elif ku_ha >= 40:
+                sub_a2 = rule["subs"]["A2_4_5"]
+            elif ku_ha >= 30:
+                sub_a2 = rule["subs"]["A2_3_4"]
+            else:
+                sub_a2 = rule["subs"]["A2_LT3"]
+            nilai += sub_a2["nilai"]
+            detail.append(f"{sub_a2['label']} (produktivitas padi kab. {ku_ha/10:.1f} ton/ha, proksi kabupaten)")
+        else:
+            detail.append("A2: produktivitas padi kabupaten belum tersedia (buku Dalam Angka belum diimpor)")
+        detail.append("Indeks Penanaman & Luas Lahan (sub A2) dan Lalu Lintas (A3) belum tersedia.")
+    else:
+        detail.append("hanya sub A1 kepadatan; produktivitas (A2) & lalu lintas (A3) belum tersedia.")
+
+    return {"tersedia": True, "nilai": nilai, "keterangan": "; ".join(detail) + "."}
 
 
 def _ijd_score_penuntasan(row: dict, rules: dict, ctx: dict = None) -> dict:
@@ -1379,13 +1409,27 @@ def _ijd_score_bulk_rows(provinsi: str, tahun: int):
             )
             kemantapan_kab_set = {r["kode_wilayah"] for r in cur.fetchall()}
 
+    # Produktivitas padi kabupaten (C.A2, proksi "Produktivitas Ton/Ha" Tabel 4
+    # — hanya komoditas padi & level kabupaten, lihat _ijd_score_kemanfaatan).
+    produktivitas_padi_by_kab = {}
+    if kode_kab_set:
+        with db_cursor() as cur:
+            cur.execute(
+                "SELECT kode_kab, nama_kab, produktivitas_ku_ha FROM bps_kabupaten_padi "
+                "WHERE kode_kab IN %s ORDER BY tahun DESC",
+                (tuple(kode_kab_set),),
+            )
+            for r in cur.fetchall():
+                produktivitas_padi_by_kab.setdefault(int(r["kode_kab"]), r)  # tahun terbaru menang
+
     # kepadatan_by_kec juga menyimpan kolom potensi_* (satu query, satu tabel
     # sumber) — dipakai ulang sebagai ctx["potensi_by_kec"] utk A3.
     ctx = {"kab_by_wilayah": kab_by_wilayah, "kawasan_by_kab": kawasan_by_kab,
            "kepadatan_by_kec": kepadatan_by_kec, "potensi_by_kec": kepadatan_by_kec,
            "potensi_produksi_by_kec": potensi_produksi_by_kec,
            "bappenas_lokus_by_kab": bappenas_lokus_by_kab, "bappenas_lokus_by_prov": bappenas_lokus_by_prov,
-           "kemantapan_kab_set": kemantapan_kab_set}
+           "kemantapan_kab_set": kemantapan_kab_set,
+           "produktivitas_padi_by_kab": produktivitas_padi_by_kab}
     hasil = [(row, _compute_ijd_score(row, tahun, rules, ctx)) for row in rows]
     # Skor tertinggi dulu; usulan tanpa skor (semua parameter belum tersedia) di akhir.
     hasil.sort(key=lambda x: (x[1]["skor_ternormalisasi_100"] is None,

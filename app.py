@@ -2064,6 +2064,7 @@ BAPPENAS_KRITERIA_LABEL = {
     "KI_PRIORITAS": "Kawasan Industri Prioritas (PSN/Hilirisasi/RPJMN/Dirgantara)",
     "SWASEMBADA_PANGAN_RPJMN": "Kawasan Komoditas Unggulan Swasembada Pangan RPJMN",
     "BBM_1_HARGA": "Lokasi Mendukung Distribusi BBM Satu Harga",
+    "KPP_DESA": "Kawasan Perdesaan Prioritas (KPP)",
 }
 _BAPPENAS_KAWASAN_TEMATIK_KATEGORI = ("PKPN", "TRANSMIGRASI", "KI_PRIORITAS")
 

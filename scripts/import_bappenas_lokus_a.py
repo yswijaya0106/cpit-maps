@@ -439,6 +439,32 @@ def import_swasembada_pangan_rpjmn(wb, ctx, sumber_file="Lampiran IV RPJMN 2025-
     return out
 
 
+def import_kpp_desa(wb, ctx, sumber_file="ALL LOKPRI PDAT (1).xlsx"):
+    """Sheet "30 KPP Desa" -- Kawasan Perdesaan Prioritas, 30 kabupaten,
+    tabel bersih satu baris per kawasan (Provinsi/Kabupaten/Nomenklatur KPP/
+    Jumlah Desa). Kriteria BARU (tidak ada di 12 kriteria sebelumnya, dan
+    tidak disebut di sheet Kumpulan Data -- ditemukan langsung dari file
+    "ALL LOKPRI PDAT (1).xlsx" yang juga jadi sumber TRANSMIGRASI-nya versi
+    lain; 19 Jul 2026). BEDA dari sheet "22 PPKP" di file yang sama --
+    itu SENGAJA tidak diimpor krn cuma pecahan level kecamatan dari PKSN
+    yang sudah ada (kolom "Nama PKSN" persis sama isinya)."""
+    ws = wb["30 KPP Desa"]
+    kab_idx = ctx["kab_idx"]
+    out = []
+    for row in ws.iter_rows(min_row=3, values_only=True):
+        if not row or len(row) < 3:
+            continue
+        provinsi, kabupaten = clean(row[1]), clean(row[2])
+        if not provinsi or not kabupaten:
+            continue
+        m = match_kab(kab_idx, provinsi, kabupaten)
+        kode_prov = m["kode_provinsi"] if m else None
+        kode_kab = m["kode_kabupaten"] if m else None
+        out.append(_row("KPP_DESA", "KABUPATEN", provinsi, kabupaten, None, kode_prov, kode_kab, None,
+                         clean(row[3]) if len(row) > 3 else None, sumber_file, ws.title))
+    return out
+
+
 # Registry dipakai CLI (main() di bawah) MAUPUN endpoint upload di app.py
 # (POST /api/bappenas-lokus-a/import) -- "file" = nama file default di
 # docs/docs/ (dipakai CLI), "label" = teks utk dropdown UI upload.
@@ -492,6 +518,11 @@ KRITERIA_SOURCES = {
         "label": "BBM Satu Harga (6_Usulan Lokus IJD 2026, sheet Lokus IJD BBM 1 HARGA — regex teks bebas)",
         "file": "6_Usulan Lokus IJD 2026 Sektor Bappenas.xlsx",
         "importer": import_bbm_1_harga,
+    },
+    "KPP_DESA": {
+        "label": "Kawasan Perdesaan Prioritas (ALL LOKPRI PDAT, sheet 30 KPP Desa)",
+        "file": "ALL LOKPRI PDAT (1).xlsx",
+        "importer": import_kpp_desa,
     },
 }
 

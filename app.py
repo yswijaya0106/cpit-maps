@@ -568,6 +568,8 @@ DATA_TABLES = {
     "bps_kecamatan_demografi": "Demografi Kecamatan (Dalam Angka)",
     "bps_kabupaten_padi": "Padi per Kab/Kota (Dalam Angka)",
     "bps_kabupaten_kendaraan": "Kendaraan per Kab/Kota (Dalam Angka)",
+    "bps_kabupaten_jalan": "Jalan per Kab/Kota (Dalam Angka)",
+    "bps_kabupaten_indeks_penanaman": "Indeks Penanaman per Kab/Kota (Kertas Kerja)",
     "bps_kecamatan_potensi_tematik": "Potensi Tematik Kecamatan (Dalam Angka)",
     "si_panjang_jalan_provinsi": "Panjang Jalan per Provinsi (SI 2026)",
     "si_kendaraan_provinsi": "Kendaraan per Provinsi (SI 2026)",
@@ -597,6 +599,8 @@ DATA_TABLE_GEO = {
     "bps_kecamatan_demografi": ("CAST(LEFT(kode_kab, 2) AS UNSIGNED)", "CAST(kode_kab AS UNSIGNED)"),
     "bps_kabupaten_padi": ("CAST(LEFT(kode_kab, 2) AS UNSIGNED)", "CAST(kode_kab AS UNSIGNED)"),
     "bps_kabupaten_kendaraan": ("CAST(LEFT(kode_kab, 2) AS UNSIGNED)", "CAST(kode_kab AS UNSIGNED)"),
+    "bps_kabupaten_jalan": ("CAST(LEFT(kode_kab, 2) AS UNSIGNED)", "CAST(kode_kab AS UNSIGNED)"),
+    "bps_kabupaten_indeks_penanaman": ("CAST(LEFT(kode_kab, 2) AS UNSIGNED)", "CAST(kode_kab AS UNSIGNED)"),
     "bps_kecamatan_potensi_tematik": ("CAST(LEFT(kode_kab, 2) AS UNSIGNED)", "CAST(kode_kab AS UNSIGNED)"),
     "bappenas_lokus_a": ("kode_provinsi", "kode_kabupaten"),
 }

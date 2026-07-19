@@ -267,7 +267,10 @@ def _clean_name(name):
 
 
 def _find_prov_page(doc, table_no, must_contain):
-    rx = re.compile(r"Table " + re.escape(table_no))
+    # "Table" dan nomor tabel bisa tercetak di baris terpisah tergantung buku
+    # provinsi (mis. "Table\n9.1.2" di Sumut/Jateng vs "Table 9.1.2" satu
+    # baris di Jabar/Banten) -- "\s+" (termasuk newline) supaya keduanya cocok.
+    rx = re.compile(r"Table\s+" + re.escape(table_no))
     for pno in range(doc.page_count):
         head = doc[pno].get_text()[:1600]
         if "DAFTAR" in head[:400]:

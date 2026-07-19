@@ -607,6 +607,12 @@ DATA_TABLE_GEO = {
     "bappenas_lokus_a": ("kode_provinsi", "kode_kabupaten"),
     "kawasan_tematik": ("kode_provinsi", "kode_kabupaten"),
     "kemantapan_ijd_2026": ("kode_provinsi", "kode_wilayah"),
+    # tabel level provinsi (Statistik Indonesia 2026) -- tidak ada dimensi
+    # kabupaten, filter kabupaten sengaja dipetakan ke kolom yg sama supaya
+    # aman kalau ter-pilih (tidak match apa pun, bukan error).
+    "si_panjang_jalan_provinsi": ("kode_provinsi", "kode_provinsi"),
+    "si_kendaraan_provinsi": ("kode_provinsi", "kode_provinsi"),
+    "si_lahan_sawah_provinsi": ("kode_provinsi", "kode_provinsi"),
 }
 
 

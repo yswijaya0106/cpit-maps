@@ -3189,6 +3189,8 @@ KECAMATAN_JOIN_TABLES = {
     "penduduk_kecamatan": "Master penduduk kecamatan",
     "usulan_inpres": "Usulan Inpres di kecamatan ini",
     "bps_kecamatan_potensi_tematik": "Potensi & Produksi Tematik (Dalam Angka)",
+    "kawasan_tematik": "Kawasan Tematik (A3 IJD)",
+    "bappenas_lokus_a": "Lokus Aspek A Bappenas",
 }
 _USULAN_JOIN_COLS = (
     "id", "nama_ruas", "jenis_penanganan", "panjang_ruas_km",

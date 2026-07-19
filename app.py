@@ -1182,7 +1182,7 @@ def _ijd_score_kemanfaatan(row: dict, rules: dict, ctx: dict = None) -> dict:
                 cur.execute(
                     "SELECT k.jumlah / j.panjang_total_km AS per_km FROM bps_kabupaten_kendaraan k "
                     "JOIN bps_kabupaten_jalan j ON j.kode_kab = k.kode_kab "
-                    "WHERE k.kode_kab = %s AND j.panjang_total_km > 0 "
+                    "WHERE k.kode_kab = %s AND j.panjang_total_km > 0 AND k.jumlah IS NOT NULL "
                     "ORDER BY k.tahun DESC LIMIT 1",
                     (f"{kode_kab:04d}",),
                 )
@@ -1515,7 +1515,8 @@ def _ijd_score_bulk_rows(provinsi: str, tahun: int):
             cur.execute(
                 "SELECT k.kode_kab, k.jumlah / j.panjang_total_km AS per_km FROM bps_kabupaten_kendaraan k "
                 "JOIN bps_kabupaten_jalan j ON j.kode_kab = k.kode_kab "
-                "WHERE k.kode_kab IN %s AND j.panjang_total_km > 0 ORDER BY k.tahun DESC",
+                "WHERE k.kode_kab IN %s AND j.panjang_total_km > 0 AND k.jumlah IS NOT NULL "
+                "ORDER BY k.tahun DESC",
                 (tuple(kode_kab_set),),
             )
             for r in cur.fetchall():

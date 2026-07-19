@@ -325,8 +325,17 @@ def parse_prov_rows(lines, ncols, row_kab, row_kota):
             for tok in ln.split():
                 values.append(num(tok))
                 if len(values) == ncols:
-                    if section and name in section:
-                        out[section[name]] = values
+                    # lihat catatan sama di extract_kendaraan_provinsi() --
+                    # sebagian buku provinsi tak punya baris pemisah kab/kota
+                    # sama sekali, section tetap None selamanya.
+                    target = section
+                    if target is None:
+                        if name in row_kab:
+                            target = row_kab
+                        elif name in row_kota:
+                            target = row_kota
+                    if target and name in target:
+                        out[target[name]] = values
                     name, values = None, []
         elif awaiting_continuation:
             awaiting_continuation = False  # baris kedua nama bilingual (Inggris)
@@ -402,8 +411,20 @@ def extract_kendaraan_provinsi(doc, row_kab, row_kota):
                 for tok in ln.split():
                     values.append(num(tok))
                     if len(values) == 5:
-                        if section and name in section:
-                            out[(section[name], tahun)] = values
+                        # sebagian buku provinsi (mis. Sumatera Utara) TIDAK
+                        # punya baris pemisah "Kabupaten/Regency"/"Kota/
+                        # Municipality" sama sekali -- kab & kota tercampur
+                        # satu daftar rata. Kalau section belum pernah
+                        # ke-set dari header, coba cocokkan ke kedua kamus
+                        # (row_kab lalu row_kota) alih-alih membuang baris.
+                        target = section
+                        if target is None:
+                            if name in row_kab:
+                                target = row_kab
+                            elif name in row_kota:
+                                target = row_kota
+                        if target and name in target:
+                            out[(target[name], tahun)] = values
                         tahun, values = None, []
             elif awaiting_continuation:
                 # baris kedua nama bilingual (Inggris) — bukan nama baru

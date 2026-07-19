@@ -580,6 +580,8 @@ DATA_TABLES = {
     "kecamatan_data_turunan": "Data Turunan Kecamatan (C.A1/C.A3)",
     "penilaian_bappenas_ai": "Draf Penilaian Bappenas (AI)",
     "bappenas_lokus_a": "Lokus Aspek A Bappenas (Prioritas & Nilai Strategis)",
+    "kawasan_tematik": "Kawasan Tematik (A3 IJD)",
+    "kemantapan_ijd_2026": "Kemantapan Jalan IJD 2026 (G8.A2)",
 }
 # kolom yang tidak ditampilkan (payload besar)
 DATA_TABLE_SKIP_COLS = {"geom_geojson"}
@@ -603,6 +605,8 @@ DATA_TABLE_GEO = {
     "bps_kabupaten_indeks_penanaman": ("CAST(LEFT(kode_kab, 2) AS UNSIGNED)", "CAST(kode_kab AS UNSIGNED)"),
     "bps_kecamatan_potensi_tematik": ("CAST(LEFT(kode_kab, 2) AS UNSIGNED)", "CAST(kode_kab AS UNSIGNED)"),
     "bappenas_lokus_a": ("kode_provinsi", "kode_kabupaten"),
+    "kawasan_tematik": ("kode_provinsi", "kode_kabupaten"),
+    "kemantapan_ijd_2026": ("kode_provinsi", "kode_wilayah"),
 }
 
 

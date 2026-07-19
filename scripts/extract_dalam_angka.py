@@ -102,7 +102,10 @@ def discover_provinces(base=DALAM_ANGKA_DIR):
     return provinces
 
 MARKER = re.compile(r"^\(\d+\)$")
-NUMERICISH = re.compile(r"^[\d.,\s]+$")
+# "-?" -- laju pertumbuhan penduduk BISA negatif (kecamatan yang penduduknya
+# menyusut, mis. "-0,09"); tanpa ini baris minus dikira nama kecamatan baru
+# dan menggeser seluruh nilai baris-baris berikutnya (lihat docs/MEMORY.md).
+NUMERICISH = re.compile(r"^-?[\d.,\s]+$")
 DASH = re.compile(r"^[–—-]$")
 STOPLINE = re.compile(r"^(Lanjutan Tabel|Sumber/Source|Catatan/Note|https?://)")
 ROW_NUMBERING = re.compile(r"^\d+\.\s*")  # "1. Kepulauan Mentawai" -> "Kepulauan Mentawai"

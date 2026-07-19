@@ -2372,7 +2372,9 @@ Tugas Anda menyusun DUA teks:
    kalimat (boleh sampai 8-10) supaya semua kebagian tempat, dikelompokkan per tema (mis. produksi pangan
    dijadikan satu kalimat, konektivitas/lalu lintas kalimat lain) alih-alih satu kalimat generik per
    indikator. Rangkai jadi cerita dampak ekonomi/sektoral ruas ini (ketahanan pangan, kelancaran logistik,
-   pertumbuhan ekonomi lokal — sesuai definisi Aspek B), sertakan angka konkret dari data bila ada. Bila
+   pertumbuhan ekonomi lokal — sesuai definisi Aspek B), sertakan angka konkret dari data bila ada — dan
+   SETIAP kali menyebut angka, sertakan sumbernya secara ringkas dalam kalimat (mis. "...jiwa (BPS Dalam
+   Angka)", "...unit kendaraan (BPS Dalam Angka)"), jangan sebut angka telanjang tanpa atribusi. Bila
    indikator_ada kosong, nyatakan dengan jujur belum ada indikator yang didukung data, jangan dibuat seolah ada.
 
 Kedua teks WAJIB berbasis fakta di aspek_a_hasil/aspek_b_hasil APA ADANYA — jangan mengarang fakta di luar \
@@ -2612,7 +2614,10 @@ ruas tersebut (ketahanan pangan, kelancaran logistik, pertumbuhan ekonomi lokal)
 "ringkasan_indikator" plus data BPS pendukung: "demografi_kecamatan_bps" (level kecamatan) serta \
 "padi_kabupaten_bps" dan "kendaraan_kabupaten_bps" (level KABUPATEN/KOTA — bila disebut, WAJIB \
 diatribusikan ke kabupaten/kota, jangan ditulis seolah angka kecamatan atau ruas). Sebut nama kegiatan/\
-koridor, wilayah, dan angka dari data bila relevan.
+koridor, wilayah, dan angka dari data bila relevan — dan SETIAP kali menyebut angka dari \
+demografi_kecamatan_bps/padi_kabupaten_bps/kendaraan_kabupaten_bps, sertakan sumbernya secara ringkas \
+dalam kalimat (mis. "...jiwa (BPS Dalam Angka)", "...ton/ha (BPS Dalam Angka)"), jangan sebut angka \
+telanjang tanpa atribusi.
 
 WAJIB berbasis fakta yang diberikan APA ADANYA — jangan mengarang angka atau fakta di luar data. Bila \
 "indikator_ada" sebuah usulan kosong, nyatakan jujur belum ada indikator daya ungkit yang didukung data \

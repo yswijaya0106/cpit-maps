@@ -136,18 +136,36 @@ ON DUPLICATE KEY UPDATE parameter_label=VALUES(parameter_label), bobot_maks=VALU
 -- sub "Produktivitas (Ton/Ha)" yang diseed di sini — proksi dari produksi
 -- padi kabupaten (bps_kabupaten_padi.produktivitas_ku_ha, scripts/
 -- extract_dalam_angka.py, level KABUPATEN bukan kecamatan, hanya komoditas
--- padi bukan "produktivitas" umum). Indeks Penanaman (11%, butuh SHP Dit.
--- SDA) dan Luas Lahan (12%, butuh Kertas Kerja LBS 2024 Dit. PP) SENGAJA
--- belum diseed — belum ada sumber data bersih di aplikasi ini. Nilai
--- DISIMPAN SUDAH TERTIMBANG ke skala 0-100 parameter C (mis. >6 ton/ha:
--- 100 x 12% = 12.0). Ambang produktivitas (ku/ha, 1 ton = 10 ku) diterapkan
--- di _ijd_score_kemanfaatan() app.py.
+-- padi bukan "produktivitas" umum). Luas Lahan (12%, butuh Kertas Kerja LBS
+-- 2024 Dit. PP — datanya level kabupaten, skala tak cocok ambang resmi
+-- yang jelas dirancang utk skala kecil, lihat schema_kertas_kerja.sql)
+-- SENGAJA belum diseed. Nilai DISIMPAN SUDAH TERTIMBANG ke skala 0-100
+-- parameter C (mis. >6 ton/ha: 100 x 12% = 12.0). Ambang produktivitas
+-- (ku/ha, 1 ton = 10 ku) diterapkan di _ijd_score_kemanfaatan() app.py.
 INSERT INTO ijd_scoring_rules (tahun_berlaku, parameter_kode, parameter_label, bobot_maks, sub_kode, kondisi_label, nilai) VALUES
 (2026, 'C', 'Kemanfaatan', 25, 'A2_GT6', 'Produktivitas padi > 6 ton/ha (100 x 12%)', 12.0),
 (2026, 'C', 'Kemanfaatan', 25, 'A2_5_6', 'Produktivitas padi 5-6 ton/ha (80 x 12%)', 9.6),
 (2026, 'C', 'Kemanfaatan', 25, 'A2_4_5', 'Produktivitas padi 4-4,9 ton/ha (60 x 12%)', 7.2),
 (2026, 'C', 'Kemanfaatan', 25, 'A2_3_4', 'Produktivitas padi 3-3,9 ton/ha (40 x 12%)', 4.8),
 (2026, 'C', 'Kemanfaatan', 25, 'A2_LT3', 'Produktivitas padi < 3 ton/ha (20 x 12%)', 2.4)
+ON DUPLICATE KEY UPDATE parameter_label=VALUES(parameter_label), bobot_maks=VALUES(bobot_maks), kondisi_label=VALUES(kondisi_label), nilai=VALUES(nilai);
+
+-- C.A2 Indeks Penanaman (IP, 11% dari 35% A2) — Tabel 4 dokumen 14072026
+-- hal.3: ">100-199%"(40) tumpang-tindih dgn ">150-199%"(60) & ">200-299%"
+-- (80), jelas TYPO di dokumen sumber (kategori sumber Kertas Kerja.xlsx
+-- sendiri pakai bucket tak-tumpang-tindih "IP<100"/"IP100-150"/dst) —
+-- di sini bucket 40% DIBACA ">100-150%" (bukan ">100-199%" apa adanya)
+-- supaya lima tingkat tidak overlap. Sumber: docs/docs/Kertas Kerja.xlsx
+-- sheet "Kertas Kerja" kolom "Indeks Penanaman" (level KABUPATEN, diimpor
+-- scripts/import_kertas_kerja.py -> bps_kabupaten_indeks_penanaman).
+-- Nilai DISIMPAN SUDAH TERTIMBANG (mis. >300%: 100 x 11% = 11.0). Ambang
+-- diterapkan _ijd_score_kemanfaatan() app.py.
+INSERT INTO ijd_scoring_rules (tahun_berlaku, parameter_kode, parameter_label, bobot_maks, sub_kode, kondisi_label, nilai) VALUES
+(2026, 'C', 'Kemanfaatan', 25, 'A2IP_GT300', 'Indeks Penanaman > 300% — tanam >=3x/tahun (100 x 11%)', 11.0),
+(2026, 'C', 'Kemanfaatan', 25, 'A2IP_200_300', 'Indeks Penanaman 200-299% — tanam 2-3x/tahun (80 x 11%)', 8.8),
+(2026, 'C', 'Kemanfaatan', 25, 'A2IP_150_200', 'Indeks Penanaman 150-199% — tanam 1,5-2x/tahun (60 x 11%)', 6.6),
+(2026, 'C', 'Kemanfaatan', 25, 'A2IP_100_150', 'Indeks Penanaman 100-149% — tanam 1x/tahun (40 x 11%)', 4.4),
+(2026, 'C', 'Kemanfaatan', 25, 'A2IP_LT100', 'Indeks Penanaman < 100% — belum tanam optimal (20 x 11%)', 2.2)
 ON DUPLICATE KEY UPDATE parameter_label=VALUES(parameter_label), bobot_maks=VALUES(bobot_maks), kondisi_label=VALUES(kondisi_label), nilai=VALUES(nilai);
 
 -- C.A3 Lalu Lintas (bobot 30%, Tabel 4 dokumen 14072026 halaman 4) — dua opsi

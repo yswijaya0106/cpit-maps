@@ -26,6 +26,7 @@ Usage (venv aktif):
     python scripts/import_bappenas_lokus_a.py
 """
 
+import difflib
 import os
 import re
 import sys
@@ -114,7 +115,17 @@ def build_master_index(conn):
         key = (is_kota, strip_kab_prefix(m["kabupaten_kota"]))
         kab_by_name[key] = None if key in kab_by_name else m
     prov_idx = {norm_prov(m["provinsi"]): m["kode_provinsi"] for m in kab_master}
-    return {"kab_idx": kab_idx, "kec_idx": kec_idx, "kab_by_name": kab_by_name, "prov_idx": prov_idx}
+    # index list (bukan dict tunggal) per provinsi -- dipakai
+    # _match_kab_tokens_in_text() utk cocokkan nama kab/kota yang MUNCUL DI
+    # DALAM teks bebas (bukan kolom kabupaten tersendiri). Bentuk list (bukan
+    # dict yg nimpa) supaya tabrakan nama Kota/Kabupaten sama (mis. "Bogor",
+    # "Sukabumi") tetap kelihatan dua-duanya, tidak diam-diam pilih satu.
+    kab_name_list_by_prov = {}
+    for m in kab_master:
+        kab_name_list_by_prov.setdefault(norm_prov(m["provinsi"]), []).append(
+            (norm(m["kabupaten_kota"]), m))
+    return {"kab_idx": kab_idx, "kec_idx": kec_idx, "kab_by_name": kab_by_name, "prov_idx": prov_idx,
+            "kab_name_list_by_prov": kab_name_list_by_prov}
 
 
 def match_kab(kab_idx, provinsi, kabupaten):
@@ -136,6 +147,81 @@ def match_kec(kec_idx, kode_kabupaten, kecamatan):
     return kec_idx.get((kode_kabupaten, norm(kecamatan)))
 
 
+# Kata generik yang biasa mengawali nama "kawasan"/"wilayah" di dokumen RPJMN
+# (mis. "Kawasan Perkotaan Lhoksumawe - Bireuen", "Wilayah Metropolitan
+# Medan dan Kawasan Pengembangan Industri Medan-Binjai-Deli Serdang") --
+# dilucuti dari AWAL tiap segmen sebelum dicocokkan ke nama kab/kota, supaya
+# sisa teksnya adalah nama tempat murni. Bukan stoplist umum: daftar ini
+# dikurasi dari kemunculan nyata di sumber (lihat _match_kab_tokens_in_text
+# docstring), bukan tebakan generik -- tambah entri baru HANYA setelah
+# verifikasi manual thd sumber baru, jangan asal menambah kata umum
+# (risiko melucuti bagian dari nama tempat yang sah).
+_KAWASAN_STRIP_WORDS = {
+    "KAWASAN", "WILAYAH", "WM", "KEWASAN", "METROPOLITAN", "PERKOTAAN",
+    "AGLOMERASI", "PENGEMBANGAN", "INDUSTRI", "PARIWISATA", "EKONOMI",
+    "KREATIF", "UNGGULAN", "SWASEMBADA", "PANGAN", "ENERGI", "AFIRMASI",
+    "PERTUMBUHAN", "KOMODITAS", "STRATEGIS", "SUPERHUB", "PERINDUSTRIAN",
+    "HIJAU", "HILIRISASI", "GAS", "BUMI", "TAMBANG", "HASIL", "PENGOLAHAN",
+    "PERDAGANGAN", "JASA", "SEDANG", "DESTINASI", "PRIORITAS", "REGENERATIF",
+    "BIRU", "JANTUNG", "IBU", "KOTA", "KABUPATEN", "KAB", "DPP", "PUSAT",
+    "KEGIATAN", "PERBATASAN", "NASIONAL", "PKSN", "KECAMATAN",
+}
+
+
+def _match_kab_tokens_in_text(kab_name_list_by_prov, provinsi, text, cutoff=0.82):
+    """Cocokkan nama kabupaten/kota YANG DISEBUT DI DALAM teks bebas
+    "kawasan"/"wilayah" (bukan kolom kabupaten tersendiri) -- dipakai
+    LOKPRI_RPJMN, kolom "Tematik RPJMN" (Kolom D di sumber) cuma berisi
+    label kawasan spt "Kawasan Perkotaan Lhoksumawe - Bireuen" bukan daftar
+    kab/kota yang bersih.
+
+    Strategi: (1) pecah teks jadi segmen per " dan "/",", (2) lucuti kata
+    generik di awal tiap segmen (_KAWASAN_STRIP_WORDS) sampai ketemu kata
+    yang bukan generik, (3) sisa teks dipecah lagi per "-" jadi token nama
+    tempat, (4) tiap token dicocokkan exact dulu ke master kab/kota provinsi
+    itu, kalau gagal baru fuzzy (difflib, menangani typo spt "Lhoksumawe"
+    vs resmi "Lhokseumawe"). Dibatasi ke provinsi yang sudah diketahui dari
+    kolom Provinsi baris itu supaya nama pendek tidak salah cocok ke
+    provinsi lain.
+
+    SENGAJA tidak sempurna: sebagian besar teks kawasan di sumber ini cuma
+    label region makro tanpa nama kab/kota sama sekali (mis. "Kawasan
+    Pertumbuhan Papua Selatan", "Kawasan Komoditas Unggulan") -- baris
+    begitu benar-benar tidak punya info kab/kota, bukan gagal dicocokkan.
+    Diverifikasi manual thd 76 pasangan (provinsi, teks) unik dari sumber
+    20 Jul 2026: 32/76 (42%) dapat >=1 kab/kota, sisanya genuinely cuma
+    level provinsi atau menyebut kecamatan/ibukota (bukan kab/kota resmi)."""
+    candidates = kab_name_list_by_prov.get(norm_prov(provinsi)) or []
+    if not candidates or not text:
+        return []
+    cand_names = [c[0] for c in candidates]
+    cleaned = re.sub(r"\([^)]*\)?", " ", text).replace("\n", " ").strip().rstrip(":")
+    segments = re.split(r"\bdan\b|,", cleaned, flags=re.I)
+    matched, seen_kab = [], set()
+    for seg in segments:
+        words = seg.split()
+        i = 0
+        while i < len(words) and norm(words[i]) in _KAWASAN_STRIP_WORDS:
+            i += 1
+        rest = " ".join(words[i:]).strip()
+        if not rest:
+            continue
+        for tok in rest.split("-"):
+            tn = norm(tok.strip())
+            if not tn:
+                continue
+            hits = [m for n, m in candidates if n == tn]
+            if not hits:
+                close = difflib.get_close_matches(tn, cand_names, n=3, cutoff=cutoff)
+                if close:
+                    hits = [m for n, m in candidates if n in close]
+            for m in hits:
+                if m["kode_kabupaten"] not in seen_kab:
+                    seen_kab.add(m["kode_kabupaten"])
+                    matched.append(m)
+    return matched
+
+
 def _row(kriteria, level, provinsi, kabupaten, kecamatan, kode_prov, kode_kab, kode_kec,
          keterangan, sumber_file, sumber_sheet):
     return (kriteria, level, provinsi, kabupaten, kecamatan, kode_prov, kode_kab, kode_kec,
@@ -143,19 +229,52 @@ def _row(kriteria, level, provinsi, kabupaten, kecamatan, kode_prov, kode_kab, k
 
 
 def import_lokpri_rpjmn(wb, ctx, sumber_file="Data Highlight Intervensi Bab 4 RPJMN 2025 - 2029_R1_Konektivitas Jalan_20062025.xlsx"):
-    """Sheet1 "Data Highlight Intervensi..." -- cuma level PROVINSI (kolom
-    Provinsi terisi sekali per grup baris, kolom lain tidak relevan utk
-    matching lokasi)."""
+    """Sheet1 "Data Highlight Intervensi..." -- kolom Provinsi (B) terisi
+    sekali per grup baris (gaya sel gabung, perlu forward-fill), TIAP baris
+    dalam grup punya kolom "Tematik RPJMN" (D) sendiri berisi label kawasan
+    spt "Kawasan Perkotaan Lhoksumawe - Bireuen" -- kerangka CPIT
+    (18.7.26 & 20.7.26, sheet "Kumpulan Data") mencatat Level Data kriteria
+    ini "Kab/Kota" sumber "Kolom D", TAPI kode sebelumnya cuma ambil kolom
+    Provinsi dan skip semua baris lanjutan per grup (dedup by provinsi) --
+    jadi kode_kabupaten selalu kosong walau datanya (sebagian) sebenarnya
+    ada di kolom D. Diperbaiki 20 Jul 2026: proses SEMUA baris per grup,
+    ekstrak nama kab/kota yg disebut di kolom D via _match_kab_tokens_in_text
+    (lihat docstring situ utk detail & keterbatasan -- ~42% baris kolom D
+    memang menyebut kab/kota spesifik, sisanya cuma label region makro tanpa
+    granularitas kab/kota sama sekali, genuinely tidak bisa diturunkan).
+    Provinsi yang tidak ada satupun kab/kota ketemu di kolom D-nya tetap
+    fallback ke baris level PROVINSI (perilaku lama, tidak kehilangan
+    cakupan)."""
     ws = wb[wb.sheetnames[0]]
-    out, seen = [], set()
+    kab_name_list_by_prov = ctx["kab_name_list_by_prov"]
+    all_prov, kab_hits = [], {}
+    last_prov = None
     for row in ws.iter_rows(min_row=2, values_only=True):
         provinsi = clean(row[1]) if len(row) > 1 else None
-        if not provinsi or provinsi in seen:
+        if provinsi:
+            last_prov = provinsi
+            if provinsi not in all_prov:
+                all_prov.append(provinsi)
+        if not last_prov:
             continue
-        seen.add(provinsi)
+        tematik = clean(row[3]) if len(row) > 3 else None
+        if not tematik:
+            continue
+        for m in _match_kab_tokens_in_text(kab_name_list_by_prov, last_prov, tematik):
+            kab_hits.setdefault(last_prov, {}).setdefault(
+                m["kode_kabupaten"], (m["kabupaten_kota"], tematik))
+
+    out = []
+    for provinsi in all_prov:
         kode_prov = ctx["prov_idx"].get(norm_prov(provinsi))
-        out.append(_row("LOKPRI_RPJMN", "PROVINSI", provinsi, None, None, kode_prov, None, None,
-                         None, sumber_file, ws.title))
+        hits = kab_hits.get(provinsi)
+        if hits:
+            for kode_kab, (nama_kab, tematik) in hits.items():
+                out.append(_row("LOKPRI_RPJMN", "KABUPATEN", provinsi, nama_kab, None,
+                                 kode_prov, kode_kab, None, tematik, sumber_file, ws.title))
+        else:
+            out.append(_row("LOKPRI_RPJMN", "PROVINSI", provinsi, None, None, kode_prov, None, None,
+                             None, sumber_file, ws.title))
     return out
 
 

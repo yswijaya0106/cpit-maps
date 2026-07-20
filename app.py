@@ -2384,6 +2384,490 @@ def _bappenas_aspek_b_ekonomi(row: dict, ctx: dict = None) -> dict:
     }
 
 
+# --- Laporan Daerah Prioritas per Kabupaten/Kota (docs/docs/laporan-validator.md)
+# -- checklist agregat per kabupaten/kota dlm SATU provinsi terpilih, dua
+# aspek (A "Prioritas & Nilai Strategis", B "Daya Ungkit Ekonomi & Kinerja
+# Sektoral") persis susunan sheet "Kumpulan Data". BEDA dari
+# _bappenas_aspek_a_lokus/_bappenas_aspek_b_ekonomi (yang menjawab "usulan
+# INI kena kriteria apa saja", match ke kode_kecamatan spesifik usulan):
+# laporan ini menjawab "kabupaten INI py minimal 1 lokus/data utk kriteria
+# X dimana saja di wilayahnya" -- makanya query fresh per kabupaten (bukan
+# reuse fungsi per-usulan itu), supaya kriteria level KECAMATAN tetap
+# tercentang walau kecamatan spesifiknya tidak diketahui (semantik "ada di
+# kabupaten ini", bukan "ada di kecamatan usulan ini").
+#
+# Kolom yg TIDAK disertakan (belum ada sumber data bersih, lihat
+# docs/docs/laporan-validator.md): Produksi kelapa sawit/kelapa/tebu/karet,
+# Produktivitas Peternakan, Produktivitas Perikanan tangkap, Tata Guna
+# Lahan, Konektivitas Jaringan Jalan/Simpul Transportasi (sbg indikator
+# checklist -- datanya SHP ada tapi belum di-spatial-join per kabupaten),
+# KP2B/LP2B, Keberlanjutan IJD (dpp_ijd_2025 blm py kode_kabupaten bersih),
+# Penuntasan Koridor (E43, OneDrive manual).
+
+LAPORAN_ASPEK_A = [
+    ("LOKPRI_RPJMN", "LOKPRI RPJMN"),
+    ("PKPN", "Lokus PKPN 3T"),
+    ("PKSN", "Lokus PKSN/Perbatasan"),
+    ("PERBATASAN", "Lokus Perbatasan"),
+    ("TRANSMIGRASI", "Lokus Transmigrasi"),
+    ("SR", "Lokus SR"),
+    ("SEKOLAH_GARUDA", "Lokus Sekolah Garuda"),
+    ("KNMP", "Lokus KNMP (Kampung Nelayan Merah Putih)"),
+    ("KDMP", "Lokus KDMP (Koperasi Desa Merah Putih)"),
+    ("BBM_1_HARGA", "Lokasi BBM 1 Harga (Ruas)"),
+    ("KI_PSN_IUKI", "Konektivitas KI/KEK - KI PSN IUKI"),
+    ("KI_PRIO_RPJMN", "Konektivitas KI/KEK - KI Prio RPJMN"),
+    ("KI_HILIRISASI", "Konektivitas KI/KEK - KI Hilirisasi"),
+    ("KI_DIRGANTARA", "Konektivitas KI/KEK - KI Dirgantara"),
+    ("SWASEMBADA_PANGAN_RPJMN", "Lokus Swasembada Pangan RPJMN"),
+]
+
+LAPORAN_ASPEK_B = [
+    ("PERIKANAN", "Lokus Kelautan & Perikanan"),
+    ("SWASEMBADA_PANGAN_LOKUS", "Lokus Swasembada Pangan"),
+    ("PERKEBUNAN", "Lokasi Kawasan Perkebunan"),
+    ("PRODUKSI_PADI", "Produksi Padi (Dalam Angka)"),
+    ("PRODUKSI_PERKEBUNAN", "Produksi Sawit/Kelapa/Tebu/Karet (Dalam Angka)"),
+    ("PRODUKSI_PETERNAKAN", "Produktivitas Peternakan (Dalam Angka)"),
+    ("PRODUKSI_PERIKANAN_TANGKAP", "Produktivitas Perikanan Tangkap (Dalam Angka)"),
+    ("LBS", "Luas Lahan Baku Sawah (LBS) 2024"),
+    ("IP", "Indeks Penanaman (IP)"),
+    ("KI_PSN_IUKI", "Konektivitas KI/KEK - KI PSN IUKI"),
+    ("KI_PRIO_RPJMN", "Konektivitas KI/KEK - KI Prio RPJMN"),
+    ("KI_HILIRISASI", "Konektivitas KI/KEK - KI Hilirisasi"),
+    ("KI_DIRGANTARA", "Konektivitas KI/KEK - KI Dirgantara"),
+    ("KEMANTAPAN_JALAN", "Kemantapan Jalan (IJD)"),
+    ("JUMLAH_KENDARAAN", "Jumlah Kendaraan (Dalam Angka)"),
+    ("SIMPUL_TRANSPORTASI", "Konektivitas Simpul Transportasi (Pelabuhan)"),
+]
+
+# sumber_sheet asli (kawasan_tematik) -> sub-kategori KI/KEK -- 4 sheet
+# digabung 1 kategori KI_PRIORITAS saat impor (import_kawasan_tematik.py),
+# dipecah lagi di sini pakai sumber_sheet supaya laporan bisa 4 kolom
+# terpisah persis kerangka dokumen, bukan 1 kolom gabungan.
+_KI_SHEET_TO_KODE = {
+    "Lokus KI PSN IUKI Sudah Terbit": "KI_PSN_IUKI",
+    "Lokus PKPN KI Prioritas RPJMN": "KI_PRIO_RPJMN",
+    "Lokus PKPN KI Hilirisasi": "KI_HILIRISASI",
+    "Lokus PKPN KI Dirgantara": "KI_DIRGANTARA",
+}
+
+
+def _laporan_prioritas_kabupaten(kode_provinsi: int = 0) -> dict:
+    """kode_provinsi=0 (atau falsy) -> "Seluruh Indonesia", tanpa filter
+    provinsi -- semua query di bawah IN-kan seluruh kabupaten/kota nasional
+    (~514), bukan cuma satu provinsi."""
+    with db_cursor() as cur:
+        if kode_provinsi:
+            cur.execute(
+                "SELECT DISTINCT kode_kabupaten, kabupaten_kota FROM penduduk_kecamatan "
+                "WHERE kode_provinsi = %s ORDER BY kode_kabupaten",
+                (kode_provinsi,),
+            )
+        else:
+            cur.execute(
+                "SELECT DISTINCT kode_kabupaten, kabupaten_kota FROM penduduk_kecamatan "
+                "ORDER BY kode_kabupaten"
+            )
+        kab_list = cur.fetchall()
+    if not kab_list:
+        raise HTTPException(404, "Provinsi tidak ditemukan atau tidak punya data kabupaten/kota.")
+    kode_kab_set = tuple(r["kode_kabupaten"] for r in kab_list)
+    kode_prov_set = tuple(sorted({k // 100 for k in kode_kab_set}))
+
+    with db_cursor() as cur:
+        cur.execute(
+            "SELECT kriteria, level, kode_provinsi, kode_kabupaten FROM bappenas_lokus_a "
+            "WHERE kode_kabupaten IN %s OR kode_provinsi IN %s",
+            (kode_kab_set, kode_prov_set),
+        )
+        lokus_rows = cur.fetchall()
+    lokus_by_kab, lokus_prov_wide = {}, {}
+    for r in lokus_rows:
+        if r["level"] == "PROVINSI" and r["kode_provinsi"]:
+            lokus_prov_wide.setdefault(r["kode_provinsi"], set()).add(r["kriteria"])
+        elif r["kode_kabupaten"]:
+            lokus_by_kab.setdefault(r["kode_kabupaten"], set()).add(r["kriteria"])
+
+    with db_cursor() as cur:
+        cur.execute(
+            "SELECT kategori, kode_kabupaten, sumber_sheet FROM kawasan_tematik WHERE kode_kabupaten IN %s",
+            (kode_kab_set,),
+        )
+        kawasan_rows = cur.fetchall()
+    kawasan_by_kab = {}
+    for r in kawasan_rows:
+        kode = _KI_SHEET_TO_KODE.get(r["sumber_sheet"]) if r["kategori"] == "KI_PRIORITAS" else r["kategori"]
+        if kode:
+            kawasan_by_kab.setdefault(r["kode_kabupaten"], set()).add(kode)
+
+    kode_kab_str = tuple(str(k) for k in kode_kab_set)
+    with db_cursor() as cur:
+        cur.execute(
+            "SELECT DISTINCT kode_kab FROM bps_kabupaten_padi WHERE kode_kab IN %s AND produktivitas_ku_ha IS NOT NULL",
+            (kode_kab_str,),
+        )
+        padi_set = {int(r["kode_kab"]) for r in cur.fetchall()}
+        cur.execute(
+            "SELECT kode_kab, lahan_baku_sawah_ha, indeks_penanaman_pct FROM bps_kabupaten_indeks_penanaman "
+            "WHERE kode_kab IN %s", (kode_kab_str,),
+        )
+        ip_rows = cur.fetchall()
+        cur.execute(
+            "SELECT DISTINCT kode_wilayah FROM kemantapan_ijd_2026 WHERE kode_wilayah IN %s "
+            "AND jenis_adm IN ('Kab.','Kota')", (kode_kab_set,),
+        )
+        kemantapan_set = {r["kode_wilayah"] for r in cur.fetchall()}
+        cur.execute(
+            "SELECT DISTINCT kode_kab FROM bps_kabupaten_kendaraan WHERE kode_kab IN %s AND jumlah IS NOT NULL",
+            (kode_kab_str,),
+        )
+        kendaraan_set = {int(r["kode_kab"]) for r in cur.fetchall()}
+        # Produksi perkebunan/peternakan/perikanan level KECAMATAN (BPS Dalam
+        # Angka Bab 5) -- diagregasi ke "ada di kabupaten ini" (any kecamatan
+        # py angka produksi > NULL). Tabel sama yg dipakai narasi Aspek B
+        # per-usulan (_bappenas_aspek_b_ekonomi ctx potensi_produksi_by_kec)
+        # tapi belum pernah disambungkan ke laporan agregat ini sampai 21 Jul.
+        cur.execute(
+            "SELECT DISTINCT kode_kab FROM bps_kecamatan_potensi_tematik "
+            "WHERE kode_kab IN %s AND perkebunan_produksi_ton IS NOT NULL", (kode_kab_str,),
+        )
+        produksi_perkebunan_set = {int(r["kode_kab"]) for r in cur.fetchall()}
+        cur.execute(
+            "SELECT DISTINCT kode_kab FROM bps_kecamatan_potensi_tematik WHERE kode_kab IN %s "
+            "AND (peternakan_produksi_daging_kg IS NOT NULL OR peternakan_produksi_telur_kg IS NOT NULL)",
+            (kode_kab_str,),
+        )
+        produksi_peternakan_set = {int(r["kode_kab"]) for r in cur.fetchall()}
+        cur.execute(
+            "SELECT DISTINCT kode_kab FROM bps_kecamatan_potensi_tematik "
+            "WHERE kode_kab IN %s AND perikanan_produksi_ton IS NOT NULL", (kode_kab_str,),
+        )
+        produksi_perikanan_set = {int(r["kode_kab"]) for r in cur.fetchall()}
+        # Konektivitas Simpul Transportasi -- BARU 2 dari 4 layer SHP publik
+        # (Pelabuhan Nasional + Pelabuhan Penyeberangan) yg bisa dicocokkan
+        # ke kabupaten tanpa spatial join, lihat
+        # scripts/import_simpul_transportasi.py. Bandara & Pelabuhan Laut
+        # (PELABUHAN_PT.shp) belum -- butuh spatial join titik->poligon
+        # kecamatan yg lebih rumit (resolusi homonim), task terpisah.
+        cur.execute(
+            "SELECT DISTINCT kode_kabupaten FROM simpul_transportasi "
+            "WHERE kode_kabupaten IN %s", (kode_kab_set,),
+        )
+        simpul_transportasi_set = {r["kode_kabupaten"] for r in cur.fetchall()}
+    lbs_set = {int(r["kode_kab"]) for r in ip_rows if r["lahan_baku_sawah_ha"] is not None}
+    ip_set = {int(r["kode_kab"]) for r in ip_rows if r["indeks_penanaman_pct"] is not None}
+
+    def _ada(kode_kab, kode_kriteria, aspek):
+        if aspek == "A" and kode_kriteria in ("KI_PSN_IUKI", "KI_PRIO_RPJMN", "KI_HILIRISASI", "KI_DIRGANTARA"):
+            return kode_kriteria in kawasan_by_kab.get(kode_kab, set())
+        if kode_kriteria in ("PKPN", "TRANSMIGRASI", "PERIKANAN", "PERKEBUNAN"):
+            return kode_kriteria in kawasan_by_kab.get(kode_kab, set())
+        if kode_kriteria in ("KI_PSN_IUKI", "KI_PRIO_RPJMN", "KI_HILIRISASI", "KI_DIRGANTARA"):
+            return kode_kriteria in kawasan_by_kab.get(kode_kab, set())
+        if kode_kriteria == "SWASEMBADA_PANGAN_LOKUS":
+            return kode_kriteria in lokus_by_kab.get(kode_kab, set())
+        if kode_kriteria == "PRODUKSI_PADI":
+            return kode_kab in padi_set
+        if kode_kriteria == "PRODUKSI_PERKEBUNAN":
+            return kode_kab in produksi_perkebunan_set
+        if kode_kriteria == "PRODUKSI_PETERNAKAN":
+            return kode_kab in produksi_peternakan_set
+        if kode_kriteria == "PRODUKSI_PERIKANAN_TANGKAP":
+            return kode_kab in produksi_perikanan_set
+        if kode_kriteria == "SIMPUL_TRANSPORTASI":
+            return kode_kab in simpul_transportasi_set
+        if kode_kriteria == "LBS":
+            return kode_kab in lbs_set
+        if kode_kriteria == "IP":
+            return kode_kab in ip_set
+        if kode_kriteria == "KEMANTAPAN_JALAN":
+            return kode_kab in kemantapan_set
+        if kode_kriteria == "JUMLAH_KENDARAAN":
+            return kode_kab in kendaraan_set
+        return (kode_kriteria in lokus_by_kab.get(kode_kab, set())
+                or kode_kriteria in lokus_prov_wide.get(kode_kab // 100, set()))
+
+    rows = []
+    kab_totals = []  # {kode_kab, nama, total_a, total_b} -- dipakai _laporan_prioritas_distribusi
+    for kab in kab_list:
+        kode_kab = kab["kode_kabupaten"]
+        cells_a = ["✓" if _ada(kode_kab, kode, "A") else "" for kode, _ in LAPORAN_ASPEK_A]
+        cells_b = ["✓" if _ada(kode_kab, kode, "B") else "" for kode, _ in LAPORAN_ASPEK_B]
+        rows.append([kode_kab, kab["kabupaten_kota"]] + cells_a + cells_b)
+        # Total poin per DOKUMEN ASLI (docs/docs/laporan-validator.md): 12 item
+        # Aspek A / 14 item Aspek B, sub-item digabung 1 induk (mis. 4 sub
+        # KI/KEK = 1 poin kalau salah satu ada) -- BEDA dari 15/12 kolom
+        # flat di atas (yang memecah induk jadi kolom terpisah utk tampilan
+        # checklist per-kriteria). Item tanpa sumber data (Produktivitas
+        # Peternakan/Perikanan tangkap, Tata Guna Lahan, Jaringan Jalan,
+        # Simpul Transportasi, KP2B/LP2B, Keberlanjutan IJD, Penuntasan
+        # Koridor) kontribusi 0 apa adanya -- dipakai dipertahankan sbg 14
+        # slot (bukan cuma 6 yg py data) supaya rentang skor tetap sesuai
+        # dokumen, bukan diam-diam mengecilkan skala.
+        total_a = sum(1 for group in _LAPORAN_GROUP_A if any(_ada(kode_kab, k, "A") for k in group))
+        total_b = sum(1 for group in _LAPORAN_GROUP_B if any(_ada(kode_kab, k, "B") for k in group))
+        kab_totals.append({"kode_kab": kode_kab, "kode_prov": kode_kab // 100, "nama": kab["kabupaten_kota"],
+                            "total_a": total_a, "total_b": total_b})
+
+    header = ["Kode Kab/Kota", "Kabupaten/Kota"] + [lbl for _, lbl in LAPORAN_ASPEK_A] + [lbl for _, lbl in LAPORAN_ASPEK_B]
+    return {"header": header, "rows": rows, "n_aspek_a": len(LAPORAN_ASPEK_A), "n_aspek_b": len(LAPORAN_ASPEK_B),
+            "kab_totals": kab_totals}
+
+
+# 12 item Aspek A / 14 item Aspek B PERSIS urutan docs/docs/laporan-validator.md
+# (sub-item bertanda "-" digabung 1 induk). List kosong = item itu genuinely
+# belum ada sumber data di aplikasi (selalu 0 poin, lihat komentar di atas).
+_LAPORAN_GROUP_A = [
+    ["LOKPRI_RPJMN"], ["PKPN"], ["PKSN"], ["PERBATASAN"], ["TRANSMIGRASI"],
+    ["SR"], ["SEKOLAH_GARUDA"], ["KNMP"], ["KDMP"], ["BBM_1_HARGA"],
+    ["KI_PSN_IUKI", "KI_PRIO_RPJMN", "KI_HILIRISASI", "KI_DIRGANTARA"],
+    ["SWASEMBADA_PANGAN_RPJMN"],
+]
+_LAPORAN_GROUP_B = [
+    # Produktivitas Komoditas -- 21 Jul: PRODUKSI_PERKEBUNAN ditambahkan
+    # (sub "Produksi kelapa sawit/kelapa/tebu/karet"), sebelumnya kelewat
+    # walau sumbernya (bps_kecamatan_potensi_tematik) sudah ada sejak lama.
+    ["PERIKANAN", "SWASEMBADA_PANGAN_LOKUS", "PERKEBUNAN", "PRODUKSI_PADI", "PRODUKSI_PERKEBUNAN"],
+    ["PRODUKSI_PETERNAKAN"],  # Produktivitas Peternakan -- SELESAI 21 Jul
+    ["PRODUKSI_PERIKANAN_TANGKAP"],  # Produktivitas Perikanan (tangkap) -- SELESAI 21 Jul
+    [],  # Tata Guna Lahan -- belum ada sumber (Bappenas: status "Konfirm")
+    ["LBS"], ["IP"],
+    ["KI_PSN_IUKI", "KI_PRIO_RPJMN", "KI_HILIRISASI", "KI_DIRGANTARA"],
+    [],  # Konektivitas Jaringan Jalan -- SHP ada (Maps/JALAN) tapi belum di-spatial-join per kabupaten
+    ["SIMPUL_TRANSPORTASI"],  # Konektivitas Simpul Transportasi -- SELESAI (parsial) 21 Jul, 2/4 layer
+    ["KEMANTAPAN_JALAN"], ["JUMLAH_KENDARAAN"],
+    [],  # KP2B/LP2B -- belum ada sumber (Kementan: status "tanya")
+    [],  # Keberlanjutan IJD -- dpp_ijd_2025 blm py kode_kabupaten bersih
+    [],  # Penuntasan Koridor -- E43, OneDrive manual
+]
+
+
+def _laporan_prioritas_distribusi(kode_provinsi: int) -> dict:
+    """Distribusi jumlah + NAMA kabupaten/kota per rentang 2 poin, dari
+    kab_totals (total_a 0-12 / total_b 0-14) -- dipakai tab "Distribusi
+    Skor" di dialog Laporan Prioritas (klik batang -> daftar nama)."""
+    data = _laporan_prioritas_kabupaten(kode_provinsi)
+    kab_totals = data["kab_totals"]
+
+    def _bucket(field, maks):
+        edges = list(range(0, maks + 2, 2))
+        if edges[-1] < maks:
+            edges.append(edges[-1] + 2)
+        out = []
+        for lo, hi in zip(edges, edges[1:]):
+            members = [k["nama"] for k in kab_totals
+                       if lo <= k[field] < hi or (hi == edges[-1] and k[field] == hi)]
+            members.sort()
+            out.append({"label": f"{lo}-{hi}", "min": lo, "max": hi, "count": len(members),
+                        "kabupaten": members})
+        return out
+
+    return {
+        "aspek_a": _bucket("total_a", len(_LAPORAN_GROUP_A)),
+        "aspek_b": _bucket("total_b", len(_LAPORAN_GROUP_B)),
+        "n_kabupaten": len(kab_totals),
+        "maks_a": len(_LAPORAN_GROUP_A), "maks_b": len(_LAPORAN_GROUP_B),
+    }
+
+
+_LAPORAN_MAKS_TOTAL = len(_LAPORAN_GROUP_A) + len(_LAPORAN_GROUP_B)  # 26 -- skala gabungan A+B
+
+
+def _laporan_prioritas_dashboard(kode_provinsi: int = 0) -> dict:
+    """Ringkasan siap-pakai utk pengambil kebijakan (tab "Dashboard"):
+    KPI ringkas, peringkat 10 kabupaten/kota skor tertinggi, cakupan tiap
+    kriteria (dari kolom checklist flat -- lebih rinci dari 12/14 item
+    induk yg dipakai skor gabungan), komposisi kategori prioritas, dan
+    (khusus mode "Seluruh Indonesia") perbandingan rata-rata skor antar
+    provinsi. Semua dihitung dari _laporan_prioritas_kabupaten() yang sudah
+    ada -- tidak ada query/skoring baru, cuma agregasi ulang."""
+    data = _laporan_prioritas_kabupaten(kode_provinsi)
+    kab_totals = data["kab_totals"]
+    n = len(kab_totals)
+
+    totals = [k["total_a"] + k["total_b"] for k in kab_totals]
+    n_tanpa_data = sum(1 for t in totals if t == 0)
+    avg_total = round(sum(totals) / n, 2) if n else 0
+    avg_a = round(sum(k["total_a"] for k in kab_totals) / n, 2) if n else 0
+    avg_b = round(sum(k["total_b"] for k in kab_totals) / n, 2) if n else 0
+
+    ranked = sorted(kab_totals, key=lambda k: (-(k["total_a"] + k["total_b"]), k["nama"]))
+    top10 = [{"nama": k["nama"], "kode_kab": k["kode_kab"], "total_a": k["total_a"],
+              "total_b": k["total_b"], "total": k["total_a"] + k["total_b"]} for k in ranked[:10]]
+
+    # Komposisi kategori prioritas -- ambang relatif thd skala gabungan 26
+    # (bukan ambang resmi dokumen manapun, murni pembagian 4-kuadran linier
+    # utk visualisasi ringkas; "Tidak ada data" dipisah dari "Rendah" krn
+    # beda makna: rendah = ada data tp sedikit kriteria cocok, tidak ada
+    # data = 0/0, kemungkinan kode_kabupaten/nama belum match ke sumber).
+    def _kategori(t):
+        if t == 0:
+            return "Tidak ada data"
+        if t <= round(_LAPORAN_MAKS_TOTAL * 0.25):
+            return "Rendah"
+        if t <= round(_LAPORAN_MAKS_TOTAL * 0.5):
+            return "Sedang"
+        return "Tinggi"
+    komposisi_count = {"Tinggi": 0, "Sedang": 0, "Rendah": 0, "Tidak ada data": 0}
+    for t in totals:
+        komposisi_count[_kategori(t)] += 1
+    komposisi = [{"label": k, "count": komposisi_count[k]} for k in ("Tinggi", "Sedang", "Rendah", "Tidak ada data")]
+
+    # Cakupan tiap kriteria (dari kolom flat checklist, bukan item induk --
+    # lebih rinci, mis. KI PSN IUKI terpisah dari KI Hilirisasi).
+    n_id = 2
+    def _coverage(start, count):
+        out = []
+        for i in range(start, start + count):
+            label = data["header"][i]
+            n_match = sum(1 for row in data["rows"] if row[i] == "✓")
+            out.append({"label": label, "count": n_match, "pct": round(n_match / n * 100, 1) if n else 0})
+        out.sort(key=lambda x: -x["count"])
+        return out
+    cakupan_a = _coverage(n_id, data["n_aspek_a"])
+    cakupan_b = _coverage(n_id + data["n_aspek_a"], data["n_aspek_b"])
+
+    result = {
+        "n_kabupaten": n, "avg_total": avg_total, "avg_a": avg_a, "avg_b": avg_b,
+        "maks_total": _LAPORAN_MAKS_TOTAL, "n_tanpa_data": n_tanpa_data,
+        "top10": top10, "komposisi": komposisi,
+        "cakupan_a": cakupan_a, "cakupan_b": cakupan_b,
+        "provinsi": None,
+    }
+
+    if not kode_provinsi:
+        # Mode nasional -- tambahan perbandingan rata-rata skor antar
+        # provinsi, utk lihat provinsi mana yg secara agregat py banyak
+        # kabupaten/kota berprioritas tinggi vs yg datanya masih kosong.
+        by_prov: dict = {}
+        for k in kab_totals:
+            by_prov.setdefault(k["kode_prov"], []).append(k["total_a"] + k["total_b"])
+        with db_cursor() as cur:
+            cur.execute(
+                "SELECT DISTINCT kode_provinsi, provinsi FROM penduduk_kecamatan "
+                "WHERE kode_provinsi IN %s", (tuple(by_prov.keys()),),
+            )
+            nama_by_prov = {r["kode_provinsi"]: r["provinsi"] for r in cur.fetchall()}
+        provinsi_rows = [
+            {"kode_provinsi": kp, "nama": nama_by_prov.get(kp, str(kp)),
+             "n_kabupaten": len(vals), "avg_total": round(sum(vals) / len(vals), 2) if vals else 0}
+            for kp, vals in by_prov.items()
+        ]
+        provinsi_rows.sort(key=lambda r: -r["avg_total"])
+        result["provinsi"] = provinsi_rows
+
+    return result
+
+
+@app.get("/api/laporan-daerah-prioritas/dashboard")
+def laporan_daerah_prioritas_dashboard(provinsi: int = 0):
+    return jsonable_encoder(_laporan_prioritas_dashboard(provinsi))
+
+
+def _nama_provinsi_laporan(kode_provinsi: int) -> str:
+    if not kode_provinsi:
+        return "Seluruh Indonesia"
+    with db_cursor() as cur:
+        cur.execute("SELECT provinsi FROM penduduk_kecamatan WHERE kode_provinsi = %s LIMIT 1", (kode_provinsi,))
+        r = cur.fetchone()
+    return r["provinsi"] if r else str(kode_provinsi)
+
+
+@app.get("/api/laporan-daerah-prioritas/distribusi")
+def laporan_daerah_prioritas_distribusi(provinsi: int = 0):
+    return jsonable_encoder(_laporan_prioritas_distribusi(provinsi))
+
+
+@app.get("/api/laporan-daerah-prioritas/preview")
+def laporan_daerah_prioritas_preview(provinsi: int = 0, limit: int = 50, offset: int = 0):
+    limit = max(1, min(limit, 200))
+    offset = max(0, offset)
+    data = _laporan_prioritas_kabupaten(provinsi)
+    page = data["rows"][offset:offset + limit]
+    nama_provinsi = _nama_provinsi_laporan(provinsi)
+    return jsonable_encoder({
+        "table": "laporan_prioritas_kabupaten",
+        "label": f"Laporan Daerah Prioritas — {nama_provinsi} (agregat per kabupaten/kota)",
+        "columns": data["header"], "rows": page, "total": len(data["rows"]),
+        "limit": limit, "offset": offset,
+        "n_aspek_a": data["n_aspek_a"], "n_aspek_b": data["n_aspek_b"],
+    })
+
+
+@app.get("/api/laporan-daerah-prioritas/export/xlsx")
+def laporan_daerah_prioritas_export(provinsi: int = 0):
+    from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+
+    data = _laporan_prioritas_kabupaten(provinsi)
+    nama_provinsi = _nama_provinsi_laporan(provinsi)
+
+    n_id, n_a, n_b = 2, data["n_aspek_a"], data["n_aspek_b"]
+    n_cols = n_id + n_a + n_b
+
+    # write_only=False -- butuh merge_cells/styling, tidak tersedia di mode
+    # write_only (dipakai endpoint export lain yang tidak butuh styling).
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Laporan Prioritas"
+
+    thin = Side(style="thin", color="B0B0B0")
+    border = Border(left=thin, right=thin, top=thin, bottom=thin)
+    center = Alignment(horizontal="center", vertical="center", wrap_text=True)
+    left = Alignment(horizontal="left", vertical="center", wrap_text=True)
+
+    ws.append([None] * n_cols)  # baris 1: grup aspek
+    ws.append(data["header"])   # baris 2: nama kolom
+    for row in data["rows"]:
+        ws.append(row)
+
+    ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=n_id + n_a)
+    c = ws.cell(row=1, column=1, value="Aspek Prioritas dan Nilai Strategis")
+    c.font = Font(bold=True, size=12)
+    c.alignment = center
+    c.fill = PatternFill("solid", fgColor="DCE6F1")
+
+    ws.merge_cells(start_row=1, start_column=n_id + n_a + 1, end_row=1, end_column=n_cols)
+    c = ws.cell(row=1, column=n_id + n_a + 1, value="Aspek Daya Ungkit Ekonomi dan Kinerja Sektoral")
+    c.font = Font(bold=True, size=12, color="C00000")
+    c.alignment = center
+    c.fill = PatternFill("solid", fgColor="FDE9D9")
+
+    for col in range(1, n_cols + 1):
+        cell = ws.cell(row=2, column=col)
+        cell.font = Font(bold=True, size=10)
+        cell.alignment = center
+        cell.fill = PatternFill("solid", fgColor="F2F2F2")
+
+    n_rows = 2 + len(data["rows"])
+    for r_idx in range(1, n_rows + 1):
+        for c_idx in range(1, n_cols + 1):
+            ws.cell(row=r_idx, column=c_idx).border = border
+    for r_idx in range(3, n_rows + 1):
+        for c_idx in range(1, n_id + 1):
+            ws.cell(row=r_idx, column=c_idx).alignment = left
+        for c_idx in range(n_id + 1, n_cols + 1):
+            ws.cell(row=r_idx, column=c_idx).alignment = center
+
+    ws.column_dimensions["A"].width = 12
+    ws.column_dimensions["B"].width = 24
+    for col in range(n_id + 1, n_cols + 1):
+        ws.column_dimensions[openpyxl.utils.get_column_letter(col)].width = 10
+    ws.row_dimensions[2].height = 60
+    ws.freeze_panes = "C3"
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    scope = re.sub(r"[^\w]+", "_", nama_provinsi)
+    fname = f"laporan_prioritas_{scope}_{datetime.now():%Y%m%d%H%M%S}.xlsx"
+    return StreamingResponse(
+        buf,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f"attachment; filename={fname}"},
+    )
+
+
 PENILAIAN_SYSTEM_PROMPT = """Anda membantu analis Bappenas menyusun DRAF penilaian kualitatif usulan \
 Inpres Jalan Daerah. Aspek A (Prioritas & Nilai Strategis) dan Aspek B (Daya Ungkit Ekonomi & Kinerja \
 Sektoral) SUDAH DIHITUNG SISTEM (rule-based, bukan tugas Anda menilai ulang) — masing-masing berupa daftar \
@@ -3218,12 +3702,32 @@ _USULAN_JOIN_COLS = (
 def kecamatan_join_data(kode_kecamatan: int, tabel: str = "kecamatan_data_turunan"):
     if tabel not in KECAMATAN_JOIN_TABLES:
         raise HTTPException(400, "Tabel tidak dikenal untuk join kecamatan")
+    kode_kab = kode_kecamatan // 1000
+    kode_prov = kode_kab // 100
     with db_cursor() as cur:
         if tabel == "usulan_inpres":
             cur.execute(
                 f"SELECT {', '.join(_USULAN_JOIN_COLS)} FROM usulan_inpres "
                 "WHERE kode_kecamatan = %s ORDER BY id LIMIT 50",
                 (kode_kecamatan,),
+            )
+        elif tabel == "kawasan_tematik":
+            # Sebagian besar baris level KABUPATEN (kode_kecamatan NULL) --
+            # WHERE kode_kecamatan=%s polos melewatkan hampir semuanya.
+            # Cocokkan juga via kode_kabupaten turunan dari kode_kecamatan.
+            cur.execute(
+                f"SELECT * FROM `{tabel}` WHERE kode_kecamatan = %s "
+                "OR (kode_kabupaten = %s AND kode_kecamatan IS NULL) LIMIT 20",
+                (kode_kecamatan, kode_kab),
+            )
+        elif tabel == "bappenas_lokus_a":
+            # Level bisa KABUPATEN, KECAMATAN, atau PROVINSI -- sama alasan
+            # spt kawasan_tematik, ditambah fallback level provinsi.
+            cur.execute(
+                f"SELECT * FROM `{tabel}` WHERE kode_kecamatan = %s "
+                "OR (kode_kabupaten = %s AND (level = 'KABUPATEN' OR kode_kecamatan IS NULL)) "
+                "OR (kode_provinsi = %s AND level = 'PROVINSI') LIMIT 20",
+                (kode_kecamatan, kode_kab, kode_prov),
             )
         else:
             cur.execute(

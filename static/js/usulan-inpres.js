@@ -727,6 +727,352 @@ function bindIjdPreview() {
 
 document.addEventListener("DOMContentLoaded", bindIjdPreview);
 
+/* --- Laporan Daerah Prioritas per Kabupaten/Kota (checklist Aspek A/B,
+   docs/docs/laporan-validator.md) -- pola sama persis dgn ijdPreview di
+   atas (view dulu sebelum export), bedanya wajib pilih provinsi dulu
+   (laporan ini per-provinsi, tidak ada mode nasional). ------------------ */
+
+const laporanPrioritas = {
+  provinsi: "", offset: 0, limit: 50, total: 0, tab: "checklist",
+  distribusi: null, dashboard: null,
+};
+
+function laporanPrioritasOpen() {
+  laporanPrioritas.provinsi = "";
+  laporanPrioritas.offset = 0;
+  laporanPrioritas.distribusi = null;
+  laporanPrioritas.dashboard = null;
+  document.getElementById("laporanPrioritasProvinsiLabel").textContent = "Pilih provinsi...";
+  document.getElementById("laporanPrioritasExport").disabled = true;
+  document.getElementById("laporanPrioritasScroll").innerHTML =
+    '<div class="datatable-loading">Pilih provinsi untuk melihat laporan.</div>';
+  document.getElementById("laporanPrioritasTitle").textContent = "Laporan Daerah Prioritas";
+  document.getElementById("laporanPrioritasMeta").textContent = "";
+  document.getElementById("laporanDistribusiEmpty").textContent = "Pilih provinsi untuk melihat distribusi skor.";
+  document.getElementById("laporanPrioritasDashboardView").innerHTML =
+    '<div class="laporan-distribusi-empty">Pilih provinsi untuk melihat dashboard.</div>';
+  laporanPrioritasSwitchTab("checklist");
+  document.getElementById("laporanPrioritasOverlay").hidden = false;
+}
+
+function laporanPrioritasSwitchTab(tab) {
+  laporanPrioritas.tab = tab;
+  document.getElementById("laporanTabChecklist").classList.toggle("active", tab === "checklist");
+  document.getElementById("laporanTabDistribusi").classList.toggle("active", tab === "distribusi");
+  document.getElementById("laporanTabDashboard").classList.toggle("active", tab === "dashboard");
+  document.getElementById("laporanPrioritasChecklistView").hidden = tab !== "checklist";
+  document.getElementById("laporanPrioritasDistribusiView").hidden = tab !== "distribusi";
+  document.getElementById("laporanPrioritasDashboardView").hidden = tab !== "dashboard";
+  if (tab === "distribusi" && laporanPrioritas.provinsi && !laporanPrioritas.distribusi) {
+    laporanPrioritasFetchDistribusi();
+  }
+  if (tab === "dashboard" && laporanPrioritas.provinsi && !laporanPrioritas.dashboard) {
+    laporanPrioritasFetchDashboard();
+  }
+}
+
+async function laporanPrioritasFetchDistribusi() {
+  const view = document.getElementById("laporanPrioritasDistribusiView");
+  view.innerHTML = '<div class="laporan-distribusi-empty"><i class="bi bi-hourglass-split"></i> Memuat distribusi...</div>';
+  try {
+    const res = await fetch(`/api/laporan-daerah-prioritas/distribusi?provinsi=${laporanPrioritas.provinsi}`);
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || "Gagal memuat distribusi skor");
+    laporanPrioritas.distribusi = data;
+    laporanPrioritasRenderDistribusi(data);
+  } catch (err) {
+    view.innerHTML = `<div class="laporan-distribusi-empty">${escapeHtml(err.message)}</div>`;
+  }
+}
+
+// Histogram batang tunggal (1 hue) per rentang 2 poin -- jumlah checklist
+// yang tercentang per kabupaten/kota (bukan skor IJD 0-100). Setiap "item"
+// di sini = 1 induk kriteria dari docs/docs/laporan-validator.md (sub-item
+// digabung, lihat _LAPORAN_GROUP_A/_B di app.py), maks 12 (Aspek A) / 14
+// (Aspek B) poin.
+// Nama kabupaten/kota ditampilkan di daftar terpisah di bawah histogram
+// (bukan disisipkan ke tiap kolom batang -- kolom tinggi tetap 160px
+// beranchor-bawah, kalau nama diselipkan di situ untuk rentang berisi
+// belasan kabupaten layoutnya akan meluap/rusak). Tiap rentang jadi satu
+// baris "label (N): nama1, nama2, ...", rentang kosong dilewati.
+function laporanChartBlock(title, sub, buckets, maks) {
+  const maxCount = Math.max(1, ...buckets.map((b) => b.count));
+  const bars = buckets.map((b) => {
+    const h = Math.round((b.count / maxCount) * 100);
+    return `<div class="laporan-bar-col" title="${b.count} kabupaten/kota — skor ${b.label} dari ${maks}">
+      <span class="laporan-bar-count${b.count === 0 ? " zero" : ""}">${b.count}</span>
+      <div class="laporan-bar" style="height:${b.count === 0 ? 2 : h}%"></div>
+      <span class="laporan-bar-label">${escapeHtml(b.label)}</span>
+    </div>`;
+  }).join("");
+  const detailRows = buckets.filter((b) => b.count > 0).map((b) =>
+    `<div class="laporan-bucket-row">
+      <span class="laporan-bucket-label">Skor ${escapeHtml(b.label)} (${b.count} kab/kota)</span>
+      <span class="laporan-bucket-names">${b.kabupaten.map((n) => escapeHtml(n)).join(", ")}</span>
+    </div>`).join("");
+  return `<div class="laporan-chart-block">
+    <div class="laporan-chart-title">${escapeHtml(title)}</div>
+    <div class="laporan-chart-sub">${escapeHtml(sub)}</div>
+    <div class="laporan-histogram">${bars}</div>
+    <div class="laporan-bucket-detail">${detailRows}</div>
+  </div>`;
+}
+
+function laporanPrioritasRenderDistribusi(data) {
+  const view = document.getElementById("laporanPrioritasDistribusiView");
+  view.innerHTML =
+    laporanChartBlock(
+      "Aspek A — Prioritas dan Nilai Strategis",
+      `Jumlah kabupaten/kota per rentang total kriteria tercentang (maks ${data.maks_a}), dari ${data.n_kabupaten} kabupaten/kota`,
+      data.aspek_a, data.maks_a,
+    ) +
+    laporanChartBlock(
+      "Aspek B — Daya Ungkit Ekonomi dan Kinerja Sektoral",
+      `Jumlah kabupaten/kota per rentang total kriteria tercentang (maks ${data.maks_b}), dari ${data.n_kabupaten} kabupaten/kota`,
+      data.aspek_b, data.maks_b,
+    );
+}
+
+/* --- Dashboard (tab ketiga): ringkasan siap-pakai utk pengambil kebijakan
+   -- KPI, peringkat kabupaten/kota, komposisi kategori prioritas (donut),
+   cakupan tiap kriteria (bar list), + perbandingan antar provinsi kalau
+   scope-nya "Seluruh Indonesia". Semua dari 1 endpoint (sudah diagregasi
+   di backend, JS di sini murni render). ------------------------------- */
+
+async function laporanPrioritasFetchDashboard() {
+  const view = document.getElementById("laporanPrioritasDashboardView");
+  view.innerHTML = '<div class="laporan-distribusi-empty"><i class="bi bi-hourglass-split"></i> Memuat dashboard...</div>';
+  try {
+    const res = await fetch(`/api/laporan-daerah-prioritas/dashboard?provinsi=${laporanPrioritas.provinsi}`);
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || "Gagal memuat dashboard");
+    laporanPrioritas.dashboard = data;
+    laporanPrioritasRenderDashboard(data);
+  } catch (err) {
+    view.innerHTML = `<div class="laporan-distribusi-empty">${escapeHtml(err.message)}</div>`;
+  }
+}
+
+function laporanKpiTile(label, value, sub) {
+  return `<div class="laporan-kpi-tile">
+    <div class="laporan-kpi-value">${escapeHtml(String(value))}</div>
+    <div class="laporan-kpi-label">${escapeHtml(label)}</div>
+    ${sub ? `<div class="laporan-kpi-sub">${escapeHtml(sub)}</div>` : ""}
+  </div>`;
+}
+
+// Bar list horizontal generik -- dipakai peringkat kabupaten/kota, cakupan
+// kriteria, dan perbandingan provinsi (3 kebutuhan beda, 1 bentuk visual
+// konsisten: magnitude tunggal per kategori, 1 hue, label langsung).
+function laporanHBar(items, opts) {
+  const { valueKey, maxLabelFn, barLabelFn } = opts;
+  const maxVal = Math.max(1, ...items.map((it) => it[valueKey]));
+  return `<div class="laporan-hbar-list">${items.map((it) => {
+    const pct = Math.max(2, Math.round((it[valueKey] / maxVal) * 100));
+    return `<div class="laporan-hbar-row" title="${escapeHtml(maxLabelFn(it))}">
+      <span class="laporan-hbar-label">${escapeHtml(it.nama || it.label)}</span>
+      <div class="laporan-hbar-track"><div class="laporan-hbar-fill" style="width:${pct}%"></div></div>
+      <span class="laporan-hbar-value">${escapeHtml(barLabelFn(it))}</span>
+    </div>`;
+  }).join("")}</div>`;
+}
+
+const LAPORAN_KOMPOSISI_COLOR = {
+  "Tinggi": "#4f7cff", "Sedang": "#7d9dff", "Rendah": "#b0c2ff", "Tidak ada data": "#4b5570",
+};
+
+function laporanDonut(komposisi, total) {
+  let acc = 0;
+  const stops = komposisi.filter((k) => k.count > 0).map((k) => {
+    const start = (acc / total) * 100;
+    acc += k.count;
+    const end = (acc / total) * 100;
+    return `${LAPORAN_KOMPOSISI_COLOR[k.label]} ${start}% ${end}%`;
+  }).join(", ");
+  const legend = komposisi.map((k) => `<div class="laporan-legend-row">
+    <span class="laporan-legend-swatch" style="background:${LAPORAN_KOMPOSISI_COLOR[k.label]}"></span>
+    <span class="laporan-legend-label">${escapeHtml(k.label)}</span>
+    <span class="laporan-legend-value">${k.count} (${total ? Math.round(k.count / total * 100) : 0}%)</span>
+  </div>`).join("");
+  return `<div class="laporan-donut-wrap">
+    <div class="laporan-donut" style="background:conic-gradient(${stops || "#4b5570 0% 100%"})">
+      <div class="laporan-donut-hole"><span>${total}</span><small>kab/kota</small></div>
+    </div>
+    <div class="laporan-legend">${legend}</div>
+  </div>`;
+}
+
+function laporanPrioritasRenderDashboard(data) {
+  const view = document.getElementById("laporanPrioritasDashboardView");
+  const kpis = `<div class="laporan-kpi-row">
+    ${laporanKpiTile("Kabupaten/Kota", data.n_kabupaten.toLocaleString("id-ID"))}
+    ${laporanKpiTile("Rata-rata Skor Gabungan", `${data.avg_total} / ${data.maks_total}`, `Aspek A ${data.avg_a}/12 · Aspek B ${data.avg_b}/14`)}
+    ${laporanKpiTile("Tanpa Data Sama Sekali", data.n_tanpa_data.toLocaleString("id-ID"), "skor 0 di kedua aspek")}
+  </div>`;
+
+  const top10Html = `<div class="laporan-chart-block">
+    <div class="laporan-chart-title"><i class="bi bi-trophy"></i> Peringkat 10 Kabupaten/Kota — Skor Gabungan Tertinggi</div>
+    <div class="laporan-chart-sub">Basis pertimbangan awal daerah prioritas pembangunan jalan (skor Aspek A + Aspek B, maks ${data.maks_total})</div>
+    ${laporanHBar(data.top10, {
+      valueKey: "total",
+      maxLabelFn: (it) => `${it.nama}: total ${it.total} (A=${it.total_a}, B=${it.total_b})`,
+      barLabelFn: (it) => `${it.total}`,
+    })}
+  </div>`;
+
+  const komposisiHtml = `<div class="laporan-chart-block">
+    <div class="laporan-chart-title"><i class="bi bi-pie-chart"></i> Komposisi Kategori Prioritas</div>
+    <div class="laporan-chart-sub">Pembagian kabupaten/kota berdasar skor gabungan (Tinggi &gt;${Math.round(data.maks_total * 0.5)}, Sedang &gt;${Math.round(data.maks_total * 0.25)}, Rendah &gt;0, dari total ${data.maks_total})</div>
+    ${laporanDonut(data.komposisi, data.n_kabupaten)}
+  </div>`;
+
+  const cakupanHtml = `<div class="laporan-chart-block laporan-chart-2col">
+    <div>
+      <div class="laporan-chart-title"><i class="bi bi-bar-chart-steps"></i> Cakupan Kriteria — Aspek A</div>
+      <div class="laporan-chart-sub">% kabupaten/kota yang tercentang tiap kriteria</div>
+      ${laporanHBar(data.cakupan_a, {
+        valueKey: "count",
+        maxLabelFn: (it) => `${it.label}: ${it.count} kab/kota (${it.pct}%)`,
+        barLabelFn: (it) => `${it.pct}%`,
+      })}
+    </div>
+    <div>
+      <div class="laporan-chart-title"><i class="bi bi-bar-chart-steps"></i> Cakupan Kriteria — Aspek B</div>
+      <div class="laporan-chart-sub">% kabupaten/kota yang tercentang tiap kriteria</div>
+      ${laporanHBar(data.cakupan_b, {
+        valueKey: "count",
+        maxLabelFn: (it) => `${it.label}: ${it.count} kab/kota (${it.pct}%)`,
+        barLabelFn: (it) => `${it.pct}%`,
+      })}
+    </div>
+  </div>`;
+
+  const provinsiHtml = data.provinsi ? `<div class="laporan-chart-block">
+    <div class="laporan-chart-title"><i class="bi bi-map"></i> Perbandingan Rata-rata Skor Antar Provinsi</div>
+    <div class="laporan-chart-sub">Rata-rata skor gabungan per kabupaten/kota, diurutkan tertinggi — 10 provinsi teratas</div>
+    ${laporanHBar(data.provinsi.slice(0, 10), {
+      valueKey: "avg_total",
+      maxLabelFn: (it) => `${it.nama}: rata-rata ${it.avg_total} dari ${it.n_kabupaten} kab/kota`,
+      barLabelFn: (it) => `${it.avg_total}`,
+    })}
+  </div>` : "";
+
+  view.innerHTML = kpis + top10Html + komposisiHtml + cakupanHtml + provinsiHtml;
+}
+
+async function laporanPrioritasFetchPage() {
+  if (!laporanPrioritas.provinsi) return;
+  const scroll = document.getElementById("laporanPrioritasScroll");
+  scroll.innerHTML = '<div class="datatable-loading"><i class="bi bi-hourglass-split"></i> Memuat laporan...</div>';
+  try {
+    const params = new URLSearchParams({
+      provinsi: laporanPrioritas.provinsi,
+      limit: laporanPrioritas.limit,
+      offset: laporanPrioritas.offset,
+    });
+    const res = await fetch(`/api/laporan-daerah-prioritas/preview?${params}`);
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || "Gagal memuat laporan");
+    laporanPrioritas.total = data.total;
+    laporanPrioritasRender(data);
+  } catch (err) {
+    scroll.innerHTML = `<div class="datatable-loading">${escapeHtml(err.message)}</div>`;
+  }
+}
+
+function laporanPrioritasRender(data) {
+  document.getElementById("laporanPrioritasTitle").textContent = data.label;
+  document.getElementById("laporanPrioritasMeta").textContent =
+    `${data.total.toLocaleString("id-ID")} kabupaten/kota`;
+
+  // Baris grup di atas nama kolom -- identitas (Kode/Nama Kab) menyatu
+  // visual dgn Aspek A (sama spt merge A1:Q1 di export xlsx), Aspek B
+  // kolom sisanya, warna merah spt export supaya konsisten.
+  const groupRow =
+    `<th class="laporan-group-a" colspan="${2 + data.n_aspek_a}">Aspek Prioritas dan Nilai Strategis</th>` +
+    `<th class="laporan-group-b" colspan="${data.n_aspek_b}">Aspek Daya Ungkit Ekonomi dan Kinerja Sektoral</th>`;
+  const head = data.columns.map((c, i) =>
+    `<th class="${i < 2 ? "laporan-id-col" : "laporan-check-col"}">${escapeHtml(c)}</th>`).join("");
+  const cell = (v, i) => {
+    if (i < 2) return `<td class="laporan-id-col">${escapeHtml(String(v ?? ""))}</td>`;
+    if (v === "✓") return '<td class="laporan-check-col checkmark-cell"><i class="bi bi-check-square-fill bool-true"></i></td>';
+    return '<td class="laporan-check-col null">—</td>';
+  };
+  const body = data.rows.map((r) => `<tr>${r.map(cell).join("")}</tr>`).join("");
+  document.getElementById("laporanPrioritasScroll").innerHTML =
+    `<table class="datatable laporan-prioritas-table">
+       <thead><tr>${groupRow}</tr><tr>${head}</tr></thead>
+       <tbody>${body}</tbody>
+     </table>`;
+
+  const page = Math.floor(data.offset / data.limit) + 1;
+  const pages = Math.max(1, Math.ceil(data.total / data.limit));
+  document.getElementById("laporanPrioritasPageInfo").textContent = `Halaman ${page} dari ${pages.toLocaleString("id-ID")}`;
+  document.getElementById("laporanPrioritasPrev").disabled = data.offset <= 0;
+  document.getElementById("laporanPrioritasNext").disabled = data.offset + data.limit >= data.total;
+}
+
+function bindLaporanPrioritas() {
+  document.getElementById("btnLaporanPrioritas").addEventListener("click", laporanPrioritasOpen);
+
+  const overlay = document.getElementById("laporanPrioritasOverlay");
+  document.getElementById("laporanPrioritasClose").addEventListener("click", () => (overlay.hidden = true));
+  overlay.addEventListener("click", (e) => {
+    if (e.target === overlay) overlay.hidden = true;
+  });
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && !overlay.hidden) overlay.hidden = true;
+  });
+
+  document.getElementById("laporanTabChecklist").addEventListener("click", () => laporanPrioritasSwitchTab("checklist"));
+  document.getElementById("laporanTabDistribusi").addEventListener("click", () => laporanPrioritasSwitchTab("distribusi"));
+  document.getElementById("laporanTabDashboard").addEventListener("click", () => laporanPrioritasSwitchTab("dashboard"));
+
+  bindMapLayerCombo(
+    "laporanPrioritasProvinsiField", "laporanPrioritasProvinsiToggle",
+    "laporanPrioritasProvinsiPanel", "laporanPrioritasProvinsiLabel",
+    async () => {
+      // kode_provinsi=0 -> "Seluruh Indonesia" (tanpa filter provinsi,
+      // backend agregat ke ~514 kab/kota nasional sekaligus).
+      const rows = [{ kode_provinsi: 0, provinsi: "Seluruh Indonesia" }, ...(await dataViewerGeoProvinces())];
+      fillComboPanel("laporanPrioritasProvinsiPanel", "laporanPrioritasProvinsiLabel",
+        rows, "kode_provinsi", (r) => r.provinsi, laporanPrioritas.provinsi);
+    },
+    async (value) => {
+      laporanPrioritas.provinsi = value;
+      laporanPrioritas.offset = 0;
+      laporanPrioritas.distribusi = null;
+      laporanPrioritas.dashboard = null;
+      document.getElementById("laporanPrioritasExport").disabled = false;
+      laporanPrioritasFetchPage();
+      if (laporanPrioritas.tab === "distribusi") laporanPrioritasFetchDistribusi();
+      if (laporanPrioritas.tab === "dashboard") laporanPrioritasFetchDashboard();
+    },
+  );
+
+  document.getElementById("laporanPrioritasPrev").addEventListener("click", () => {
+    laporanPrioritas.offset = Math.max(0, laporanPrioritas.offset - laporanPrioritas.limit);
+    laporanPrioritasFetchPage();
+  });
+  document.getElementById("laporanPrioritasNext").addEventListener("click", () => {
+    if (laporanPrioritas.offset + laporanPrioritas.limit < laporanPrioritas.total) {
+      laporanPrioritas.offset += laporanPrioritas.limit;
+      laporanPrioritasFetchPage();
+    }
+  });
+  document.getElementById("laporanPrioritasPageSize").addEventListener("change", (e) => {
+    laporanPrioritas.limit = parseInt(e.target.value, 10);
+    laporanPrioritas.offset = 0;
+    laporanPrioritasFetchPage();
+  });
+  document.getElementById("laporanPrioritasExport").addEventListener("click", () => {
+    if (!laporanPrioritas.provinsi) return;
+    window.location.href = `/api/laporan-daerah-prioritas/export/xlsx?provinsi=${laporanPrioritas.provinsi}`;
+  });
+}
+
+document.addEventListener("DOMContentLoaded", bindLaporanPrioritas);
+
 function bindUsulanBrowse() {
   loadUsulanProvinsiOptions();
   loadUsulanBrowseList(true);

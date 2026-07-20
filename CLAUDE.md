@@ -44,7 +44,7 @@ Deps: `requirements.txt`, venv at `.venv/` (already gitignored).
 
 ## Architecture (single-file backend + MySQL, no ORM)
 
-- [app.py](app.py) — entire backend (~2600 lines). FastAPI app, all routes,
+- [app.py](app.py) — entire backend (~3500 lines). FastAPI app, all routes,
   all GIS logic, IJD scoring, chat providers. No other backend modules exist;
   don't go looking for a `routers/` or `services/` dir.
 - Database: MySQL via `pymysql`, raw parameterized SQL through the
@@ -114,9 +114,20 @@ Deps: `requirements.txt`, venv at `.venv/` (already gitignored).
   still empty in the 15 Juli snapshot, so they currently score 0.
 - `GET /api/pagu-provinsi` / `GET /api/alokasi-2-lapis` — provincial
   indicative budget (partial score: A1 road-length + A2 road unsoundness
-  `kemantapan_ijd_2026` + A4 fiscal capacity, renormalized shares; A3/A5
-  still missing) and the two-layer allocation simulation on top of the
-  national ranking. Both label themselves "perkiraan/parsial" — keep that.
+  `kemantapan_ijd_2026` + A3 kawasan pangan (proxied by ATR/BPN sawah area,
+  `si_lahan_sawah_provinsi`) + A4 fiscal capacity, renormalized shares;
+  only A5 Indeks Kemahalan Konstruksi still missing, no source found yet)
+  and the two-layer allocation simulation on top of the national ranking.
+  Both label themselves "perkiraan/parsial" — keep that.
+- `GET /api/bappenas-lokus-a/kriteria` / `POST .../import` — list the Aspek
+  A Bappenas lokus criteria (`bappenas_lokus_a` table, ~13 kriteria: LOKPRI,
+  PKPN, PKSN, KI Prioritas, BBM 1 Harga, KPP_DESA, etc.) with row counts,
+  and let a user re-upload the source xlsx for one criterion (DELETE+INSERT
+  for that `kriteria` only). Parsing logic lives once in
+  `scripts/import_bappenas_lokus_a.py` (`KRITERIA_SOURCES`); this endpoint
+  imports that module rather than duplicating the per-sheet regex/matching
+  rules. Browsed via the navbar "Lokus Bappenas" button (separate from the
+  generic "Data" viewer, `data-viewer.js` `dataViewerOpenLokusBappenas()`).
 - `GET`/`POST /api/usulan-inpres/{id}/penilaian-bappenas` — AI-generated
   draft of the Bappenas qualitative assessment (aspek A/B points + narrative,
   cached in `penilaian_bappenas_ai`). Uses `_llm_plain()` — the tool-less
@@ -193,13 +204,38 @@ if missing and upsert, so they're safe to re-run:
 - `import_kawasan_tematik.py` — thematic kawasan (Perkebunan/Perikanan/
   Transmigrasi/KI Prioritas/PKPN) from the Bappenas lokus workbook →
   `kawasan_tematik`, the source of IJD parameter A3.
+- `import_bappenas_lokus_a.py` — Aspek A Bappenas lokus criteria (LOKPRI,
+  PKPN, PKSN, Perbatasan, Transmigrasi, SR, Sekolah Garuda, KNMP, KDMP,
+  KI Prioritas, Swasembada Pangan RPJMN, BBM 1 Harga, KPP_DESA) →
+  `bappenas_lokus_a`; each criterion's parsing rule (sheet name, matching
+  logic) lives in `KRITERIA_SOURCES`, shared with the
+  `/api/bappenas-lokus-a/import` endpoint. Sheet names cited in the source
+  "Kumpulan Data" inventory are frequently imprecise — always verify
+  against the actual xlsx before trusting a citation there.
+- `import_kertas_kerja.py` — Indeks Penanaman (IP) per kabupaten from
+  `Kertas Kerja.xlsx` sheet "Kertas Kerja" (not the "Master Data" sheet the
+  source inventory names) → `bps_kabupaten_indeks_penanaman`, the source of
+  IJD C.A2 Indeks Penanaman sub-parameter; outlier-clamps IP outside
+  0-500%.
 - `extract_dalam_angka.py` — parses BPS "Kab/Kota Dalam Angka" PDFs from
-  `dalam_angka/<kode> <Provinsi>/` (currently only 36 Banten; drop in more
-  province folders and re-run with `--load`). Feeds IJD parameter C tables
-  (`schema_bps_kemanfaatan.sql`).
+  `dalam_angka/<kode> <Provinsi>/` (all 38 provinces downloaded; supports
+  `--workers N` for concurrent per-province PDF parsing). Feeds IJD
+  parameter C tables (`schema_bps_kemanfaatan.sql`): kecamatan density
+  (C.A1), kabupaten padi productivity (C.A2), kabupaten vehicle counts
+  (C.A3 proxy). Coverage varies a lot by province/table — a province having
+  the province-level book doesn't guarantee a given BPS table parses
+  cleanly (format drifts between provinces); see `docs/checklist_implementasi_cpit.md`
+  for current per-province coverage.
 - `extract_statistik_indonesia.py` — parses `docs/docs/00 Statistik
-  Indonesia 2026.pdf` for province-level road-length/vehicle/sawah tables
-  (`schema_statistik_indonesia.sql`).
+  Indonesia 2026.pdf` for province-level road-length/vehicle/sawah-land
+  tables (`schema_statistik_indonesia.sql`: `si_panjang_jalan_provinsi`,
+  `si_kendaraan_provinsi`, `si_lahan_sawah_provinsi`) — feeds Pagu
+  Provinsi A1 and A3.
+- `smoke_check.py` — not a test suite (see `docs/ARCHITECTURE.md`
+  §"Verification without a test suite"); a reusable before/after
+  structural diff (`--save`/`--check`) over a fixed list of read-only
+  endpoints, meant as a safety net while incrementally refactoring app.py
+  (e.g. moving functions to a new module) without changing behavior.
 
 The PDF extractors are position/regex-based (PyMuPDF) and tuned to the 2026
 BPS layouts — expect to adjust them for other publication years.
@@ -210,9 +246,9 @@ Google Sheets/Drive links embedded in file 2's "Kumpulan Data" sheet
 (column E hyperlinks, not just filenames — most resolve directly via
 `.../export?format=xlsx` or `embeddedfolderview?id=<id>#list` for folders,
 no auth needed). See `docs/checklist_implementasi_cpit.md` Fase 9 for the
-full link inventory, including a public "Dalam Angka" Drive folder with all
-37 provinces (~10GB, not yet bulk-downloaded) and public SHP folders for
-road/transport-node connectivity validation.
+full link inventory, including a public "Dalam Angka" Drive folder (all 38
+provinces now downloaded locally to `dalam_angka/`) and public SHP folders
+for road/transport-node connectivity validation.
 
 ## Conventions / gotchas
 

@@ -67,45 +67,53 @@
       <i class="bi bi-geo"></i>
       <span>Lokus Bappenas</span>
     </button>
+    <button type="button" class="topbar-basemap" id="btnLaporanPrioritas" title="Laporan Daerah Prioritas: checklist Aspek A/B agregat per kabupaten/kota, per provinsi">
+      <i class="bi bi-clipboard-check"></i>
+      <span>Laporan Prioritas</span>
+    </button>
     <div class="topbar-status" id="topbarStatus">Siap</div>
   </header>
 
   <div class="datatable-overlay" id="dataTableOverlay" hidden>
     <div class="datatable-modal">
       <div class="datatable-head">
-        <h3 id="dataTableTitle"><i class="bi bi-table"></i> <span></span></h3>
-        <span class="datatable-meta" id="dataTableMeta"></span>
-        <div class="datatable-filters" id="dataTableFilters" hidden>
-          <div class="maplayer-combo" id="dataTableFilterProvinsiField">
-            <button type="button" class="maplayer-combo-toggle" id="dataTableFilterProvinsiToggle">
-              <span id="dataTableFilterProvinsiLabel">Semua provinsi</span>
-              <i class="bi bi-chevron-down"></i>
-            </button>
-            <div class="maplayer-combo-panel" id="dataTableFilterProvinsiPanel" hidden></div>
-          </div>
-          <div class="maplayer-combo" id="dataTableFilterKabupatenField">
-            <button type="button" class="maplayer-combo-toggle" id="dataTableFilterKabupatenToggle">
-              <span id="dataTableFilterKabupatenLabel">Semua kabupaten</span>
-              <i class="bi bi-chevron-down"></i>
-            </button>
-            <div class="maplayer-combo-panel" id="dataTableFilterKabupatenPanel" hidden></div>
-          </div>
+        <div class="datatable-head-title">
+          <h3 id="dataTableTitle"><i class="bi bi-table"></i> <span></span></h3>
+          <span class="datatable-meta" id="dataTableMeta"></span>
         </div>
-        <div class="datatable-import" id="dataTableImport" hidden>
-          <div class="maplayer-combo" id="dataTableImportKriteriaField">
-            <button type="button" class="maplayer-combo-toggle" id="dataTableImportKriteriaToggle">
-              <span id="dataTableImportKriteriaLabel">Pilih kriteria...</span>
-              <i class="bi bi-chevron-down"></i>
-            </button>
-            <div class="maplayer-combo-panel" id="dataTableImportKriteriaPanel" hidden></div>
+        <div class="datatable-head-actions">
+          <div class="datatable-filters" id="dataTableFilters" hidden>
+            <div class="maplayer-combo" id="dataTableFilterProvinsiField">
+              <button type="button" class="maplayer-combo-toggle" id="dataTableFilterProvinsiToggle">
+                <span id="dataTableFilterProvinsiLabel">Semua provinsi</span>
+                <i class="bi bi-chevron-down"></i>
+              </button>
+              <div class="maplayer-combo-panel" id="dataTableFilterProvinsiPanel" hidden></div>
+            </div>
+            <div class="maplayer-combo" id="dataTableFilterKabupatenField">
+              <button type="button" class="maplayer-combo-toggle" id="dataTableFilterKabupatenToggle">
+                <span id="dataTableFilterKabupatenLabel">Semua kabupaten</span>
+                <i class="bi bi-chevron-down"></i>
+              </button>
+              <div class="maplayer-combo-panel" id="dataTableFilterKabupatenPanel" hidden></div>
+            </div>
           </div>
-          <button type="button" class="btn btn-ghost btn-sm" id="dataTableImportBtn" disabled>
-            <i class="bi bi-file-earmark-arrow-up"></i> Import xlsx
-          </button>
-          <input type="file" id="dataTableImportFile" accept=".xlsx" hidden />
+          <div class="datatable-import" id="dataTableImport" hidden>
+            <div class="maplayer-combo" id="dataTableImportKriteriaField">
+              <button type="button" class="maplayer-combo-toggle" id="dataTableImportKriteriaToggle">
+                <span id="dataTableImportKriteriaLabel">Pilih kriteria...</span>
+                <i class="bi bi-chevron-down"></i>
+              </button>
+              <div class="maplayer-combo-panel" id="dataTableImportKriteriaPanel" hidden></div>
+            </div>
+            <button type="button" class="btn btn-ghost btn-sm" id="dataTableImportBtn" disabled>
+              <i class="bi bi-file-earmark-arrow-up"></i> Import xlsx
+            </button>
+            <input type="file" id="dataTableImportFile" accept=".xlsx" hidden />
+          </div>
+          <button type="button" class="btn btn-ghost btn-sm" id="dataTableExport"><i class="bi bi-file-earmark-excel"></i> Export Excel</button>
+          <button type="button" class="icon-btn" id="dataTableClose" aria-label="Tutup"><i class="bi bi-x-lg"></i></button>
         </div>
-        <button type="button" class="btn btn-ghost btn-sm" id="dataTableExport"><i class="bi bi-file-earmark-excel"></i> Export Excel</button>
-        <button type="button" class="icon-btn" id="dataTableClose" aria-label="Tutup"><i class="bi bi-x-lg"></i></button>
       </div>
       <div class="datatable-scroll" id="dataTableScroll"></div>
       <div class="datatable-foot">
@@ -130,18 +138,22 @@
   <div class="datatable-overlay" id="ijdPreviewOverlay" hidden>
     <div class="datatable-modal">
       <div class="datatable-head">
-        <h3><i class="bi bi-file-earmark-bar-graph"></i> <span id="ijdPreviewTitle">Preview Export Skor IJD</span></h3>
-        <span class="datatable-meta" id="ijdPreviewMeta"></span>
-        <label class="ijd-narasi-force" title="Proses ulang &amp; timpa narasi AI yang sudah ada (bukan cuma yang belum punya narasi)">
-          <input type="checkbox" id="ijdPreviewNarasiForce" /> Timpa narasi lama
-        </label>
-        <button type="button" class="btn btn-ghost btn-sm" id="ijdPreviewNarasiAi">
-          <i class="bi bi-stars"></i> Proses Narasi AI
-        </button>
-        <button type="button" class="btn btn-primary btn-sm" id="ijdPreviewExport">
-          <i class="bi bi-file-earmark-excel"></i> Export Excel
-        </button>
-        <button type="button" class="icon-btn" id="ijdPreviewClose" aria-label="Tutup"><i class="bi bi-x-lg"></i></button>
+        <div class="datatable-head-title">
+          <h3><i class="bi bi-file-earmark-bar-graph"></i> <span id="ijdPreviewTitle">Preview Export Skor IJD</span></h3>
+          <span class="datatable-meta" id="ijdPreviewMeta"></span>
+        </div>
+        <div class="datatable-head-actions">
+          <label class="ijd-narasi-force" title="Proses ulang &amp; timpa narasi AI yang sudah ada (bukan cuma yang belum punya narasi)">
+            <input type="checkbox" id="ijdPreviewNarasiForce" /> Timpa narasi lama
+          </label>
+          <button type="button" class="btn btn-ghost btn-sm" id="ijdPreviewNarasiAi">
+            <i class="bi bi-stars"></i> Proses Narasi AI
+          </button>
+          <button type="button" class="btn btn-primary btn-sm" id="ijdPreviewExport">
+            <i class="bi bi-file-earmark-excel"></i> Export Excel
+          </button>
+          <button type="button" class="icon-btn" id="ijdPreviewClose" aria-label="Tutup"><i class="bi bi-x-lg"></i></button>
+        </div>
       </div>
       <div class="datatable-scroll" id="ijdPreviewScroll"></div>
       <div class="datatable-foot">
@@ -159,6 +171,67 @@
           <span id="ijdPreviewPageInfo"></span>
           <button type="button" class="btn btn-ghost btn-sm" id="ijdPreviewNext">Berikutnya <i class="bi bi-chevron-right"></i></button>
         </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="datatable-overlay" id="laporanPrioritasOverlay" hidden>
+    <div class="datatable-modal">
+      <div class="datatable-head">
+        <div class="datatable-head-title">
+          <h3><i class="bi bi-clipboard-check"></i> <span id="laporanPrioritasTitle">Laporan Daerah Prioritas</span></h3>
+          <span class="datatable-meta" id="laporanPrioritasMeta"></span>
+        </div>
+        <div class="datatable-head-actions">
+          <div class="maplayer-combo" id="laporanPrioritasProvinsiField">
+            <button type="button" class="maplayer-combo-toggle" id="laporanPrioritasProvinsiToggle">
+              <span id="laporanPrioritasProvinsiLabel">Pilih provinsi...</span>
+              <i class="bi bi-chevron-down"></i>
+            </button>
+            <div class="maplayer-combo-panel" id="laporanPrioritasProvinsiPanel" hidden></div>
+          </div>
+          <button type="button" class="btn btn-primary btn-sm" id="laporanPrioritasExport" disabled>
+            <i class="bi bi-file-earmark-excel"></i> Export Excel
+          </button>
+          <button type="button" class="icon-btn" id="laporanPrioritasClose" aria-label="Tutup"><i class="bi bi-x-lg"></i></button>
+        </div>
+      </div>
+      <div class="datatable-tabs">
+        <button type="button" class="datatable-tab active" id="laporanTabChecklist">
+          <i class="bi bi-table"></i> Checklist
+        </button>
+        <button type="button" class="datatable-tab" id="laporanTabDistribusi">
+          <i class="bi bi-bar-chart-line"></i> Distribusi Skor
+        </button>
+        <button type="button" class="datatable-tab" id="laporanTabDashboard">
+          <i class="bi bi-speedometer2"></i> Dashboard
+        </button>
+      </div>
+      <div id="laporanPrioritasChecklistView">
+        <div class="datatable-scroll" id="laporanPrioritasScroll">
+          <div class="datatable-loading">Pilih provinsi untuk melihat laporan.</div>
+        </div>
+        <div class="datatable-foot">
+          <div class="datatable-pagesize">
+            Baris per halaman:
+            <select id="laporanPrioritasPageSize">
+              <option value="25">25</option>
+              <option value="50" selected>50</option>
+              <option value="100">100</option>
+            </select>
+          </div>
+          <div class="datatable-pager">
+            <button type="button" class="btn btn-ghost btn-sm" id="laporanPrioritasPrev"><i class="bi bi-chevron-left"></i> Sebelumnya</button>
+            <span id="laporanPrioritasPageInfo"></span>
+            <button type="button" class="btn btn-ghost btn-sm" id="laporanPrioritasNext">Berikutnya <i class="bi bi-chevron-right"></i></button>
+          </div>
+        </div>
+      </div>
+      <div id="laporanPrioritasDistribusiView" class="laporan-distribusi-view" hidden>
+        <div class="laporan-distribusi-empty" id="laporanDistribusiEmpty">Pilih provinsi untuk melihat distribusi skor.</div>
+      </div>
+      <div id="laporanPrioritasDashboardView" class="laporan-distribusi-view" hidden>
+        <div class="laporan-distribusi-empty">Pilih provinsi untuk melihat dashboard.</div>
       </div>
     </div>
   </div>

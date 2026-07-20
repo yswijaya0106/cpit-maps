@@ -1825,17 +1825,17 @@ def prioritas_nasional_list(provinsi: str = "", limit: int = 50, offset: int = 0
 
 
 # --- Pagu Indikatif Provinsi (dokumen 14072026 bagian B) + Alokasi 2 Lapis
-# (bagian C akhir). Komponen pagu yang datanya ada baru A1 (panjang jalan
-# daerah, SI 2026 Tabel 10.1.1) dan A4 (kapasitas fiskal, kolom SITIA usulan
-# gubernur) — A2 kemantapan (PUPR), A3 kawasan pangan (KP2B), dan A5 IKK
+# (bagian C akhir). Komponen pagu yang datanya ada: A1 (panjang jalan
+# daerah, SI 2026 Tabel 10.1.1), A2 kemantapan (kemantapan_ijd_2026), A3
+# kawasan pangan (proksi lahan sawah ATR/BPN, lihat catatan di bawah), dan
+# A4 (kapasitas fiskal, kolom SITIA usulan gubernur) — hanya A5 IKK
 # (publikasi BPS terpisah) belum ada sumbernya. Tiap komponen dinyatakan
 # sebagai pangsa nasional (jumlah antar provinsi = 100%) supaya total pagu
 # tepat mendistribusikan alokasi nasional; skor akhir dinormalisasi ulang ke
-# bobot komponen yang tersedia (20 + 15 dari 100).
+# bobot komponen yang tersedia (85 dari 100 tanpa A5).
 
 _FISKAL_SKOR = {"SANGAT TINGGI": 10, "TINGGI": 15, "SEDANG": 20, "RENDAH": 25, "SANGAT RENDAH": 30}
 _PAGU_KOMPONEN_PENDING = {
-    "A3": "Kawasan pangan strategis (bobot 20) — data KP2B/kawasan pangan belum diimpor.",
     "A5": "Indeks Kemahalan Konstruksi (bobot 15) — publikasi IKK BPS belum diimpor.",
 }
 
@@ -1878,6 +1878,11 @@ def _pagu_provinsi(alokasi_nasional: Optional[float] = None) -> dict:
         )
         kemantapan_raw = {_norm_prov_nama(r["provinsi"]): r for r in cur.fetchall()
                           if r["total_km"]}
+        cur.execute(
+            "SELECT provinsi, lahan_sawah_2024_km2 FROM si_lahan_sawah_provinsi "
+            "WHERE kode_provinsi > 0 AND lahan_sawah_2024_km2 IS NOT NULL"
+        )
+        sawah = {_norm_prov_nama(r["provinsi"]): float(r["lahan_sawah_2024_km2"]) for r in cur.fetchall()}
         cur.execute("SELECT DISTINCT provinsi FROM usulan_inpres ORDER BY provinsi")
         frame = [r["provinsi"] for r in cur.fetchall()]
 
@@ -1890,6 +1895,7 @@ def _pagu_provinsi(alokasi_nasional: Optional[float] = None) -> dict:
     total_jalan = sum(jalan.get(_norm_prov_nama(p), 0) for p in frame)
     total_fiskal = sum(_FISKAL_SKOR.get((fiskal.get(_norm_prov_nama(p)) or "").upper(), 0) for p in frame)
     total_indeks = sum(indeks_ketidakmantapan.get(_norm_prov_nama(p), 0) for p in frame)
+    total_sawah = sum(sawah.get(_norm_prov_nama(p), 0) for p in frame)
 
     provinsi_rows, total_skor = [], 0.0
     for p in frame:
@@ -1898,8 +1904,10 @@ def _pagu_provinsi(alokasi_nasional: Optional[float] = None) -> dict:
         f_label = fiskal.get(key)
         f_skor = _FISKAL_SKOR.get((f_label or "").upper())
         idx = indeks_ketidakmantapan.get(key)
+        sawah_km2 = sawah.get(key)
         a1 = km / total_jalan * 100 if km and total_jalan else None
         a2 = idx / total_indeks * 100 if idx and total_indeks else None
+        a3 = sawah_km2 / total_sawah * 100 if sawah_km2 and total_sawah else None
         a4 = f_skor / total_fiskal * 100 if f_skor and total_fiskal else None
         bobot, nilai = 0.0, 0.0
         if a1 is not None:
@@ -1908,6 +1916,9 @@ def _pagu_provinsi(alokasi_nasional: Optional[float] = None) -> dict:
         if a2 is not None:
             bobot += 30
             nilai += a2 * 30
+        if a3 is not None:
+            bobot += 20
+            nilai += a3 * 20
         if a4 is not None:
             bobot += 15
             nilai += a4 * 15
@@ -1920,6 +1931,8 @@ def _pagu_provinsi(alokasi_nasional: Optional[float] = None) -> dict:
             "a1_pangsa_pct": round(a1, 3) if a1 is not None else None,
             "tidak_mantap_pct": round(pct_tm, 2) if pct_tm is not None else None,
             "a2_pangsa_pct": round(a2, 3) if a2 is not None else None,
+            "lahan_sawah_km2": sawah_km2,
+            "a3_pangsa_pct": round(a3, 3) if a3 is not None else None,
             "kapasitas_fiskal": f_label,
             "a4_pangsa_pct": round(a4, 3) if a4 is not None else None,
             "bobot_tersedia": bobot,
@@ -1947,9 +1960,12 @@ def _pagu_provinsi(alokasi_nasional: Optional[float] = None) -> dict:
         "komponen_belum_tersedia": _PAGU_KOMPONEN_PENDING,
         "catatan": (
             "Skor pagu provinsi PARSIAL: komponen A1 panjang jalan daerah (bobot 20), A2 panjang "
-            "jalan tidak mantap (bobot 30, dari docs/docs/5_IJD 2026 - DATA.xlsx) dan A4 kapasitas "
-            "fiskal (bobot 15) dari 5 komponen dokumen 14072026 — A3 kawasan pangan & A5 IKK masih "
-            "kosong; pangsa dinormalisasi ulang ke bobot yang tersedia. Bukan penetapan resmi."
+            "jalan tidak mantap (bobot 30, dari docs/docs/5_IJD 2026 - DATA.xlsx), A3 kawasan pangan "
+            "(bobot 20, proksi lahan sawah ATR/BPN SK 446.1/2024 dari si_lahan_sawah_provinsi — "
+            "sawah saja, bukan kawasan pangan multi-komoditas resmi PDF 14072026, karena itu satu-"
+            "satunya sumber ATR/BPN nasional level provinsi yang tersedia) dan A4 kapasitas fiskal "
+            "(bobot 15) dari 5 komponen dokumen 14072026 — hanya A5 Indeks Kemahalan Konstruksi yang "
+            "masih kosong; pangsa dinormalisasi ulang ke bobot yang tersedia (85/100). Bukan penetapan resmi."
         ),
     }
 

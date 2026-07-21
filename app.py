@@ -2441,6 +2441,249 @@ def _bappenas_aspek_b_ekonomi(row: dict, ctx: dict = None) -> dict:
     }
 
 
+# --- NPR (Nilai Prioritas Ruas) -- metodologi ALTERNATIF dari
+# docs/docs/Metodologi Penilaian skala prioritas Ruas.docx, dinilai di
+# docs/kajian_metodologi_skala_prioritas_ruas.md. BELUM policy resmi --
+# endpoint TERPISAH dari /ijd-score (A-E), tidak menggantikannya. Bobot
+# disimpan sbg konstanta Python (bukan tabel rules-as-data spt
+# ijd_scoring_rules) krn metodologi ini belum diadopsi -- migrasi ke tabel
+# kalau/ketika resmi. Cakupan data per Fase 1/2 §7 kajian:
+#   SI (Skor Intensitas, bobot 70% NPR): Penduduk siap penuh, Perkebunan
+#   siap (77% kab/kota, klaster terbaik). Pertanian/Perikanan/Peternakan/
+#   Nilai Industri/LHR SENGAJA belum diaktifkan (lihat kajian §2, §7 Fase
+#   2-3) -- ditandai tersedia:false eksplisit, bukan 0.
+#   SC (Skor Cakupan, bobot 30% NPR): 6 kategori reuse data yang sudah ada
+#   (kawasan_tematik/bappenas_lokus_a/simpul_transportasi). KEK/PSN-umum/
+#   Bandara/Pariwisata belum ada sumber (kajian §3) -- tersedia:false.
+
+NPR_BOBOT_SI_SC = {"SI": 0.7, "SC": 0.3}
+
+# breakpoint EKSPLISIT dari docx (Tabel kuintil Jumlah Penduduk) -- satu-
+# satunya parameter yg dokumen kasih ambang pasti, sisanya "kuintil
+# nasional" generik (dihitung dinamis, lihat _npr_kuintil_dinamis).
+_NPR_PENDUDUK_BREAKPOINTS = [(300_000, 100), (200_000, 80), (150_000, 60), (100_000, 40)]
+
+
+def _npr_skor_breakpoint_tetap(nilai: float, breakpoints: list) -> int:
+    for ambang, skor in breakpoints:
+        if nilai > ambang:
+            return skor
+    return 20
+
+
+_npr_kuintil_cache: dict = {}  # {kolom: [b20,b40,b60,b80]} -- dihitung sekali per proses (restart server utk refresh, pola sama dgn _map_layer_geojson_cache)
+
+
+def _npr_kuintil_dinamis(kode_kab: int, kolom: str) -> tuple:
+    """Kuintil nasional generik (Langkah 1 dokx) dari distribusi nilai
+    kolom produksi (`bps_kecamatan_potensi_tematik`) antar KABUPATEN (bukan
+    per-usulan -- keputusan Fase 0 §7 kajian: basis kuintil = kabupaten,
+    krn data produksi granularitasnya kabupaten, bukan ruas). Return
+    (nilai_kab, skor) atau (None, None) kalau kabupaten tidak py data."""
+    if kolom not in _npr_kuintil_cache:
+        with db_cursor() as cur:
+            cur.execute(
+                f"SELECT kode_kab, SUM({kolom}) v FROM bps_kecamatan_potensi_tematik "
+                f"WHERE {kolom} IS NOT NULL GROUP BY kode_kab HAVING v > 0"
+            )
+            rows = cur.fetchall()
+        nilai_by_kab = {int(r["kode_kab"]): float(r["v"]) for r in rows}
+        if len(nilai_by_kab) >= 5:
+            s = pd.Series(list(nilai_by_kab.values()))
+            b20, b40, b60, b80 = s.quantile([0.2, 0.4, 0.6, 0.8]).tolist()
+        else:
+            b20 = b40 = b60 = b80 = None
+        _npr_kuintil_cache[kolom] = (nilai_by_kab, (b20, b40, b60, b80))
+    nilai_by_kab, (b20, b40, b60, b80) = _npr_kuintil_cache[kolom]
+    nilai = nilai_by_kab.get(kode_kab)
+    if nilai is None or b20 is None:
+        return None, None
+    if nilai > b80:
+        skor = 100
+    elif nilai > b60:
+        skor = 80
+    elif nilai > b40:
+        skor = 60
+    elif nilai > b20:
+        skor = 40
+    else:
+        skor = 20
+    return nilai, skor
+
+
+def _npr_skor_intensitas(row: dict, kode_kab: int) -> dict:
+    komponen = []
+    skor_tertimbang = 0.0
+    bobot_tersedia = 0.0
+
+    kode_kec = row.get("kode_kecamatan")
+    penduduk_n = None
+    if kode_kec:
+        with db_cursor() as cur:
+            cur.execute("SELECT jumlah_penduduk FROM penduduk_kecamatan WHERE kode_kecamatan = %s", (kode_kec,))
+            r = cur.fetchone()
+            penduduk_n = r["jumlah_penduduk"] if r else None
+    if penduduk_n:
+        skor = _npr_skor_breakpoint_tetap(penduduk_n, _NPR_PENDUDUK_BREAKPOINTS)
+        komponen.append({"kode": "PENDUDUK", "label": "Jumlah Penduduk", "bobot_maks": 20,
+                          "tersedia": True, "nilai": skor, "kontribusi": round(skor / 100 * 20, 2),
+                          "keterangan": f"Penduduk kecamatan: {penduduk_n:,.0f} jiwa (kuintil tetap sesuai dokumen).".replace(",", ".")})
+        skor_tertimbang += skor / 100 * 20
+        bobot_tersedia += 20
+    else:
+        komponen.append({"kode": "PENDUDUK", "label": "Jumlah Penduduk", "bobot_maks": 20,
+                          "tersedia": False, "keterangan": "Data jumlah penduduk kecamatan tidak ditemukan."})
+
+    if kode_kab:
+        nilai, skor = _npr_kuintil_dinamis(kode_kab, "perkebunan_produksi_ton")
+    else:
+        nilai, skor = None, None
+    if skor is not None:
+        komponen.append({"kode": "PERKEBUNAN", "label": "Produksi Perkebunan (Sawit/Kelapa/Karet/Tebu, dll.)",
+                          "bobot_maks": 10, "tersedia": True, "nilai": skor, "kontribusi": round(skor / 100 * 10, 2),
+                          "keterangan": f"Produksi perkebunan kabupaten: {nilai:,.0f} ton (kuintil nasional dinamis).".replace(",", ".")})
+        skor_tertimbang += skor / 100 * 10
+        bobot_tersedia += 10
+    else:
+        komponen.append({"kode": "PERKEBUNAN", "label": "Produksi Perkebunan (Sawit/Kelapa/Karet/Tebu, dll.)",
+                          "bobot_maks": 10, "tersedia": False,
+                          "keterangan": "Kabupaten/kota ini tidak punya data produksi perkebunan (Dalam Angka)."})
+
+    for kode, label, bobot, alasan in [
+        ("PERTANIAN", "Produksi Pertanian Pangan (Padi+Jagung, gabungan)", 30,
+         "Sengaja belum diaktifkan (Fase 2 §7 kajian) -- cakupan nasional baru 19% kab/kota, "
+         "perlu audit dulu apakah gap ini krn buku Dalam Angka memang tak terbit atau bug parser."),
+        ("PERIKANAN_SI", "Produksi Perikanan", 10,
+         "Sengaja belum diaktifkan -- cakupan nasional baru 20% kab/kota (Fase 2 §7 kajian)."),
+        ("NILAI_INDUSTRI", "Nilai Industri", 15,
+         "Tidak ada sumber data PDRB/nilai produksi sektor industri per kabupaten di aplikasi ini."),
+        ("LHR", "Volume Lalu Lintas (LHR)", 15,
+         "Proksi kendaraan/km ada tapi belum disambungkan ke NPR; LHR riil (field LHRT SHP Jalan "
+         "Daerah) belum di-spatial-join ke ruas usulan (Fase 3 §7 kajian)."),
+    ]:
+        komponen.append({"kode": kode, "label": label, "bobot_maks": bobot, "tersedia": False, "keterangan": alasan})
+
+    skor_100 = round(skor_tertimbang / bobot_tersedia * 100, 1) if bobot_tersedia else None
+    return {"komponen": komponen, "skor_tertimbang": round(skor_tertimbang, 2),
+            "bobot_tersedia": bobot_tersedia, "skor_ternormalisasi_100": skor_100}
+
+
+def _npr_skor_cakupan(row: dict, kode_kab: int) -> dict:
+    komponen_def = [
+        ("KAWASAN_INDUSTRI", "Kawasan Industri", 15),
+        ("KEK", "Kawasan Ekonomi Khusus (KEK)", 15),
+        ("PSN", "Proyek Strategis Nasional", 10),
+        ("PELABUHAN", "Pelabuhan", 10),
+        ("BANDARA", "Bandara", 10),
+        ("SENTRA_PANGAN", "Sentra Produksi Pangan", 10),
+        ("SENTRA_PERIKANAN", "Sentra Perikanan", 10),
+        ("PARIWISATA", "Kawasan Pariwisata", 10),
+        ("PERBATASAN", "Perbatasan Negara", 10),
+        ("TRANSMIGRASI", "Kawasan Transmigrasi", 10),
+    ]
+    ada = set()
+    if kode_kab:
+        with db_cursor() as cur:
+            cur.execute("SELECT DISTINCT kategori, sumber_sheet FROM kawasan_tematik WHERE kode_kabupaten = %s", (kode_kab,))
+            kawasan_rows = cur.fetchall()
+            cur.execute(
+                "SELECT DISTINCT kriteria FROM bappenas_lokus_a WHERE kode_kabupaten = %s "
+                "OR kode_provinsi = %s", (kode_kab, kode_kab // 100),
+            )
+            lokus_rows = cur.fetchall()
+            cur.execute("SELECT 1 FROM simpul_transportasi WHERE kode_kabupaten = %s LIMIT 1", (kode_kab,))
+            ada_pelabuhan = cur.fetchone() is not None
+        kawasan_kategori = {r["kategori"] for r in kawasan_rows}
+        kawasan_sheet = {r["sumber_sheet"] for r in kawasan_rows}
+        lokus_kriteria = {r["kriteria"] for r in lokus_rows}
+        if "KI_PRIORITAS" in kawasan_kategori:
+            ada.add("KAWASAN_INDUSTRI")
+        if "Lokus KI PSN IUKI Sudah Terbit" in kawasan_sheet:
+            ada.add("PSN")
+        if ada_pelabuhan:
+            ada.add("PELABUHAN")
+        if lokus_kriteria & {"SWASEMBADA_PANGAN_LOKUS", "SWASEMBADA_PANGAN_RPJMN"}:
+            ada.add("SENTRA_PANGAN")
+        if "PERIKANAN" in kawasan_kategori:
+            ada.add("SENTRA_PERIKANAN")
+        if lokus_kriteria & {"PERBATASAN", "PKSN"}:
+            ada.add("PERBATASAN")
+        if "TRANSMIGRASI" in kawasan_kategori:
+            ada.add("TRANSMIGRASI")
+
+    _TIDAK_TERSEDIA = {
+        "KEK": "Tidak ada kategori KEK tersendiri di kawasan_tematik/bappenas_lokus_a (kajian §3).",
+        "BANDARA": "SHP Simpul Transportasi utk Bandara belum diproses (kajian §3).",
+        "PARIWISATA": "Tidak ada sumber data kawasan pariwisata di aplikasi ini (kajian §3).",
+    }
+    komponen = []
+    skor_tertimbang = 0.0
+    bobot_tersedia = 0.0
+    for kode, label, bobot in komponen_def:
+        if kode in _TIDAK_TERSEDIA:
+            komponen.append({"kode": kode, "label": label, "bobot_maks": bobot, "tersedia": False,
+                              "keterangan": _TIDAK_TERSEDIA[kode]})
+            continue
+        cocok = kode in ada
+        nilai = 100 if cocok else 0
+        komponen.append({"kode": kode, "label": label, "bobot_maks": bobot, "tersedia": True,
+                          "nilai": nilai, "kontribusi": round(nilai / 100 * bobot, 2),
+                          "keterangan": f"{'Ada' if cocok else 'Tidak ada'} data {label.lower()} di kabupaten/kota ini."})
+        skor_tertimbang += nilai / 100 * bobot
+        bobot_tersedia += bobot
+
+    skor_100 = round(skor_tertimbang / bobot_tersedia * 100, 1) if bobot_tersedia else None
+    return {"komponen": komponen, "skor_tertimbang": round(skor_tertimbang, 2),
+            "bobot_tersedia": bobot_tersedia, "skor_ternormalisasi_100": skor_100}
+
+
+_NPR_KATEGORI = [(80, "Prioritas Sangat Tinggi"), (70, "Prioritas Tinggi"), (60, "Prioritas Menengah"),
+                  (50, "Prioritas Rendah")]
+
+
+def _compute_npr(row: dict) -> dict:
+    kode_kab = _bappenas_kode_kab(row)
+    si = _npr_skor_intensitas(row, kode_kab)
+    sc = _npr_skor_cakupan(row, kode_kab)
+
+    npr = None
+    kategori = None
+    if si["skor_ternormalisasi_100"] is not None and sc["skor_ternormalisasi_100"] is not None:
+        npr = round(NPR_BOBOT_SI_SC["SI"] * si["skor_ternormalisasi_100"] +
+                     NPR_BOBOT_SI_SC["SC"] * sc["skor_ternormalisasi_100"], 1)
+        kategori = "Belum Prioritas"
+        for ambang, label in _NPR_KATEGORI:
+            if npr >= ambang:
+                kategori = label
+                break
+
+    return {
+        "skor_intensitas": si,
+        "skor_cakupan": sc,
+        "bobot_si_sc": NPR_BOBOT_SI_SC,
+        "npr": npr,
+        "kategori": kategori,
+        "catatan": (
+            "NPR (Nilai Prioritas Ruas) -- metodologi ALTERNATIF/eksperimental dari "
+            "docs/docs/Metodologi Penilaian skala prioritas Ruas.docx, BELUM policy resmi, "
+            "TERPISAH dari skor IJD Prioritisasi Teknokratik A-E (/ijd-score). skor_intensitas & "
+            "skor_cakupan masing2 dinormalisasi thd bobot parameter yang datanya tersedia "
+            "(bukan 0 utk parameter yang belum ada sumbernya) -- lihat "
+            "docs/kajian_metodologi_skala_prioritas_ruas.md utk cakupan data & rencana bertahap."
+        ),
+    }
+
+
+@app.get("/api/usulan-inpres/{usulan_id}/npr")
+def usulan_inpres_npr(usulan_id: int):
+    with db_cursor() as cur:
+        cur.execute("SELECT * FROM usulan_inpres WHERE id = %s", (usulan_id,))
+        row = cur.fetchone()
+    if not row:
+        raise HTTPException(404, "Usulan tidak ditemukan")
+    return _compute_npr(row)
+
+
 # --- Laporan Daerah Prioritas per Kabupaten/Kota (docs/docs/laporan-validator.md)
 # -- checklist agregat per kabupaten/kota dlm SATU provinsi terpilih, dua
 # aspek (A "Prioritas & Nilai Strategis", B "Daya Ungkit Ekonomi & Kinerja

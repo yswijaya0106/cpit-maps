@@ -2454,12 +2454,15 @@ def _bappenas_aspek_b_ekonomi(row: dict, ctx: dict = None) -> dict:
 # kabupaten ini", bukan "ada di kecamatan usulan ini").
 #
 # Kolom yg TIDAK disertakan (belum ada sumber data bersih, lihat
-# docs/docs/laporan-validator.md): Produksi kelapa sawit/kelapa/tebu/karet,
-# Produktivitas Peternakan, Produktivitas Perikanan tangkap, Tata Guna
-# Lahan, Konektivitas Jaringan Jalan/Simpul Transportasi (sbg indikator
-# checklist -- datanya SHP ada tapi belum di-spatial-join per kabupaten),
-# KP2B/LP2B, Keberlanjutan IJD (dpp_ijd_2025 blm py kode_kabupaten bersih),
-# Penuntasan Koridor (E43, OneDrive manual).
+# docs/docs/laporan-validator.md): Tata Guna Lahan, KP2B/LP2B, Keberlanjutan
+# IJD (dpp_ijd_2025 blm py kode_kabupaten bersih), Penuntasan Koridor (E43,
+# OneDrive manual). Per audit 21 Jul 2026 thd sheet "Kumpulan Data" (file
+# `2_Analisis Prioritas untuk Bappenas dan Teknokratis 15.7.2026.xlsx`),
+# baris Tata Guna Lahan & KP2B/LP2B TIDAK LAGI muncul di sheet itu (dulu
+# berstatus "Konfirm"/"tanya", kini dihapus dari kerangka) -- kemungkinan
+# sudah keluar dari cakupan resmi, bukan sekadar belum diproses; tidak
+# dihapus dari daftar exclusion di sini krn belum ada konfirmasi eksplisit
+# dari user soal maknanya.
 
 LAPORAN_ASPEK_A = [
     ("LOKPRI_RPJMN", "LOKPRI RPJMN"),
@@ -2477,6 +2480,14 @@ LAPORAN_ASPEK_A = [
     ("KI_HILIRISASI", "Konektivitas KI/KEK - KI Hilirisasi"),
     ("KI_DIRGANTARA", "Konektivitas KI/KEK - KI Dirgantara"),
     ("SWASEMBADA_PANGAN_RPJMN", "Lokus Swasembada Pangan RPJMN"),
+    # Sub-lokus RPJMN (baris 13-15 sheet Kumpulan Data) -- BEDA dari sub KI/KEK
+    # di atas: di sumber, ketiganya py nomor item TERSENDIRI (13/14/15), bukan
+    # digabung ke nomor 12 -- jadi masing2 kolom checklist + poin _LAPORAN_GROUP_A
+    # sendiri, WALAU kode kriteria sama persis dgn yg dipakai Aspek B (dokumen
+    # sengaja mendaftarkan ketiganya di kedua aspek). Ditambahkan 21 Jul 2026.
+    ("PERIKANAN", "Lokus Kelautan & Perikanan (RPJMN)"),
+    ("SWASEMBADA_PANGAN_LOKUS", "Lokus Swasembada Pangan (RPJMN)"),
+    ("PERKEBUNAN", "Lokasi Kawasan Perkebunan (RPJMN)"),
 ]
 
 LAPORAN_ASPEK_B = [
@@ -2700,14 +2711,31 @@ def _laporan_prioritas_kabupaten(kode_provinsi: int = 0) -> dict:
             "kab_totals": kab_totals}
 
 
-# 12 item Aspek A / 14 item Aspek B PERSIS urutan docs/docs/laporan-validator.md
-# (sub-item bertanda "-" digabung 1 induk). List kosong = item itu genuinely
+# 15 item Aspek A / 12 item Aspek B. Urutan PERSIS sheet "Kumpulan Data"
+# (sub-item KI/KEK-style bertanda "-" TANPA nomor sendiri digabung 1 induk;
+# tapi baris 13-15 "Lokus Kelautan & Perikanan"/"Lokus Swasembada Pangan"/
+# "Lokasi Kawasan Perkebunan" PUNYA nomor item sendiri di sheet -- jadi 3
+# poin terpisah, bukan digabung ke item 12 "Swasembada Pangan RPJMN"),
+# diaudit ulang 21 Jul 2026 thd `2_Analisis Prioritas untuk Bappenas dan
+# Teknokratis 15.7.2026.xlsx`:
+# - Aspek A NAIK dari 12 jadi 15 item -- 3 sub-lokus RPJMN tadi sebelumnya
+#   cuma dihitung di Aspek B, padahal dokumen mendaftarkan ketiganya juga
+#   sbg item bernomor tersendiri di bagian Aspek A (baris 13/14/15).
+# - Aspek B TURUN dari 14 jadi 12 item krn baris "Tata Guna Lahan" & "KP2B/
+#   LP2B" (dulu berstatus "Konfirm"/"tanya", tak pernah dapat sumber bersih)
+#   SUDAH TAK ADA LAGI di sheet itu, dikonfirmasi user keluar dari cakupan
+#   resmi -- bukan cuma "belum diproses", jadi dihapus total dari daftar
+#   (bukan dibiarkan list kosong).
+# List kosong sisa = item MASIH tercantum resmi di sheet tapi genuinely
 # belum ada sumber data di aplikasi (selalu 0 poin, lihat komentar di atas).
 _LAPORAN_GROUP_A = [
     ["LOKPRI_RPJMN"], ["PKPN"], ["PKSN"], ["PERBATASAN"], ["TRANSMIGRASI"],
     ["SR"], ["SEKOLAH_GARUDA"], ["KNMP"], ["KDMP"], ["BBM_1_HARGA"],
     ["KI_PSN_IUKI", "KI_PRIO_RPJMN", "KI_HILIRISASI", "KI_DIRGANTARA"],
     ["SWASEMBADA_PANGAN_RPJMN"],
+    # Baris 13-15 sheet Kumpulan Data -- item TERSENDIRI (bukan sub KI/KEK-style
+    # yg digabung 1 poin), naikkan skala Aspek A 12 -> 15. Ditambahkan 21 Jul 2026.
+    ["PERIKANAN"], ["SWASEMBADA_PANGAN_LOKUS"], ["PERKEBUNAN"],
 ]
 _LAPORAN_GROUP_B = [
     # Produktivitas Komoditas -- 21 Jul: PRODUKSI_PERKEBUNAN ditambahkan
@@ -2716,13 +2744,11 @@ _LAPORAN_GROUP_B = [
     ["PERIKANAN", "SWASEMBADA_PANGAN_LOKUS", "PERKEBUNAN", "PRODUKSI_PADI", "PRODUKSI_PERKEBUNAN"],
     ["PRODUKSI_PETERNAKAN"],  # Produktivitas Peternakan -- SELESAI 21 Jul
     ["PRODUKSI_PERIKANAN_TANGKAP"],  # Produktivitas Perikanan (tangkap) -- SELESAI 21 Jul
-    [],  # Tata Guna Lahan -- belum ada sumber (Bappenas: status "Konfirm")
     ["LBS"], ["IP"],
     ["KI_PSN_IUKI", "KI_PRIO_RPJMN", "KI_HILIRISASI", "KI_DIRGANTARA"],
     ["JARINGAN_JALAN"],  # Konektivitas Jaringan Jalan -- SELESAI (proksi data-tersedia) 21 Jul
     ["SIMPUL_TRANSPORTASI"],  # Konektivitas Simpul Transportasi -- SELESAI (parsial) 21 Jul, 2/4 layer
     ["KEMANTAPAN_JALAN"], ["JUMLAH_KENDARAAN"],
-    [],  # KP2B/LP2B -- belum ada sumber (Kementan: status "tanya")
     [],  # Keberlanjutan IJD -- dpp_ijd_2025 blm py kode_kabupaten bersih
     [],  # Penuntasan Koridor -- E43, OneDrive manual
 ]
@@ -2756,7 +2782,7 @@ def _laporan_prioritas_distribusi(kode_provinsi: int) -> dict:
     }
 
 
-_LAPORAN_MAKS_TOTAL = len(_LAPORAN_GROUP_A) + len(_LAPORAN_GROUP_B)  # 26 -- skala gabungan A+B
+_LAPORAN_MAKS_TOTAL = len(_LAPORAN_GROUP_A) + len(_LAPORAN_GROUP_B)  # 27 -- skala gabungan A+B
 
 
 def _laporan_prioritas_dashboard(kode_provinsi: int = 0) -> dict:
@@ -2815,7 +2841,8 @@ def _laporan_prioritas_dashboard(kode_provinsi: int = 0) -> dict:
 
     result = {
         "n_kabupaten": n, "avg_total": avg_total, "avg_a": avg_a, "avg_b": avg_b,
-        "maks_total": _LAPORAN_MAKS_TOTAL, "n_tanpa_data": n_tanpa_data,
+        "maks_total": _LAPORAN_MAKS_TOTAL, "maks_a": len(_LAPORAN_GROUP_A), "maks_b": len(_LAPORAN_GROUP_B),
+        "n_tanpa_data": n_tanpa_data,
         "top10": top10, "komposisi": komposisi,
         "cakupan_a": cakupan_a, "cakupan_b": cakupan_b,
         "provinsi": None,

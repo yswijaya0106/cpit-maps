@@ -788,8 +788,8 @@ async function laporanPrioritasFetchDistribusi() {
 // Histogram batang tunggal (1 hue) per rentang 2 poin -- jumlah checklist
 // yang tercentang per kabupaten/kota (bukan skor IJD 0-100). Setiap "item"
 // di sini = 1 induk kriteria dari docs/docs/laporan-validator.md (sub-item
-// digabung, lihat _LAPORAN_GROUP_A/_B di app.py), maks 12 (Aspek A) / 14
-// (Aspek B) poin.
+// digabung, lihat _LAPORAN_GROUP_A/_B di app.py), maks 15 (Aspek A) / 12
+// (Aspek B) poin -- skala dinamis dari data.maks_a/maks_b, bukan hardcode.
 // Nama kabupaten/kota ditampilkan di daftar terpisah di bawah histogram
 // (bukan disisipkan ke tiap kolom batang -- kolom tinggi tetap 160px
 // beranchor-bawah, kalau nama diselipkan di situ untuk rentang berisi
@@ -906,7 +906,7 @@ function laporanPrioritasRenderDashboard(data) {
   const view = document.getElementById("laporanPrioritasDashboardView");
   const kpis = `<div class="laporan-kpi-row">
     ${laporanKpiTile("Kabupaten/Kota", data.n_kabupaten.toLocaleString("id-ID"))}
-    ${laporanKpiTile("Rata-rata Skor Gabungan", `${data.avg_total} / ${data.maks_total}`, `Aspek A ${data.avg_a}/12 · Aspek B ${data.avg_b}/14`)}
+    ${laporanKpiTile("Rata-rata Skor Gabungan", `${data.avg_total} / ${data.maks_total}`, `Aspek A ${data.avg_a}/${data.maks_a} · Aspek B ${data.avg_b}/${data.maks_b}`)}
     ${laporanKpiTile("Tanpa Data Sama Sekali", data.n_tanpa_data.toLocaleString("id-ID"), "skor 0 di kedua aspek")}
   </div>`;
 

@@ -420,16 +420,38 @@ td.checklist-cell .ijd-badge { margin-right: 4px; }
   max-height: 240px; overflow-y: auto;
   background: #232d52; border: 1px solid var(--border); border-radius: 10px;
   box-shadow: var(--shadow); z-index: 50; padding: 5px;
-  scrollbar-width: none; -ms-overflow-style: none; /* tetap bisa scroll, scrollbar disembunyikan */
+  scrollbar-width: thin; scrollbar-color: var(--primary) transparent; /* Firefox */
 }
-.maplayer-combo-panel::-webkit-scrollbar { display: none; }
+.maplayer-combo-panel::-webkit-scrollbar { width: 8px; }
+.maplayer-combo-panel::-webkit-scrollbar-track { background: rgba(255,255,255,.03); border-radius: 10px; margin: 2px; }
+.maplayer-combo-panel::-webkit-scrollbar-thumb {
+  background: linear-gradient(180deg, var(--primary), var(--accent));
+  border-radius: 10px; border: 2px solid #232d52; background-clip: padding-box;
+}
+.maplayer-combo-panel::-webkit-scrollbar-thumb:hover {
+  background: linear-gradient(180deg, var(--primary-dark), var(--accent));
+  background-clip: padding-box;
+}
 .maplayer-combo-option {
   padding: 8px 10px; font-size: 12.5px; border-radius: 7px; cursor: pointer;
   color: var(--text); white-space: nowrap;
 }
 .maplayer-combo-option:hover { background: rgba(79, 124, 255, 0.16); }
 .maplayer-combo-option.selected { background: var(--primary); color: #fff; font-weight: 600; }
-.maplayer-list { display: flex; flex-direction: column; gap: 2px; overflow-y: auto; max-height: 220px; }
+.maplayer-list {
+  display: flex; flex-direction: column; gap: 2px; overflow-y: auto; max-height: 220px;
+  scrollbar-width: thin; scrollbar-color: var(--primary) transparent; /* Firefox */
+}
+.maplayer-list::-webkit-scrollbar { width: 8px; }
+.maplayer-list::-webkit-scrollbar-track { background: rgba(255,255,255,.03); border-radius: 10px; margin: 2px; }
+.maplayer-list::-webkit-scrollbar-thumb {
+  background: linear-gradient(180deg, var(--primary), var(--accent));
+  border-radius: 10px; border: 2px solid #232d52; background-clip: padding-box;
+}
+.maplayer-list::-webkit-scrollbar-thumb:hover {
+  background: linear-gradient(180deg, var(--primary-dark), var(--accent));
+  background-clip: padding-box;
+}
 .maplayer-loading { font-size: 12px; color: var(--text-dim); padding: 8px 4px; }
 .maplayer-item {
   display: flex; align-items: center; gap: 8px; padding: 6px 6px; border-radius: 7px;
@@ -979,11 +1001,17 @@ td.checklist-cell .ijd-badge { margin-right: 4px; }
 .toast.error { border-color: var(--danger); color: #ffd9e0; }
 
 /* Scrollbars */
-html, body, .sidebar, .sidebar-scroll, .segment-scroll, .usulan-browse-list, .usulan-combo-panel, .maplayer-combo-panel, .maplayer-list, .chat-messages {
+html, body, .sidebar, .sidebar-scroll, .segment-scroll, .usulan-browse-list, .usulan-combo-panel, .chat-messages {
   scrollbar-width: none; /* Firefox */
   -ms-overflow-style: none; /* IE/Edge legacy */
 }
-html::-webkit-scrollbar, body::-webkit-scrollbar, .sidebar::-webkit-scrollbar, .sidebar-scroll::-webkit-scrollbar, .segment-scroll::-webkit-scrollbar, .usulan-browse-list::-webkit-scrollbar, .usulan-combo-panel::-webkit-scrollbar, .maplayer-combo-panel::-webkit-scrollbar, .maplayer-list::-webkit-scrollbar, .chat-messages::-webkit-scrollbar { display: none; width: 0; }
+html::-webkit-scrollbar, body::-webkit-scrollbar, .sidebar::-webkit-scrollbar, .sidebar-scroll::-webkit-scrollbar, .segment-scroll::-webkit-scrollbar, .usulan-browse-list::-webkit-scrollbar, .usulan-combo-panel::-webkit-scrollbar, .chat-messages::-webkit-scrollbar { display: none; width: 0; }
+/* .maplayer-combo-panel & .maplayer-list SENGAJA dikeluarkan dari grup
+   sembunyi di atas -- dropdown/list layer overlay peta bisa panjang
+   (puluhan kabupaten/layer), scrollbar tema (gradient primary->accent)
+   dipakai supaya user tahu list-nya
+   bisa di-scroll, bukan disembunyikan spt scroll area lain. Lihat rule
+   .maplayer-combo-panel::-webkit-scrollbar di atas (baris ~425). */
 
 /* Responsive */
 @media (max-width: 900px) {

@@ -18,11 +18,13 @@ import os
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.encoders import jsonable_encoder
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.middleware.gzip import GZipMiddleware
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 import geopandas as gpd
+import pandas as pd
 from pyproj import Geod
 import shapely.wkt
 from shapely.geometry import LineString, Point, mapping
@@ -59,6 +61,12 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+# Kompresi respons (GeoJSON layer peta bisa ~10MB mentah, mis. Jalan
+# Nasional -- teks JSON terstruktur/berulang biasanya kompres 70-90%,
+# jauh lebih terasa di intranet/LAN drpd naikkan CPU sedikit di server).
+# minimum_size supaya respons kecil (mis. endpoint status) tidak ikut
+# kena overhead gzip yang tak sepadan.
+app.add_middleware(GZipMiddleware, minimum_size=1000)
 
 
 class Segment(BaseModel):
@@ -1058,6 +1066,13 @@ def _ijd_score_rc(row: dict, rules: dict, ctx: dict = None) -> dict:
     }
 
 
+# bucket_ip raster (scripts/import_indeks_penanaman_raster.py, cuma 3 nilai
+# krn raster sumbernya cuma 3 kelas tanam) -> sub_kode ijd_scoring_rules.
+_A2IP_RASTER_BUCKET_TO_SUB = {
+    "100-150": "A2IP_100_150", "150-199": "A2IP_150_200", "GT300": "A2IP_GT300",
+}
+
+
 def _ijd_score_kemanfaatan(row: dict, rules: dict, ctx: dict = None) -> dict:
     """Parameter C kaidah 2026 — sub A1 (kepadatan penduduk kecamatan, bobot
     35%) + A2 produktivitas padi kabupaten (proksi "Produktivitas Ton/Ha",
@@ -1149,32 +1164,59 @@ def _ijd_score_kemanfaatan(row: dict, rules: dict, ctx: dict = None) -> dict:
 
     if any(k.startswith("A2IP_") for k in rule["subs"]):
         kode_kab = kode_kec // 1000
-        ip = (ctx["indeks_penanaman_by_kab"].get(kode_kab) if ctx and "indeks_penanaman_by_kab" in ctx
-              else None)
-        if ip is None and not (ctx and "indeks_penanaman_by_kab" in ctx):
+        # Sumber PRIMER (21 Jul 2026): raster resmi Dit. SDA (Maps/IP2019-2024,
+        # zonal statistics per kabupaten, scripts/import_indeks_penanaman_raster.py)
+        # -- diutamakan drpd sumber SEKUNDER (Kertas Kerja.xlsx, "DATA SEKUNDER"
+        # per label sumbernya sendiri). Raster cuma py 3 kelas kasar (bucket_ip
+        # 100-150/150-199/GT300, lihat KELAS_TO_BUCKET di importer), fallback
+        # ke Kertas Kerja (skala % kontinu, 5 bucket) kalau kabupaten ybs tak
+        # tercakup raster.
+        raster_bucket = (ctx["ip_raster_by_kab"].get(kode_kab) if ctx and "ip_raster_by_kab" in ctx
+                          else None)
+        if raster_bucket is None and not (ctx and "ip_raster_by_kab" in ctx):
             with db_cursor() as cur:
                 cur.execute(
-                    "SELECT indeks_penanaman_pct FROM bps_kabupaten_indeks_penanaman "
+                    "SELECT bucket_ip FROM bps_kabupaten_indeks_penanaman_raster "
                     "WHERE kode_kab = %s ORDER BY tahun DESC LIMIT 1",
                     (f"{kode_kab:04d}",),
                 )
                 r = cur.fetchone()
-                ip = float(r["indeks_penanaman_pct"]) if r and r["indeks_penanaman_pct"] is not None else None
-        if ip is not None:
-            if ip > 300:
-                sub_ip = rule["subs"]["A2IP_GT300"]
-            elif ip >= 200:
-                sub_ip = rule["subs"]["A2IP_200_300"]
-            elif ip >= 150:
-                sub_ip = rule["subs"]["A2IP_150_200"]
-            elif ip >= 100:
-                sub_ip = rule["subs"]["A2IP_100_150"]
-            else:
-                sub_ip = rule["subs"]["A2IP_LT100"]
+                raster_bucket = r["bucket_ip"] if r else None
+        sub_ip = None
+        if raster_bucket:
+            sub_ip = rule["subs"].get(_A2IP_RASTER_BUCKET_TO_SUB.get(raster_bucket, ""))
+            if sub_ip:
+                detail.append(f"{sub_ip['label']} (raster resmi Dit. SDA, kelas tanam kabupaten dominan)")
+
+        if not sub_ip:
+            ip = (ctx["indeks_penanaman_by_kab"].get(kode_kab) if ctx and "indeks_penanaman_by_kab" in ctx
+                  else None)
+            if ip is None and not (ctx and "indeks_penanaman_by_kab" in ctx):
+                with db_cursor() as cur:
+                    cur.execute(
+                        "SELECT indeks_penanaman_pct FROM bps_kabupaten_indeks_penanaman "
+                        "WHERE kode_kab = %s ORDER BY tahun DESC LIMIT 1",
+                        (f"{kode_kab:04d}",),
+                    )
+                    r = cur.fetchone()
+                    ip = float(r["indeks_penanaman_pct"]) if r and r["indeks_penanaman_pct"] is not None else None
+            if ip is not None:
+                if ip > 300:
+                    sub_ip = rule["subs"]["A2IP_GT300"]
+                elif ip >= 200:
+                    sub_ip = rule["subs"]["A2IP_200_300"]
+                elif ip >= 150:
+                    sub_ip = rule["subs"]["A2IP_150_200"]
+                elif ip >= 100:
+                    sub_ip = rule["subs"]["A2IP_100_150"]
+                else:
+                    sub_ip = rule["subs"]["A2IP_LT100"]
+                detail.append(f"{sub_ip['label']} (indeks penanaman kab. {ip:.0f}%, Kertas Kerja.xlsx — sumber sekunder)")
+
+        if sub_ip:
             nilai += sub_ip["nilai"]
-            detail.append(f"{sub_ip['label']} (indeks penanaman kab. {ip:.0f}%, proksi kabupaten)")
         else:
-            detail.append("A2: indeks penanaman kabupaten belum tersedia (Kertas Kerja.xlsx tak mencakup kab. ini)")
+            detail.append("A2: indeks penanaman kabupaten belum tersedia (raster & Kertas Kerja.xlsx tak mencakup kab. ini)")
         detail.append("Luas Lahan (sub A2) belum tersedia.")
     else:
         detail.append("Indeks Penanaman (A2) belum tersedia.")
@@ -1540,6 +1582,20 @@ def _ijd_score_bulk_rows(provinsi: str, tahun: int):
             for r in cur.fetchall():
                 indeks_penanaman_by_kab.setdefault(int(r["kode_kab"]), float(r["indeks_penanaman_pct"]))  # tahun terbaru menang
 
+    # Indeks Penanaman kabupaten — sumber PRIMER (raster resmi Dit. SDA,
+    # lihat _A2IP_RASTER_BUCKET_TO_SUB); indeks_penanaman_by_kab di atas
+    # (Kertas Kerja.xlsx) jadi fallback SEKUNDER kalau kabupaten tak tercakup.
+    ip_raster_by_kab = {}
+    if kode_kab_set:
+        with db_cursor() as cur:
+            cur.execute(
+                "SELECT kode_kab, bucket_ip FROM bps_kabupaten_indeks_penanaman_raster "
+                "WHERE kode_kab IN %s ORDER BY tahun DESC",
+                (tuple(kode_kab_set),),
+            )
+            for r in cur.fetchall():
+                ip_raster_by_kab.setdefault(int(r["kode_kab"]), r["bucket_ip"])
+
     # kepadatan_by_kec juga menyimpan kolom potensi_* (satu query, satu tabel
     # sumber) — dipakai ulang sebagai ctx["potensi_by_kec"] utk A3.
     ctx = {"kab_by_wilayah": kab_by_wilayah, "kawasan_by_kab": kawasan_by_kab,
@@ -1548,6 +1604,7 @@ def _ijd_score_bulk_rows(provinsi: str, tahun: int):
            "bappenas_lokus_by_kab": bappenas_lokus_by_kab, "bappenas_lokus_by_prov": bappenas_lokus_by_prov,
            "kemantapan_kab_set": kemantapan_kab_set,
            "produktivitas_padi_by_kab": produktivitas_padi_by_kab,
+           "ip_raster_by_kab": ip_raster_by_kab,
            "kendaraan_per_km_by_kab": kendaraan_per_km_by_kab,
            "indeks_penanaman_by_kab": indeks_penanaman_by_kab}
     hasil = [(row, _compute_ijd_score(row, tahun, rules, ctx)) for row in rows]
@@ -2438,6 +2495,7 @@ LAPORAN_ASPEK_B = [
     ("KI_DIRGANTARA", "Konektivitas KI/KEK - KI Dirgantara"),
     ("KEMANTAPAN_JALAN", "Kemantapan Jalan (IJD)"),
     ("JUMLAH_KENDARAAN", "Jumlah Kendaraan (Dalam Angka)"),
+    ("JARINGAN_JALAN", "Konektivitas Jaringan Jalan (Data Terpetakan)"),
     ("SIMPUL_TRANSPORTASI", "Konektivitas Simpul Transportasi (Pelabuhan)"),
 ]
 
@@ -2555,6 +2613,31 @@ def _laporan_prioritas_kabupaten(kode_provinsi: int = 0) -> dict:
             "WHERE kode_kabupaten IN %s", (kode_kab_set,),
         )
         simpul_transportasi_set = {r["kode_kabupaten"] for r in cur.fetchall()}
+        # Konektivitas Jaringan Jalan -- 2 sumber digabung (kabupaten "ada"
+        # kalau SALAH SATU true; baris cuma pernah di-INSERT dgn minimal 1
+        # flag=1, jadi row existence saja sudah cukup): jalan daerah
+        # terpetakan (scripts/import_konektivitas_jalan.py) ATAU dilewati
+        # jalan nasional (scripts/import_jalan_nasional.py, 21 Jul 2026).
+        cur.execute(
+            "SELECT kode_kabupaten FROM konektivitas_jaringan_jalan WHERE kode_kabupaten IN %s",
+            (kode_kab_set,),
+        )
+        jaringan_jalan_set = {r["kode_kabupaten"] for r in cur.fetchall()}
+        # Sinyal KETIGA (terkuat) -- validasi spasial NYATA: usulan yg
+        # jalurnya (KML ter-cache) beneran berada dlm 100m dari ruas Jalan
+        # Nasional/Provinsi/Tol (scripts/spatial_konektivitas_jalan.py, 21
+        # Jul 2026, request eksplisit user), BEDA dari 2 sinyal administratif
+        # di atas ("kabupaten punya data jalan terpetakan/dilewati" -- itu
+        # cuma soal ADA-TIDAKNYA data, ini soal jalur usulan itu SENDIRI
+        # nyata berdekatan). Kabupaten "ada" kalau SALAH SATU dari 3 sinyal
+        # ini true (union, sama pola dgn 2 sinyal sebelumnya).
+        cur.execute(
+            "SELECT DISTINCT kk.kode_kecamatan DIV 1000 AS kode_kabupaten "
+            "FROM usulan_konektivitas_jalan kk WHERE kk.terhubung = 1 "
+            "AND kk.kode_kecamatan IS NOT NULL",
+        )
+        spasial_jalan_set = {r["kode_kabupaten"] for r in cur.fetchall() if r["kode_kabupaten"] in kode_kab_set}
+        jaringan_jalan_set |= spasial_jalan_set
     lbs_set = {int(r["kode_kab"]) for r in ip_rows if r["lahan_baku_sawah_ha"] is not None}
     ip_set = {int(r["kode_kab"]) for r in ip_rows if r["indeks_penanaman_pct"] is not None}
 
@@ -2577,6 +2660,8 @@ def _laporan_prioritas_kabupaten(kode_provinsi: int = 0) -> dict:
             return kode_kab in produksi_perikanan_set
         if kode_kriteria == "SIMPUL_TRANSPORTASI":
             return kode_kab in simpul_transportasi_set
+        if kode_kriteria == "JARINGAN_JALAN":
+            return kode_kab in jaringan_jalan_set
         if kode_kriteria == "LBS":
             return kode_kab in lbs_set
         if kode_kriteria == "IP":
@@ -2634,7 +2719,7 @@ _LAPORAN_GROUP_B = [
     [],  # Tata Guna Lahan -- belum ada sumber (Bappenas: status "Konfirm")
     ["LBS"], ["IP"],
     ["KI_PSN_IUKI", "KI_PRIO_RPJMN", "KI_HILIRISASI", "KI_DIRGANTARA"],
-    [],  # Konektivitas Jaringan Jalan -- SHP ada (Maps/JALAN) tapi belum di-spatial-join per kabupaten
+    ["JARINGAN_JALAN"],  # Konektivitas Jaringan Jalan -- SELESAI (proksi data-tersedia) 21 Jul
     ["SIMPUL_TRANSPORTASI"],  # Konektivitas Simpul Transportasi -- SELESAI (parsial) 21 Jul, 2/4 layer
     ["KEMANTAPAN_JALAN"], ["JUMLAH_KENDARAAN"],
     [],  # KP2B/LP2B -- belum ada sumber (Kementan: status "tanya")
@@ -3819,11 +3904,20 @@ def maps_layers(provinsi: str, kabupaten: str = ""):
     return layers
 
 
+# Layer peta (SHP) statis selama proses server jalan -- cuma berubah kalau
+# file di Maps/ diganti + server di-restart (perilaku yang sudah
+# terdokumentasi, lihat CLAUDE.md). Aman dikasih Cache-Control lumayan
+# panjang supaya klien intranet tidak perlu unduh ulang payload besar (mis.
+# Jalan Nasional ~10MB) tiap buka halaman/pindah tab -- cuma sekali per jam
+# per browser, bukan tiap request.
+_MAP_LAYER_CACHE_HEADERS = {"Cache-Control": "public, max-age=3600"}
+
+
 @app.get("/api/maps/layer")
 def maps_layer(provinsi: str, layer: str, kabupaten: str = ""):
     key = (provinsi, kabupaten, layer)
     if key in _map_layer_geojson_cache:
-        return _map_layer_geojson_cache[key]
+        return JSONResponse(content=_map_layer_geojson_cache[key], headers=_MAP_LAYER_CACHE_HEADERS)
 
     if provinsi == BATAS_KEC_DIRNAME and layer.startswith("BATASKEC__"):
         try:
@@ -3832,7 +3926,7 @@ def maps_layer(provinsi: str, layer: str, kabupaten: str = ""):
             raise HTTPException(400, "Layer batas kecamatan tidak valid")
         geojson = _batas_kec_layer_geojson(prov, kab)
         _map_layer_geojson_cache[key] = geojson
-        return geojson
+        return JSONResponse(content=geojson, headers=_MAP_LAYER_CACHE_HEADERS)
 
     kabupaten_dir = _resolve_kabupaten_dir(provinsi, kabupaten)
     shp_path = _resolve_map_layer(kabupaten_dir, layer)
@@ -3841,6 +3935,23 @@ def maps_layer(provinsi: str, layer: str, kabupaten: str = ""):
     if gdf.crs and gdf.crs.to_epsg() != 4326:
         gdf = gdf.to_crs(epsg=4326)
     gdf = gdf[gdf.geometry.notna() & ~gdf.geometry.is_empty]
+
+    # Maps/JALAN NASIONAL sumbernya "Measured 3D LineString" -- pyogrio
+    # membacanya sbg LineString Z dgn Z=0 semu (bukan elevasi asli). Koordinat
+    # 3D [lng,lat,0.0] beresiko bikin google.maps.Data.addGeoJson() di
+    # browser gagal render diam-diam (frontend/maps-overlay.js pakai
+    # addGeoJson bawaan, tidak nulis parser sendiri) -- dipipihkan ke 2D.
+    if gdf.geometry.has_z.any():
+        gdf["geometry"] = shapely.force_2d(gdf.geometry.values)
+
+    # Kolom tanggal (mis. Maps/JALAN NASIONAL: FROMDATE/TODATE/START_DATE/
+    # END_DATE) dibaca pyogrio sbg pandas Timestamp -- gdf.to_json() TypeError
+    # "Object of type Timestamp is not JSON serializable" (layer manapun yg
+    # punya kolom tanggal akan gagal dibuka, bukan cuma Jalan Nasional).
+    # Diubah ke string dulu (kolom atribut popup saja, bukan geometri).
+    for col in gdf.columns:
+        if col != "geometry" and pd.api.types.is_datetime64_any_dtype(gdf[col]):
+            gdf[col] = gdf[col].astype(str).replace("NaT", None)
 
     # Heavy layers (e.g. KONTUR, tens of MB of contour lines) are simplified
     # so the browser doesn't choke on rendering; tolerance is in degrees
@@ -3851,7 +3962,7 @@ def maps_layer(provinsi: str, layer: str, kabupaten: str = ""):
     geojson = json.loads(gdf.to_json())
     geojson["label"] = _map_layer_label(layer)
     _map_layer_geojson_cache[key] = geojson
-    return geojson
+    return JSONResponse(content=geojson, headers=_MAP_LAYER_CACHE_HEADERS)
 
 
 def _fetch_usulan_geometry(usulan_id: int) -> dict:

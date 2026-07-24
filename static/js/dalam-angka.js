@@ -98,10 +98,15 @@ function bindDalamAngka() {
     if (!btn) return;
     btn.disabled = true;
     try {
-      const { url, judul } = await dalamAngkaResolveUrl(btn);
       if (btn.dataset.action === "preview") {
-        openPdfPreviewModal(url, judul || btn.dataset.judul);
+        // Proxy lewat backend (bukan link BPS mentah) -- iframe cross-origin
+        // langsung ke webapi.bps.go.id kena WAF anti-bot-nya secara tidak
+        // konsisten, lihat _BPS_DOWNLOAD_UA/dalam_angka_pdf() di app.py.
+        const { kode, jenis, tahun, judul } = btn.dataset;
+        const params = new URLSearchParams({ kode_wilayah: kode, jenis_wilayah: jenis, tahun });
+        openPdfPreviewModal(`/api/dalam-angka/pdf?${params.toString()}`, judul);
       } else {
+        const { url } = await dalamAngkaResolveUrl(btn);
         window.open(url, "_blank", "noopener");
       }
     } catch (err) {

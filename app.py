@@ -6064,6 +6064,44 @@ def dalam_angka_preview(kode_wilayah: int, jenis_wilayah: str, tahun: int):
     return {"judul": row["judul"], "url": url}
 
 
+# User-Agent "browser-like" wajib -- webapi.bps.go.id/download.php ada di
+# belakang WAF anti-bot (cookie sesi "TS...", pola khas Imperva/F5 ASM) yang
+# menolak (403, atau malah hang/timeout tanpa respons) request dgn UA default
+# requests/curl, tapi meloloskan UA browser biasa -- dikonfirmasi manual 24
+# Jul 2026 (curl UA default -> 403 instan; UA "Mozilla/5.0" -> 200 + PDF).
+_BPS_DOWNLOAD_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"
+
+
+@app.get("/api/dalam-angka/pdf")
+def dalam_angka_pdf(kode_wilayah: int, jenis_wilayah: str, tahun: int):
+    """Proxy PDF "Dalam Angka" lewat backend (bukan iframe langsung ke
+    webapi.bps.go.id) -- iframe cross-origin ke link BPS kena WAF anti-bot
+    tsb secara tidak konsisten (kadang lolos kadang tidak, tergantung
+    Referer/fingerprint browser saat itu terhadap WAF-nya, di luar kendali
+    kita); server-side fetch dgn _BPS_DOWNLOAD_UA sudah terbukti selalu
+    lolos, jadi klien cukup embed URL same-origin ini, tidak pernah bicara
+    langsung ke BPS. Lihat static/js/utils.js openPdfPreviewModal()."""
+    jenis_wilayah = jenis_wilayah.upper()
+    with db_cursor() as cur:
+        cur.execute(
+            "SELECT pub_id, url_publikasi FROM dalam_angka_publikasi "
+            "WHERE kode_wilayah = %s AND jenis_wilayah = %s AND tahun = %s",
+            (kode_wilayah, jenis_wilayah, tahun),
+        )
+        row = cur.fetchone()
+    if not row:
+        raise HTTPException(404, "Publikasi tidak ditemukan")
+
+    domain_code = _dalam_angka_domain_code(kode_wilayah, jenis_wilayah)
+    url = _dalam_angka_fresh_url(row["pub_id"], domain_code) or row["url_publikasi"]
+    try:
+        r = requests.get(url, headers={"User-Agent": _BPS_DOWNLOAD_UA}, timeout=30, stream=True)
+        r.raise_for_status()
+    except requests.RequestException as e:
+        raise HTTPException(502, f"Gagal mengambil PDF dari BPS: {e}")
+    return StreamingResponse(r.iter_content(chunk_size=65536), media_type="application/pdf")
+
+
 @app.get("/api/usulan-inpres/{usulan_id}/export/shp")
 def usulan_inpres_export_shp(usulan_id: int):
     geojson = _fetch_usulan_geometry(usulan_id)

@@ -1,4 +1,4 @@
-/* RouteGIS — penampil isi tabel database (tombol "Data" di topbar).
+/* The Next - SiJalan — penampil isi tabel database (tombol "Data" di topbar).
    Tidak bergantung pada Google Maps: di-bind langsung saat DOM siap. */
 
 const dataViewer = {
@@ -34,7 +34,9 @@ async function dataViewerToggleMenu() {
     const tables = await dataViewerLoadTables();
     // bappenas_lokus_a punya entry point sendiri sekarang (tombol navbar
     // "Lokus Bappenas") -- tidak perlu dobel muncul di menu "Data" generik.
-    menu.innerHTML = tables.filter((t) => t.name !== "bappenas_lokus_a").map((t) =>
+    menu.innerHTML = tables.filter((t) => t.name !== "bappenas_lokus_a")
+      .slice().sort((a, b) => a.label.localeCompare(b.label, "id"))
+      .map((t) =>
       `<button type="button" class="datatable-menu-item" data-table="${t.name}">
          <span>${t.label}</span>
          <span class="datatable-menu-count">${t.total.toLocaleString("id-ID")}</span>

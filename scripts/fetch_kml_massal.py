@@ -17,10 +17,12 @@ import argparse
 import io
 import json
 import sys
+import time
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
+import psycopg
 import requests
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -28,6 +30,44 @@ if sys.stdout.encoding and sys.stdout.encoding.lower() != "utf-8":
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
 
 from app import _parse_usulan_geometry, db_cursor  # noqa: E402
+
+
+def _flush_retry(sql: str, batch: list, percobaan: int = 3):
+    """executemany dgn retry, fallback ke SATU-PER-SATU kalau batch tetap
+    gagal -- ditemukan 21 Jul 2026: kegagalan "MySQL server has gone away
+    (SSLEOFError)" TERNYATA bisa konsisten (gagal ulang di batch yang SAMA
+    walau sudah retry pakai koneksi baru tiap percobaan), bukan cuma
+    gangguan transien -- indikasi ada 1 baris "beracun" (payload sangat
+    besar/karakter aneh dari KML sumber) yang bikin koneksi putus tiap kali
+    batch itu dikirim. Fallback per-baris mengisolasi baris spesifik yang
+    gagal (dicatat, DILEWATI -- bukan bikin seluruh proses berhenti),
+    baris lain dalam batch yang sama tetap tersimpan."""
+    for percobaan_ke in range(1, percobaan + 1):
+        try:
+            with db_cursor() as cur:
+                cur.executemany(sql, batch)
+            return
+        except psycopg.OperationalError as e:
+            if percobaan_ke == percobaan:
+                print(f"  WARNING: batch {len(batch)} baris gagal {percobaan}x ({e}) -- "
+                      f"fallback satu-per-satu...", flush=True)
+                break
+            print(f"  WARNING: flush gagal ({e}), percobaan {percobaan_ke}/{percobaan}, "
+                  f"tunggu {percobaan_ke * 2}s lalu ulang...", flush=True)
+            time.sleep(percobaan_ke * 2)
+
+    gagal_baris = []
+    for row in batch:
+        try:
+            with db_cursor() as cur:
+                cur.execute(sql, row)
+        except psycopg.OperationalError as e:
+            gagal_baris.append((row, e))
+    if gagal_baris:
+        for row, e in gagal_baris:
+            usulan_id = row[-1]  # konvensi: id selalu parameter terakhir di sql caller
+            ukuran = len(row[0]) if isinstance(row[0], str) else "?"
+            print(f"    SKIP usulan {usulan_id} (payload {ukuran} bytes): {e}", flush=True)
 
 
 def fetch_one(session: requests.Session, usulan_id: int, url: str):
@@ -72,31 +112,46 @@ def main():
         futures = {pool.submit(fetch_one, session, r["id"], r["kml_original_url"]): r["id"] for r in antrian}
         selesai = 0
         batch = []
+        # Flush per BATAS UKURAN (bukan cuma jumlah baris) -- sebagian
+        # geometri KML usulan bisa sampai >2MB (rute self-intersecting/
+        # kompleks, lihat docs/kajian_overlay_kecamatan_simpul_jalan.md),
+        # jadi batch 50 baris polos bisa gampang lewat max_allowed_packet
+        # MySQL (default 16MB) kalau beberapa geometri besar kebetulan
+        # kebagian batch yang sama -- gagal dgn gejala cryptic "MySQL
+        # server has gone away (SSLEOFError)", ditemukan & diperbaiki
+        # 21 Jul 2026 stlh 2x crash di run nasional. Ambang 4MB (jauh di
+        # bawah 16MB) + maks 50 baris, mana yg lebih dulu tercapai.
+        batch_bytes = 0
+        BATCH_MAKS_BARIS = 50
+        BATCH_MAKS_BYTES = 4_000_000
+
+        def _flush(batch):
+            if not batch:
+                return
+            _flush_retry(
+                "UPDATE usulan_inpres SET geom_geojson = %s, geom_fetched_at = NOW() WHERE id = %s",
+                batch,
+            )
+            batch.clear()
+
         for fut in as_completed(futures):
             usulan_id, geojson, alasan = fut.result()
             selesai += 1
             if geojson:
-                batch.append((json.dumps(geojson, ensure_ascii=False), usulan_id))
+                payload = json.dumps(geojson, ensure_ascii=False)
+                batch.append((payload, usulan_id))
+                batch_bytes += len(payload)
                 ok += 1
             else:
                 gagal[alasan] += 1
                 gagal_ids.append((usulan_id, alasan))
-            if len(batch) >= 50:
-                with db_cursor() as cur:
-                    cur.executemany(
-                        "UPDATE usulan_inpres SET geom_geojson = %s, geom_fetched_at = NOW() WHERE id = %s",
-                        batch,
-                    )
-                batch.clear()
+            if len(batch) >= BATCH_MAKS_BARIS or batch_bytes >= BATCH_MAKS_BYTES:
+                _flush(batch)
+                batch_bytes = 0
             if selesai % 200 == 0:
                 print(f"  ...{selesai}/{len(antrian)} (ok={ok}, gagal={sum(gagal.values())})")
 
-    if batch:
-        with db_cursor() as cur:
-            cur.executemany(
-                "UPDATE usulan_inpres SET geom_geojson = %s, geom_fetched_at = NOW() WHERE id = %s",
-                batch,
-            )
+    _flush(batch)
 
     with db_cursor() as cur:
         cur.execute("SELECT COUNT(*) n FROM usulan_inpres WHERE geom_geojson IS NOT NULL")

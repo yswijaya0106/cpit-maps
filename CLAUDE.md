@@ -2,7 +2,7 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-# analytic-maps (RouteGIS)
+# analytic-maps (The Next - SiJalan)
 
 FastAPI backend + vanilla JS frontend. Route planning on Google Maps, route
 analysis, export to GIS formats, browsing/scoring of Inpres Jalan Daerah (IJD)
@@ -13,7 +13,12 @@ This file covers the file map and run instructions. For design rationale
 and reusable patterns, see `docs/ARCHITECTURE.md`; for change recipes, see
 `CONTRIBUTING.md`; for hard-won gotchas, see `docs/MEMORY.md`; for adding an
 IJD scoring parameter specifically, use the `ijd-scoring-parameter` skill
-(`.claude/skills/`).
+(`.claude/skills/`). For the known fairness/data-quality trade-offs of the
+scoring methodology itself (not implementation bugs), see
+`docs/analisis_keadilan_kemanfaatan_skoring.md` before "fixing" something
+that's actually a documented, deliberate trade-off. `docs/verifikasi_*.md`
+are manual hand-computed verifications of specific usulan against the DB —
+the pattern to follow when asked to re-verify a score end-to-end.
 
 ## Run
 
@@ -30,9 +35,18 @@ Requires `.env` (copy from `.env.example`):
 - `GOOGLE_MAPS_API_KEY` — mandatory. `/api/config` returns 500 without it,
   which breaks the whole frontend (the Maps JS SDK is loaded dynamically via
   that endpoint, see static/index.html).
-- `MYSQL_HOST/PORT/USER/PASS/DB` — MySQL connection (default db `route_gis`).
-  Usulan-Inpres browsing, IJD scoring, the Data viewer, and chat DB tools all
-  need it; route planning/export works without it.
+- `APP_USERNAME`/`APP_PASSWORD` — optional HTTP Basic Auth gate in front of
+  the entire app (static files + every `/api/*` route), enforced by the
+  `basic_auth_middleware` in app.py. Leave both blank to disable (default
+  dev flow, no login prompt); set both to require a browser login dialog —
+  useful for an internet-facing staging box.
+- `PG_HOST/PORT/USER/PASS/DB` — PostgreSQL connection (default db
+  `route_gis`). Usulan-Inpres browsing, IJD scoring, the Data viewer, chat
+  DB tools, and the `Maps/` overlay layers (`map_layers`/`map_layer_meta`)
+  all need it; route planning/export works without it. Migrated from MySQL
+  24 Jul 2026 (see `docs/migrasi_mysql_ke_postgresql.md`) — `MYSQL_*` vars
+  are legacy/unused, kept in `.env` only as a fallback pointer to the old
+  MySQL instance during the post-migration grace period.
 - Chat provider keys, all optional: `GROQ_API_KEY`, `GROK_API_KEY`,
   `OPEN_AI_API_KEY`, `CLOUDE_API_KEY` (Anthropic — yes, spelled with OU;
   don't "fix" the name without migrating existing `.env` files),
@@ -42,17 +56,25 @@ Requires `.env` (copy from `.env.example`):
 
 Deps: `requirements.txt`, venv at `.venv/` (already gitignored).
 
-## Architecture (single-file backend + MySQL, no ORM)
+## Architecture (single-file backend + PostgreSQL, no ORM)
 
-- [app.py](app.py) — entire backend (~3500 lines). FastAPI app, all routes,
+- [app.py](app.py) — entire backend. FastAPI app, all routes,
   all GIS logic, IJD scoring, chat providers. No other backend modules exist;
   don't go looking for a `routers/` or `services/` dir.
-- Database: MySQL via `pymysql`, raw parameterized SQL through the
-  `db_cursor()` contextmanager in app.py. Schemas live as plain SQL files in
-  [scripts/](scripts/) (`schema_*.sql`); tables are populated by the import/
+- Database: PostgreSQL via `psycopg` (v3), raw parameterized SQL through the
+  `db_cursor()` contextmanager in [db.py](db.py) — `%s` placeholders (same
+  as the old MySQL driver, unchanged). Schemas live in PostgreSQL itself
+  (created by `scripts/migrate_pg_01_schema.py`, introspected from the old
+  MySQL schema); the `scripts/schema_*.sql` files under
+  [scripts/](scripts/) are now historical column documentation only — not
+  executed by any live code path. Tables are populated by the import/
   extract scripts there, not by the app (exception: the app upserts via
   `/api/usulan-inpres/import` and caches fetched KML into
-  `usulan_inpres.geom_geojson`).
+  `usulan_inpres.geom_geojson`). Migrated from MySQL 24 Jul 2026 — see
+  `docs/migrasi_mysql_ke_postgresql.md` for the conversion checklist and
+  MySQL-idiom rewrites (`ON DUPLICATE KEY UPDATE`→`ON CONFLICT`, `IN %s`
+  tuple-expansion→`= ANY(%s)`+list, `DIV`→`/`, etc.) — useful context if a
+  script still shows MySQL-flavored SQL in a comment/docstring.
 - [static/index.html](static/index.html) — one page, no build step, no framework.
 - [static/js/](static/js/) — frontend logic, split into plain `<script>` files
   (no bundler, no ES modules) loaded in dependency order from index.html:
@@ -101,12 +123,70 @@ Deps: `requirements.txt`, venv at `.venv/` (already gitignored).
   year, not a hardcoded A-F loop — this is why F (present in 2025) cleanly
   disappears in 2026 instead of showing as "belum tersedia". 2026 computes
   A (A1 tematik + A2 konektivitas + A3 kawasan tematik via `kawasan_tematik`
-  + A4 data dukung), B, C (A1 kepadatan only, via `kecamatan_data_turunan`
-  + `usulan_inpres.kode_kecamatan`), D, and E; F was removed from the 2026
-  policy. Every component that lacks a data source reports
-  `"tersedia": false` with a specific reason instead of contributing 0 —
-  `skor_ternormalisasi_100` is normalized against `bobot_tersedia`, not 100.
+  (kabupaten-level, works without `kode_kecamatan`) **and**
+  `kecamatan_data_turunan.potensi_*` (kecamatan-level, needs
+  `usulan_inpres.kode_kecamatan` — silently falls back to the kabupaten-level
+  match alone when it's NULL, which lowers A3/A without marking A
+  `"tersedia": false`) + A4 data dukung), B, C, D, and E; F was removed
+  from the 2026 policy. **C (`_ijd_score_kemanfaatan`) is 3 independently-
+  gated subs, not all-or-nothing** (changed 2026-07-22): A1 Kepadatan
+  (35%) prefers kecamatan-level `kecamatan_data_turunan` via
+  `usulan_inpres.kode_kecamatan`, and — **with explicit user sign-off,
+  not the default pattern for new sub-parameters** — falls back to a
+  labelled kabupaten-average proxy (`SUM(jumlah_penduduk) /
+  SUM(luas_km2_derived)` across `bps_kecamatan_demografi`, always tagged
+  "PROKSI kabupaten" in `keterangan` since it's not literal policy-doc
+  wording, Table 4 is explicitly per-kecamatan for A1) when
+  `kode_kecamatan` is NULL; A2 Produktivitas/IP (23%,
+  `bps_kabupaten_padi` + `bps_kabupaten_indeks_penanaman`) and A3
+  Kendaraan/km (30%, `bps_kabupaten_kendaraan` ÷ `bps_kabupaten_jalan`)
+  are genuinely kabupaten-level and resolve `kode_kab` via the same
+  `kab_by_wilayah`/`wilayah_mapping` fallback as A3 above and NPR
+  (`_bappenas_kode_kab`) — no proxy caveat needed there, they're already
+  at the right granularity. C only reports `"tersedia": false` when
+  *none* of its subs resolved (nationally ~0.4% of usulan, vs. 100%
+  before the 2026-07-22/23 changes). Every
+  component that lacks a data source reports `"tersedia": false` with a
+  specific reason instead of contributing 0 — `skor_ternormalisasi_100`
+  is normalized against `bobot_tersedia`, not 100.
+  **`usulan_inpres.kode_kecamatan` / `lanjutan_ijd_2025` / `geom_geojson`
+  are NOT backfilled by the xlsx import** — they're set by
+  `spatial_join_kecamatan.py` (after `fetch_kml_massal.py`) and
+  `import_dpp_ijd_2025.py` respectively; if a fresh reimport of
+  `usulan_inpres` leaves those columns NULL nationally, rerun that
+  pipeline (see `docs/MEMORY.md` for the exact order and for the
+  `sitia.binamarga.pu.go.id` reachability gotcha that can block the
+  KML-fetch step) before treating a nationwide drop in A1/A3 (not C as a
+  whole anymore) as a scoring bug —
+  `docs/verifikasi_ijd_ciparay_cikumpay.md` and
+  `docs/verifikasi_npr_ciparay_cikumpay.md` both hit and document this
+  exact scenario (22 Jul 2026 re-validation).
   See `.claude/skills/ijd-scoring-parameter/` before touching this.
+  `GET /api/usulan-inpres/ijd-score/preview` / `.../export/xlsx`
+  (`_ijd_score_bulk_rows`) rank usulan nationally and per-provinsi via
+  `_ijd_ranking_sort_key()`: **complete-data usulan (`bobot_tersedia==100`)
+  always sort above partial ones**, score descending within each group —
+  without this, a usulan missing a whole parameter (e.g. C, because that
+  kabupaten's Dalam Angka book isn't imported yet) can normalize to a
+  higher score than a fully-scored usulan and wrongly rank #1. `provinsi`
+  is a repeatable query param (`?provinsi=A&provinsi=B`, multi-select in the
+  UI) normalized/cache-keyed by `_normalisasi_provinsi_multi()` — empty is
+  nasional, one or more names filter to those provinces (`WHERE provinsi IN
+  %s`). The export also carries a `Kelengkapan Data Skor Teknokratis` column
+  (which parameters, if any, are missing), a `Temuan Data Quality — Outlier
+  Produksi Kecamatan` column (`IJD_OUTLIER_PRODUKSI_AMBANG`: flags
+  `bps_kecamatan_potensi_tematik` production values that are implausibly
+  large — a known, still-unfixed `extract_dalam_angka.py` parser bug, see
+  `docs/verifikasi_npr_ciparay_cikumpay.md` §3), and a `PENILAIAN PRIORITASI
+  USULAN NASIONAL` + `RANKING NASIONAL` column pair (the `skor-prioritas-
+  nasional` formula below, batched via `spn_by_id`/`spn_rank_by_score`
+  rather than queried per row — same reasoning as the teknokratis ctx
+  batching above).
+  `GET /api/usulan-inpres/ijd-score/dashboard` — KPI/top-10/komposisi
+  summary reusing `_ijd_score_bulk_rows`, behind the navbar "Dashboard Skor
+  IJD" button; scores by `skor_tertimbang` sum of available components, not
+  `skor_ternormalisasi_100`, deliberately (renormalizing would let a
+  sparse-but-lucky usulan outrank a fully-scored one nationally).
 - `GET /api/usulan-inpres/{id}/skor-prioritas-nasional` /
   `GET /api/prioritas-nasional` — national priority score (70% teknokratis +
   10% PU + 10% Bappenas + 10% Kemenko per the 14072026 document) and the
@@ -119,6 +199,17 @@ Deps: `requirements.txt`, venv at `.venv/` (already gitignored).
   only A5 Indeks Kemahalan Konstruksi still missing, no source found yet)
   and the two-layer allocation simulation on top of the national ranking.
   Both label themselves "perkiraan/parsial" — keep that.
+- `GET /api/usulan-inpres/{id}/npr` / `GET /api/usulan-inpres/npr/preview` /
+  `GET /api/usulan-inpres/npr/export/xlsx` —
+  NPR (Nilai Prioritas Ruas), an **alternative/experimental** scoring model
+  from `docs/kajian_metodologi_skala_prioritas_ruas.md`, not an official
+  policy and entirely separate from the IJD Prioritisasi Teknokratik A-E
+  score above. 70% Skor Intensitas (population + kuintil-nasional
+  perkebunan production) + 30% Skor Cakupan (6 kawasan-tematik/lokus/simpul
+  categories, reusing `kawasan_tematik`/`bappenas_lokus_a`/
+  `simpul_transportasi`). The `/preview` bulk endpoint must go through
+  `_npr_bulk_ctx()` to batch the per-row DB lookups instead of querying per
+  usulan — same pattern as `_ijd_score_bulk_rows`'s ctx.
 - `GET /api/bappenas-lokus-a/kriteria` / `POST .../import` — list the Aspek
   A Bappenas lokus criteria (`bappenas_lokus_a` table, ~13 kriteria: LOKPRI,
   PKPN, PKSN, KI Prioritas, BBM 1 Harga, KPP_DESA, etc.) with row counts,
@@ -128,11 +219,45 @@ Deps: `requirements.txt`, venv at `.venv/` (already gitignored).
   imports that module rather than duplicating the per-sheet regex/matching
   rules. Browsed via the navbar "Lokus Bappenas" button (separate from the
   generic "Data" viewer, `data-viewer.js` `dataViewerOpenLokusBappenas()`).
+- `GET /api/laporan-daerah-prioritas/{dashboard,distribusi,preview,
+  export/xlsx}` / `GET .../detail/{kode_kab}` — "Laporan Prioritas" navbar
+  button: per-kabupaten/kota (not per-usulan) aggregate of Aspek A (15
+  Bappenas lokus checklist criteria from `bappenas_lokus_a` +
+  `kawasan_tematik`, `LAPORAN_ASPEK_A`) + Aspek B (Daya Ungkit Ekonomi,
+  reworked 2026-07-21 to reuse NPR's Skor Intensitas/Skor Cakupan
+  0-100 scoring and its `_npr_kelas_cache` verbatim via
+  `LAPORAN_ASPEK_B`/`_LAPORAN_ASPEK_B_SI_SOURCE` so the two features stay
+  consistent from one source). The combined "total" (`_LAPORAN_MAKS_TOTAL`
+  = 15 + 100) sums two different scales as-is — a deliberate rough
+  Tinggi/Sedang/Rendah bucketing, not a normalized single score. `/export/xlsx`
+  follows the official `docs/docs/Laporan Prioritas.xlsx` column layout
+  exactly (`_laporan_export_template_cols`) and Aspek B is intentionally
+  dropped from that export (still shown in the UI Dashboard/Checklist tabs).
 - `GET`/`POST /api/usulan-inpres/{id}/penilaian-bappenas` — AI-generated
   draft of the Bappenas qualitative assessment (aspek A/B points + narrative,
   cached in `penilaian_bappenas_ai`). Uses `_llm_plain()` — the tool-less
   provider fallback chain. Always labelled as an AI draft in the UI; keep it
-  that way.
+  that way. Aspek A/B checklist scoring itself is rule-based (not LLM),
+  cached in `aspek_a_checklist`/`aspek_a_total_kriteria` and
+  `aspek_b_checklist`/`aspek_b_total_indikator` — the LLM only writes the
+  narrative prose (`aspek_b_narasi_ai`), fed by `_bappenas_fakta_pendukung()`
+  which assembles kecamatan/kabupaten BPS figures plus four dedicated fakta
+  helpers: `_kemantapan_ruas_fakta` (% tidak mantap = `(kondisi_ringan_km +
+  kondisi_berat_km) / panjang_ruas_km` — a different denominator than the
+  official IJD parameter B score, by explicit user request, clamped to
+  100%), `_konektivitas_jalan_fakta` (from `usulan_konektivitas_jalan`, the
+  same table NPR's "Konektivitas Jaringan Jalan" uses), `_simpul_transportasi_fakta`
+  (nearest airport/port + distance from `simpul_transportasi_kecamatan_radius`,
+  kecamatan-level with actual `jarak_km` — finer-grained than the kabupaten
+  ada/tidak used elsewhere), and `_kecamatan_dilalui_fakta` (every kecamatan
+  the route crosses via `usulan_kecamatan_dilalui`, not just the single
+  dominant `kode_kecamatan`, plus their combined population). Each helper
+  returns `None` when its source table has no row for that usulan, so the
+  prompt never fabricates a fact. `POST .../penilaian-bappenas/bulk` drives
+  this per-provinsi in small batches (`_PENILAIAN_BULK_BATCH = 5` — shrunk
+  repeatedly from 30 after audits found larger batches made the model skip
+  per-usulan checklist items; resume-able unless `force=true`), one LLM call
+  per request, frontend polls until `sisa=0`.
 - `GET /api/data/tables` / `GET /api/data/{table}` — read-only paged table
   viewer behind the topbar "Data" button. Only tables whitelisted in
   `DATA_TABLES` in app.py are exposed — add new tables there.
@@ -146,38 +271,59 @@ Deps: `requirements.txt`, venv at `.venv/` (already gitignored).
   SQL**. OpenAI additionally gets `web_search_preview`; the system prompt
   tells the model whether web search is available.
 - `GET /api/maps/provinces` / `GET /api/maps/kabupaten` / `GET /api/maps/layers`
-  / `GET /api/maps/layer` — drive the topbar reference-map overlay. Read
-  shapefiles from `Maps/<provinsi>/<kabupaten>/*.shp` (two levels — mirrors
-  the provinsi/kabupaten_kota split already used by usulan-inpres), each
-  kabupaten folder holding ~40 RBI-style thematic `.shp` layers.
-  `_map_layer_label` derives an Indonesian display name from the RBI code
-  prefix via `MAP_LAYER_LABELS` (extend that dict for new layer codes).
-  Geometry is simplified for layers with >3000 features (the 68MB
-  `KONTUR_LN_25K.shp` contour layer is why) and cached in-memory per
-  (provinsi, kabupaten, layer) in `_map_layer_geojson_cache` — restart the
-  server to pick up changed `.shp` files. `Maps/JALAN PROVINSI/` and
+  / `GET /api/maps/layer` — drive the topbar reference-map overlay. **As of
+  24 Jul 2026 these query PostGIS (`map_layers`/`map_layer_meta` tables,
+  `scripts/schema_map_layers_postgis.sql`), not the `Maps/` folder on disk**
+  — `Maps/` itself is untouched (still the source of truth, gitignored,
+  ~2.1GB) but is only read directly anymore by
+  `scripts/import_maps_to_postgis.py` and the older `scripts/spatial_join_*.py`
+  / `scripts/import_*.py` pipeline scripts that predate this migration
+  (`_resolve_map_dir`/`MAPS_DIR`/`_batas_kec_shp` in app.py stay file-based
+  on purpose, for those scripts' `from app import ...`). `map_layers` is one
+  generic table (`provinsi`, `kabupaten`, `layer`, `attrs JSONB`, `geom
+  geometry(Geometry,4326)`) rather than one table per layer, because every
+  RBI `.shp`'s attribute columns differ — app.py never depended on specific
+  column names anyway (`maps_layer()` just re-serializes `attrs` as GeoJSON
+  `properties`), so this changes nothing observable. `map_layer_meta` is a
+  fast provinsi/kabupaten/layer listing index (feature_count, size_mb,
+  source_shp) so `maps_provinces`/`maps_kabupaten`/`maps_layers` don't have
+  to scan the geometry table. `_map_layer_label` (now in `map_layer_labels.py`,
+  shared with the import script) derives an Indonesian display name from the
+  RBI code prefix via `MAP_LAYER_LABELS` (extend that dict for new layer
+  codes). Geometry is simplified server-side (`ST_SimplifyPreserveTopology`)
+  for layers with >3000 features (`feature_count` from `map_layer_meta`,
+  cheaper than a live count) and the assembled GeoJSON is cached in-memory
+  per (provinsi, kabupaten, layer) in `_map_layer_geojson_cache` — restart
+  the server to pick up a re-import. `Maps/JALAN PROVINSI/` and
   `Maps/JALAN TOL/` are flat (no kabupaten subfolder) national road layers —
-  `maps_kabupaten`'s existing `kabupaten=""` fallback handles those with no
-  special-case code; prefer flattening a new source to the plain
+  imported with `kabupaten=""`, same fallback `maps_kabupaten` already used
+  pre-migration; prefer flattening a new source to the plain
   provinsi/kabupaten shape over adding a special case (see `docs/MEMORY.md`
   §"Maps/ overlay").
   `Maps/BATAS KECAMATAN/` (national Dukcapil 2019 kecamatan-boundary SHP,
-  90MB, attribute = kecamatan name ONLY) is special-cased as a virtual
+  90MB, attribute = kecamatan name ONLY, imported as a single
+  `map_layers` layer, 6810 polygons) is special-cased as a virtual
   hierarchy in these same endpoints: the "kabupaten" dropdown lists
   provinces, layers are kabupaten (id `BATASKEC__<prov>__<kab>`), features
   carry KODE_KECAMATAN matched by name against `penduduk_kecamatan`
   (exact → space-collapsed → numeral-equalized SATU↔I↔1; ~96% polygon
   coverage; homonym multipolygons are trimmed to parts adjacent to their
-  kabupaten). Kecamatan crossed by the currently displayed usulan route are
-  recolored client-side (`updateKecamatanLintasan` in maps-overlay.js), and
-  the identify popup joins the feature to DB tables via
+  kabupaten — `_batas_kec_layer_geojson` fetches candidate polygons from
+  PostGIS via `ST_AsBinary`/`shapely.wkb.loads`, deliberately NOT
+  `ST_AsGeoJSON`/`shapely.geometry.shape()`: MultiPolygon construction from a
+  plain GeoJSON dict segfaults-into-TypeError on this shapely/numpy
+  combination, same underlying issue `_geojson_line_to_shapely` works around
+  for MultiLineString via WKT). Kecamatan crossed by the currently displayed
+  usulan route are recolored client-side (`updateKecamatanLintasan` in
+  maps-overlay.js), and the identify popup joins the feature to DB tables via
   `GET /api/kecamatan/{kode}/data?tabel=` (whitelist
   `KECAMATAN_JOIN_TABLES`).
 
 ## Data pipeline (scripts/)
 
-CLI scripts (venv active, MySQL creds from `.env`) that create their schema
-if missing and upsert, so they're safe to re-run:
+CLI scripts (venv active, PostgreSQL creds `PG_*` from `.env`) that verify
+their target table exists (created by `migrate_pg_01_schema.py`) and
+upsert, so they're safe to re-run:
 
 - `import_usulan_inpres.py` — SITIA xlsx (in `docs/`) ↔ `usulan_inpres`
   table; `--export` regenerates an import-compatible xlsx.
@@ -199,8 +345,58 @@ if missing and upsert, so they're safe to re-run:
 - `spatial_join_kecamatan.py` — route geometry × `Maps/BATAS KECAMATAN`
   polygons → fills `usulan_inpres.kode_kecamatan` (basis of IJD C.A1);
   manual entries are never overwritten. Run after fetch_kml_massal.
+- `spatial_join_kecamatan_multi.py` — complement to `spatial_join_kecamatan.py`
+  (which only keeps the single dominant kecamatan): records **every**
+  kecamatan a route crosses into `usulan_kecamatan_dilalui`, without
+  touching `usulan_inpres.kode_kecamatan`. Reuses `norm`/`sample_points`
+  from `spatial_join_kecamatan.py` rather than duplicating them, but samples
+  much denser (~1 point/1.5km, min 20) so short kecamatan clipped only at a
+  route's tail end still get caught. Feeds the chat/narrative
+  "kecamatan dilalui" fact (`_kecamatan_dilalui_fakta` in app.py).
+- `spatial_join_simpul_transportasi.py` — fills in coverage gaps for all 4
+  transport-node SHP layers (`Maps/BANDARA/`, `Maps/KONEKTIVITAS SIMPUL
+  TRANSPORTASI/{pelabuhan,Pelabuhan Penyeberangan,Pelabuhan Laut}/`) into
+  `simpul_transportasi_kecamatan_radius` (fixed 30km radius, actual
+  `jarak_km` per node per kecamatan — finer-grained than the kabupaten-level
+  ada/tidak in `simpul_transportasi`). Point-in-polygon spatial join against
+  `Maps/BATAS KECAMATAN` is the *only* method for the two layers with no
+  usable text attributes (Bandara, Pelabuhan Laut); for the two layers
+  `import_simpul_transportasi.py` already text-matches, it's a fallback for
+  rows that failed text-match only. Reuses that script's
+  `norm`/`_match_kabupaten`/`build_master_index` rather than rewriting them.
+  See `docs/kajian_overlay_kecamatan_simpul_jalan.md`.
+- `import_maps_to_postgis.py` — one-way migration of every `.shp` under
+  `Maps/` into PostGIS (`map_layers`/`map_layer_meta`), the source of
+  `/api/maps/*` since 24 Jul 2026 (see above). Walks the same
+  provinsi/[kabupaten]/*.shp structure the old file-based endpoints used to
+  walk directly. Resumable per (provinsi, kabupaten, layer) — safe to rerun,
+  skips what's already in `map_layer_meta` unless `--force`; `--provinsi`
+  (repeatable) runs it province-by-province. Deliberately skips
+  `Maps/IP2019-2024/` (rasters, has its own
+  `import_indeks_penanaman_raster.py`) and `Maps/JALAN (mentah, belum
+  diproses)/` (explicitly unprocessed staging data, duplicate of the already-
+  imported `Maps/JALAN NASIONAL/`) — `--include-mentah` overrides the latter.
+  Geometry read/cleanup is deliberately per-feature, not vectorized
+  (`gdf.geometry.is_valid`, `shapely.force_2d(array)`) — a handful of source
+  `.shp` files have degenerate geometry (e.g. a 1-point "LineString") that
+  makes the *vectorized* GEOS call itself raise and take out every feature in
+  the file, not just the bad one; `on_invalid="ignore"` on `gpd.read_file`
+  covers the subset of cases where GDAL raises during parsing, before
+  geopandas ever hands back a GeoDataFrame. One source file (`SULAWESI
+  SELATAN/Kabupaten Barru/JALANLINE.shp`) is genuinely corrupt (bad `.shx`
+  record length) and is skipped permanently, logged as `GAGAL` — not
+  fixable from the read side.
 - `import_kemantapan_ijd2026.py` — road-soundness per kab/kota
-  (`kemantapan_ijd_2026`), the source of IJD pagu component G8.A2.
+  (`kemantapan_ijd_2026`), the source of IJD pagu component G8.A2; also
+  writes the official "Tidak mantap (%)" figure into
+  `bps_kabupaten_jalan.tidak_mantap_pct_ijd` (Kab./Kota rows only, matched
+  by `kode_kab`) as an independent comparison against that table's
+  BPS-PDF-derived `kondisi_*_km` columns.
+- `import_bappenas_koridor.py` — SITIA koridor master + Bappenas tematik/
+  connectivity/priority-rank annotations (`Daftar_Koridor_Bappenas_Admin_*.xlsx`)
+  → `bappenas_koridor`, keyed by `id_koridor` (the SITIA numeric ID).
+  Koridor-level, not ruas-level — the source file's ruas-detail columns are
+  always `"---"` at this granularity and are intentionally not imported.
 - `import_kawasan_tematik.py` — thematic kawasan (Perkebunan/Perikanan/
   Transmigrasi/KI Prioritas/PKPN) from the Bappenas lokus workbook →
   `kawasan_tematik`, the source of IJD parameter A3.
@@ -225,7 +421,14 @@ if missing and upsert, so they're safe to re-run:
   (C.A3 proxy). Coverage varies a lot by province/table — a province having
   the province-level book doesn't guarantee a given BPS table parses
   cleanly (format drifts between provinces); see `docs/checklist_implementasi_cpit.md`
-  for current per-province coverage.
+  for current per-province coverage. Also feeds
+  `bps_kecamatan_produksi_komoditas` (`schema_kecamatan_produksi_komoditas.sql`,
+  via `_extract_kecamatan_table_by_group`): per-kecamatan production
+  **per commodity** (`jenis_tanaman` kept verbatim from the PDF header, not
+  normalized — the commodity list isn't uniform across kab/kota), distinct
+  from `bps_kecamatan_potensi_tematik.perkebunan_produksi_ton` which sums
+  all commodities into one number. Added 2026-07-21 after a per-commodity
+  cross-check surfaced the `_is_total_row` bug below.
 - `extract_statistik_indonesia.py` — parses `docs/docs/00 Statistik
   Indonesia 2026.pdf` for province-level road-length/vehicle/sawah-land
   tables (`schema_statistik_indonesia.sql`: `si_panjang_jalan_provinsi`,

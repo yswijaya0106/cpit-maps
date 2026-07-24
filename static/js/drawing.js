@@ -1,4 +1,4 @@
-/* RouteGIS — polyline drawing, hover info, route selection */
+/* The Next - SiJalan — polyline drawing, hover info, route selection */
 
 function clearPolylines() {
   state.polylines.forEach((pl) => pl.setMap(null));

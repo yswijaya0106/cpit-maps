@@ -1,10 +1,10 @@
-/* RouteGIS — shared app state */
+/* The Next - SiJalan — shared app state */
 
 const ROUTE_COLORS = ["#4f7cff", "#22d3a5", "#ffb648", "#ff5c7c", "#a78bfa", "#38bdf8"];
 
 const state = {
   map: null,
-  mapProvider: "google", // "google" | "osm" — basemap aktif, default Google Maps
+  mapProvider: "osm", // "google" | "osm" — basemap aktif, default OpenStreetMap
   origin: null,       // {lat, lng, label}
   destination: null,
   waypoints: [],       // [{lat, lng, label}]

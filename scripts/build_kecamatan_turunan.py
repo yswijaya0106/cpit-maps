@@ -26,15 +26,16 @@ import sys
 from collections import defaultdict
 from pathlib import Path
 
-import pymysql
+import psycopg
+from psycopg.rows import dict_row
 
 SCHEMA_PATH = Path(__file__).resolve().parent / "schema_kecamatan_turunan.sql"
 
-DB_HOST = os.environ.get("MYSQL_HOST", "127.0.0.1")
-DB_PORT = int(os.environ.get("MYSQL_PORT", "3306"))
-DB_USER = os.environ.get("MYSQL_USER", "root")
-DB_PASS = os.environ.get("MYSQL_PASS", "")
-DB_NAME = os.environ.get("MYSQL_DB", "route_gis")
+DB_HOST = os.environ.get("PG_HOST", "127.0.0.1")
+DB_PORT = int(os.environ.get("PG_PORT", "5432"))
+DB_USER = os.environ.get("PG_USER", "postgres")
+DB_PASS = os.environ.get("PG_PASS", "")
+DB_NAME = os.environ.get("PG_DB", "route_gis")
 
 TAHUN = 2025
 
@@ -44,76 +45,53 @@ def norm(s):
 
 
 def connect():
-    return pymysql.connect(
+    return psycopg.connect(
         host=DB_HOST, port=DB_PORT, user=DB_USER, password=DB_PASS,
-        database=DB_NAME, charset="utf8mb4", autocommit=False,
-        cursorclass=pymysql.cursors.DictCursor,
+        dbname=DB_NAME, row_factory=dict_row,
     )
 
 
 def run_schema(conn):
-    sql_text = SCHEMA_PATH.read_text(encoding="utf-8")
-    code = "\n".join(l for l in sql_text.splitlines() if not l.strip().startswith("--"))
+    """Tabel-tabel inti sudah dibuat via scripts/migrate_pg_01_schema.py --
+    di sini cuma pastikan ada + tambahkan kolom belakangan (ADD COLUMN IF
+    NOT EXISTS native Postgres, tidak perlu cek information_schema manual
+    spt MySQL 8)."""
     with conn.cursor() as cur:
-        for stmt in [s.strip() for s in code.split(";") if s.strip()]:
-            cur.execute(stmt)
         cur.execute(
-            "SELECT COUNT(*) n FROM information_schema.columns "
-            "WHERE table_schema = %s AND table_name = 'usulan_inpres' "
-            "AND column_name = 'kode_kecamatan'",
-            (DB_NAME,),
+            "SELECT 1 FROM information_schema.tables "
+            "WHERE table_schema='public' AND table_name='kecamatan_data_turunan'"
         )
-        if cur.fetchone()["n"] == 0:
-            cur.execute(
-                "ALTER TABLE usulan_inpres ADD COLUMN kode_kecamatan INT UNSIGNED NULL "
-                "COMMENT 'Kode BPS kecamatan lokasi ruas (interim: manual; menunggu SHP batas kecamatan)'"
+        if not cur.fetchone():
+            raise RuntimeError(
+                "Tabel kecamatan_data_turunan belum ada di PostgreSQL -- jalankan "
+                "scripts/migrate_pg_01_schema.py dulu."
             )
-        # kecamatan_data_turunan yang sudah ada sebelum kolom potensi_* IJD A3
-        # ditambahkan (CREATE TABLE IF NOT EXISTS di atas tidak menambah kolom
-        # ke tabel yang sudah ada).
         cur.execute(
-            "SELECT COUNT(*) n FROM information_schema.columns "
-            "WHERE table_schema = %s AND table_name = 'kecamatan_data_turunan' "
-            "AND column_name = 'potensi_pertanian'",
-            (DB_NAME,),
+            "ALTER TABLE usulan_inpres ADD COLUMN IF NOT EXISTS kode_kecamatan INT"
         )
-        if cur.fetchone()["n"] == 0:
-            cur.execute(
-                "ALTER TABLE kecamatan_data_turunan "
-                "ADD COLUMN potensi_pertanian TINYINT(1) NULL, "
-                "ADD COLUMN potensi_perkebunan TINYINT(1) NULL, "
-                "ADD COLUMN potensi_peternakan TINYINT(1) NULL, "
-                "ADD COLUMN potensi_perikanan TINYINT(1) NULL"
-            )
-        # bps_kecamatan_potensi_tematik yang sudah ada sebelum kolom
-        # kode_kecamatan ditambahkan (dipakai popup identify kecamatan di
-        # peta, GET /api/kecamatan/{kode}/data — butuh kode_kecamatan utk
-        # join generik, bukan kode_kab+nama seperti kunci aslinya).
         cur.execute(
-            "SELECT COUNT(*) n FROM information_schema.columns "
-            "WHERE table_schema = %s AND table_name = 'bps_kecamatan_potensi_tematik' "
-            "AND column_name = 'kode_kecamatan'",
-            (DB_NAME,),
+            "ALTER TABLE kecamatan_data_turunan "
+            "ADD COLUMN IF NOT EXISTS potensi_pertanian BOOLEAN, "
+            "ADD COLUMN IF NOT EXISTS potensi_perkebunan BOOLEAN, "
+            "ADD COLUMN IF NOT EXISTS potensi_peternakan BOOLEAN, "
+            "ADD COLUMN IF NOT EXISTS potensi_perikanan BOOLEAN"
         )
-        if cur.fetchone()["n"] == 0:
+        cur.execute(
+            "SELECT 1 FROM information_schema.tables "
+            "WHERE table_schema='public' AND table_name='bps_kecamatan_potensi_tematik'"
+        )
+        if cur.fetchone():
             cur.execute(
                 "ALTER TABLE bps_kecamatan_potensi_tematik "
-                "ADD COLUMN kode_kecamatan INT UNSIGNED NULL, "
-                "ADD KEY idx_kode_kecamatan (kode_kecamatan)"
+                "ADD COLUMN IF NOT EXISTS kode_kecamatan INT"
             )
-        # kolom produksi telur (Tabel 5.4.3) ditambahkan belakangan -- sama
-        # spt kode_kecamatan di atas, CREATE TABLE IF NOT EXISTS tidak
-        # menambah kolom ke tabel yang sudah ada.
-        cur.execute(
-            "SELECT COUNT(*) n FROM information_schema.columns "
-            "WHERE table_schema = %s AND table_name = 'bps_kecamatan_potensi_tematik' "
-            "AND column_name = 'peternakan_produksi_telur_kg'",
-            (DB_NAME,),
-        )
-        if cur.fetchone()["n"] == 0:
+            cur.execute(
+                "CREATE INDEX IF NOT EXISTS idx_bps_kecamatan_potensi_tematik_kode_kecamatan "
+                "ON bps_kecamatan_potensi_tematik (kode_kecamatan)"
+            )
             cur.execute(
                 "ALTER TABLE bps_kecamatan_potensi_tematik "
-                "ADD COLUMN peternakan_produksi_telur_kg DECIMAL(12,2) NULL"
+                "ADD COLUMN IF NOT EXISTS peternakan_produksi_telur_kg NUMERIC(12,2)"
             )
     conn.commit()
 
@@ -196,10 +174,10 @@ def main():
                 loose = potensi_idx_compact.get(
                     (m["kode_kabupaten"], norm(m["kecamatan"]).replace(" ", "")), [])
                 p = loose[0] if len(loose) == 1 else None
-            potensi_pertanian = int(p["pertanian_ada"]) if p else None
-            potensi_perkebunan = int(p["perkebunan_ada"]) if p else None
-            potensi_peternakan = int(p["peternakan_ada"]) if p else None
-            potensi_perikanan = int(p["perikanan_ada"]) if p else None
+            potensi_pertanian = p["pertanian_ada"] if p else None
+            potensi_perkebunan = p["perkebunan_ada"] if p else None
+            potensi_peternakan = p["peternakan_ada"] if p else None
+            potensi_perikanan = p["perikanan_ada"] if p else None
             if p:
                 potensi_kode_updates.append(
                     (m["kode_kecamatan"], p["kode_kab"], p["kecamatan"], TAHUN))
@@ -216,12 +194,13 @@ def main():
                 "kecamatan, jumlah_penduduk, kepadatan_per_km2, luas_km2, kendaraan_total, "
                 "kendaraan_estimasi, potensi_pertanian, potensi_perkebunan, potensi_peternakan, "
                 "potensi_perikanan) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) "
-                "ON DUPLICATE KEY UPDATE kode_kabupaten=VALUES(kode_kabupaten), "
-                "kecamatan=VALUES(kecamatan), jumlah_penduduk=VALUES(jumlah_penduduk), "
-                "kepadatan_per_km2=VALUES(kepadatan_per_km2), luas_km2=VALUES(luas_km2), "
-                "kendaraan_total=VALUES(kendaraan_total), kendaraan_estimasi=VALUES(kendaraan_estimasi), "
-                "potensi_pertanian=VALUES(potensi_pertanian), potensi_perkebunan=VALUES(potensi_perkebunan), "
-                "potensi_peternakan=VALUES(potensi_peternakan), potensi_perikanan=VALUES(potensi_perikanan)",
+                "ON CONFLICT (kode_kecamatan, tahun) DO UPDATE SET "
+                "kode_kabupaten=EXCLUDED.kode_kabupaten, "
+                "kecamatan=EXCLUDED.kecamatan, jumlah_penduduk=EXCLUDED.jumlah_penduduk, "
+                "kepadatan_per_km2=EXCLUDED.kepadatan_per_km2, luas_km2=EXCLUDED.luas_km2, "
+                "kendaraan_total=EXCLUDED.kendaraan_total, kendaraan_estimasi=EXCLUDED.kendaraan_estimasi, "
+                "potensi_pertanian=EXCLUDED.potensi_pertanian, potensi_perkebunan=EXCLUDED.potensi_perkebunan, "
+                "potensi_peternakan=EXCLUDED.potensi_peternakan, potensi_perikanan=EXCLUDED.potensi_perikanan",
                 rows,
             )
             if potensi_kode_updates:

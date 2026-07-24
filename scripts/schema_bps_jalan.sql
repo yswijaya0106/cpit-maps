@@ -11,6 +11,13 @@
 -- "Kumpulan Data" baris 39, file 2_Analisis Prioritas 15.7.2026.xlsx) dan
 -- kandidat komponen A1 panjang jalan pada pagu indikatif provinsi.
 -- Kemantapan versi BPS bisa diturunkan: (baik+sedang)/total.
+--
+-- tidak_mantap_pct_ijd -- kolom L "Tidak mantap (%)" sheet IJD-26 pada
+-- docs/docs/5_IJD 2026 - DATA (Kemantapan Jalan per Kab-Kota).xlsx (sumber
+-- resmi, beda dari kondisi_*_km di atas yang hasil ekstraksi PDF BPS) --
+-- dititip di sini sbg pembanding independen, diisi oleh
+-- scripts/import_kemantapan_ijd2026.py (baris jenis_adm Kab./Kota saja,
+-- matched by kode_kab; skrip yang sama juga mengisi kemantapan_ijd_2026).
 
 USE route_gis;
 
@@ -27,5 +34,6 @@ CREATE TABLE IF NOT EXISTS bps_kabupaten_jalan (
   kondisi_rusak_km       DECIMAL(10,2) NULL,
   kondisi_rusak_berat_km DECIMAL(10,2) NULL,
   kondisi_total_km       DECIMAL(10,2) NULL,
+  tidak_mantap_pct_ijd   DECIMAL(6,2) NULL,
   PRIMARY KEY (kode_kab, tahun)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

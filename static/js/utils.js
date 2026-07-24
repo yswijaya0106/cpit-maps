@@ -1,7 +1,31 @@
-/* RouteGIS — generic formatting/DOM helpers shared across modules */
+/* The Next - SiJalan — generic formatting/DOM helpers shared across modules */
 
 function escapeHtml(str) {
   return String(str).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+
+// Modal pratinjau PDF generik (dipakai tombol "Pratinjau" Dalam Angka, dkk.)
+// -- overlay + iframe, ditutup via tombol X, klik overlay, atau Esc.
+function openPdfPreviewModal(url, title) {
+  const overlay = document.createElement("div");
+  overlay.className = "pdf-modal-overlay";
+  overlay.innerHTML = `
+    <div class="pdf-modal">
+      <div class="pdf-modal-header">
+        <span>${escapeHtml(title || "Pratinjau PDF")}</span>
+        <button type="button" class="btn btn-ghost btn-sm pdf-modal-close"><i class="bi bi-x-lg"></i> Tutup</button>
+      </div>
+      <div class="pdf-modal-body"><iframe src="${escapeHtml(url)}" title="${escapeHtml(title || "PDF")}"></iframe></div>
+    </div>`;
+  const close = () => {
+    overlay.remove();
+    document.removeEventListener("keydown", onKey);
+  };
+  const onKey = (e) => { if (e.key === "Escape") close(); };
+  overlay.addEventListener("click", (e) => { if (e.target === overlay) close(); });
+  overlay.querySelector(".pdf-modal-close").addEventListener("click", close);
+  document.addEventListener("keydown", onKey);
+  document.body.appendChild(overlay);
 }
 
 // Kolom flag biner (TINYINT(1), mis. "pertanian_ada", "kendaraan_estimasi") di

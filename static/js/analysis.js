@@ -1,4 +1,4 @@
-/* RouteGIS — analisis lanjutan: wilayah administratif & klasifikasi jalan */
+/* The Next - SiJalan — analisis lanjutan: wilayah administratif & klasifikasi jalan */
 
 async function analyzeAdminRegions() {
   const route = state.routes[state.selectedIndex];

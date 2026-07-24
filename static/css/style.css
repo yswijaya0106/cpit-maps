@@ -274,6 +274,16 @@ table.laporan-prioritas-table th.laporan-group-b {
 }
 .laporan-distribusi-view::-webkit-scrollbar-corner { background: transparent; }
 .laporan-distribusi-empty { color: var(--text-dim); text-align: center; padding: 40px 0; }
+/* Kontrol lebar rentang (input + tombol Proses) di atas chart Distribusi Skor */
+.laporan-distribusi-controls {
+  display: flex; align-items: center; gap: 10px; margin-bottom: 18px;
+  padding-bottom: 14px; border-bottom: 1px solid var(--border);
+}
+.laporan-distribusi-controls label { font-size: 13px; color: var(--text-dim); }
+.laporan-distribusi-controls input[type="number"] {
+  width: 64px; padding: 5px 8px; border-radius: 6px; border: 1px solid var(--border);
+  background: var(--panel-alt); color: var(--text); font-size: 13px;
+}
 .laporan-chart-block { margin-bottom: 32px; }
 .laporan-chart-block:last-child { margin-bottom: 0; }
 .laporan-chart-title { font-size: 13px; font-weight: 700; color: var(--text); margin-bottom: 2px; }
@@ -301,6 +311,14 @@ table.laporan-prioritas-table th.laporan-group-b {
 }
 .laporan-bucket-label { font-weight: 700; color: var(--primary); white-space: nowrap; }
 .laporan-bucket-names { color: var(--text-dim); }
+/* Nama kabupaten klik-able di daftar bucket -- drill-down kriteria match */
+.laporan-kab-link {
+  background: none; border: none; padding: 0; font: inherit; color: var(--primary);
+  cursor: pointer; text-decoration: underline; text-underline-offset: 2px;
+}
+.laporan-kab-link:hover { color: var(--primary-hover, var(--primary)); }
+.laporan-drilldown-item { font-size: 13px; padding: 3px 0; display: flex; gap: 6px; align-items: center; }
+.laporan-drilldown-item-skor { justify-content: space-between; border-bottom: 1px solid var(--border); padding: 6px 0; }
 
 /* --- Dashboard (tab ketiga Laporan Prioritas) --- */
 .laporan-kpi-row { display: flex; flex-wrap: wrap; gap: 14px; margin-bottom: 28px; }
@@ -438,6 +456,49 @@ td.checklist-cell .ijd-badge { margin-right: 4px; }
 }
 .maplayer-combo-option:hover { background: rgba(79, 124, 255, 0.16); }
 .maplayer-combo-option.selected { background: var(--primary); color: #fff; font-weight: 600; }
+
+/* Multi-select + search provinsi (preview Export Skor IJD) -- extends
+   .maplayer-combo base, checkbox-style (bukan single "selected" swap) */
+.ijd-provinsi-multiselect { width: clamp(200px, 24vw, 320px); flex: 0 0 auto; }
+.ijd-provinsi-multiselect .maplayer-combo-toggle span {
+  flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.ijd-provinsi-panel { display: flex; flex-direction: column; max-height: 360px; padding: 8px; gap: 6px; }
+/* display:flex di atas menimpa [hidden] bawaan browser -- tanpa aturan ini
+   panel provinsi langsung tampil (kosong, blm sempat load) walau atribut
+   hidden ada di elemennya, sama pola dgn .datatable-overlay[hidden] yg
+   sudah ada. Ditemukan 22 Jul 2026 lewat laporan user: search box bisa
+   diketik langsung tanpa toggle diklik dulu -> daftar provinsi belum
+   dimuat -> selalu "tidak ada provinsi cocok". */
+.ijd-provinsi-panel[hidden] { display: none; }
+.ijd-provinsi-search {
+  display: flex; align-items: center; gap: 6px;
+  background: rgba(255,255,255,.05); border: 1px solid var(--border); border-radius: 8px;
+  padding: 6px 9px; flex: 0 0 auto;
+}
+.ijd-provinsi-search i { font-size: 11px; color: var(--text-dim); }
+.ijd-provinsi-search input {
+  flex: 1; min-width: 0; background: none; border: none; outline: none;
+  color: var(--text); font-size: 12.5px; font-family: inherit;
+}
+.ijd-provinsi-options {
+  overflow-y: auto; flex: 1 1 auto; min-height: 60px; max-height: 260px;
+  scrollbar-width: thin; scrollbar-color: var(--primary) transparent;
+}
+.ijd-provinsi-option {
+  display: flex; align-items: center; gap: 8px; padding: 7px 8px; border-radius: 7px;
+  font-size: 12.5px; color: var(--text); cursor: pointer; white-space: nowrap;
+}
+.ijd-provinsi-option:hover { background: rgba(79, 124, 255, 0.16); }
+.ijd-provinsi-option input { pointer-events: none; }
+.ijd-provinsi-option span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.ijd-provinsi-option .datatable-menu-count { font-size: 10.5px; }
+.ijd-provinsi-empty { padding: 10px 8px; font-size: 12px; color: var(--text-dim); text-align: center; }
+.ijd-provinsi-actions {
+  display: flex; justify-content: space-between; gap: 8px; flex: 0 0 auto;
+  padding-top: 6px; border-top: 1px solid var(--border);
+}
+.ijd-provinsi-actions .btn { flex: 1 1 auto; }
 .maplayer-list {
   display: flex; flex-direction: column; gap: 2px; overflow-y: auto; max-height: 220px;
   scrollbar-width: thin; scrollbar-color: var(--primary) transparent; /* Firefox */
@@ -737,6 +798,7 @@ td.checklist-cell .ijd-badge { margin-right: 4px; }
   transition: transform .1s ease, background .15s ease, opacity .15s ease;
 }
 .btn:active { transform: scale(.97); }
+.btn:disabled, .btn[disabled] { opacity: .4; cursor: not-allowed; pointer-events: none; }
 .btn-block { width: 100%; }
 .btn-lg { padding: 13px 14px; font-size: 15px; }
 .btn-primary { background: linear-gradient(135deg, var(--primary), var(--primary-dark)); color: #fff; }
@@ -746,6 +808,25 @@ td.checklist-cell .ijd-badge { margin-right: 4px; }
 }
 .btn-ghost:hover { border-color: var(--primary); color: var(--text); }
 .btn-sm { padding: 7px 10px; font-size: 13px; background: var(--primary); color: #fff; }
+.btn-sm.btn-ghost:disabled, .btn-sm.btn-ghost[disabled] { background: var(--border); color: var(--text-dim); }
+
+/* Spinner ikon (mis. bi-arrow-repeat saat proses bulk) */
+@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+.spin { display: inline-block; animation: spin .8s linear infinite; }
+
+/* Progress bar kecil di sebelah tombol "Proses Narasi AI" -- muncul hanya
+   selama proses bulk berjalan, lihat ijdPreviewProsesNarasiAi() */
+.ijd-narasi-progress { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--text-dim); }
+.ijd-narasi-progress[hidden] { display: none; }
+.ijd-narasi-progress-bar {
+  width: 90px; height: 6px; border-radius: 999px; background: var(--border);
+  overflow: hidden; display: inline-block;
+}
+.ijd-narasi-progress-bar > span {
+  display: block; height: 100%; width: 0%; border-radius: 999px;
+  background: linear-gradient(90deg, var(--primary), var(--primary-dark));
+  transition: width .25s ease;
+}
 
 /* Route list */
 .route-list { display: flex; flex-direction: column; gap: 8px; }
@@ -851,9 +932,12 @@ td.checklist-cell .ijd-badge { margin-right: 4px; }
 .usulan-badge-warn { background: rgba(255, 92, 124, 0.18); color: var(--danger); }
 .btn-usulan-show { align-self: flex-start; margin-top: 2px; font-size: 12px; }
 
-/* Jelajahi Usulan Inpres (browse panel) */
-.usulan-io-row { display: flex; gap: 8px; margin-bottom: 10px; }
-.usulan-io-row .btn { flex: 1; }
+/* Jelajahi Usulan Inpres (browse panel) -- 5 tombol skrg (Import/Export/
+   Export Skor IJD/Dashboard Skor IJD/Preview NPR), flex:1 tanpa wrap dulu
+   bikin overflow keluar panel di sidebar sempit -- wrap ke baris baru +
+   lebar minimum per tombol drpd dipaksa sama rata dlm 1 baris. */
+.usulan-io-row { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; }
+.usulan-io-row .btn { flex: 1 1 auto; min-width: 120px; }
 .usulan-browse-filters { display: flex; flex-direction: column; gap: 8px; margin-bottom: 10px; }
 .usulan-filter-field {
   display: flex; align-items: center; gap: 8px;
@@ -1032,4 +1116,56 @@ html::-webkit-scrollbar, body::-webkit-scrollbar, .sidebar::-webkit-scrollbar, .
   .mode-btn span { font-size: 10px; }
   .export-grid { grid-template-columns: 1fr; }
   .btn-export-shp { grid-column: span 1; }
+}
+
+/* Modal generik (dipakai pratinjau PDF Dalam Angka, dkk.) */
+.pdf-modal-overlay {
+  position: fixed; inset: 0; z-index: 200;
+  background: rgba(6,9,16,.72);
+  display: flex; align-items: center; justify-content: center;
+  padding: 24px;
+}
+.pdf-modal {
+  background: var(--panel); border: 1px solid var(--border);
+  border-radius: 10px; box-shadow: var(--shadow);
+  width: min(900px, 100%); height: min(85vh, 1000px);
+  display: flex; flex-direction: column; overflow: hidden;
+}
+.pdf-modal-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 10px 14px; border-bottom: 1px solid var(--border);
+  font-size: 13.5px; color: var(--text);
+}
+.pdf-modal-header .pdf-modal-close { flex: 0 0 auto; }
+.pdf-modal-body { flex: 1; background: #fff; }
+.pdf-modal-body iframe { width: 100%; height: 100%; border: 0; }
+
+.usulan-dalam-angka { margin-top: 10px; }
+.usulan-dalam-angka-title {
+  font-size: 12px; color: var(--text-dim); margin-bottom: 6px;
+  text-transform: uppercase; letter-spacing: .03em;
+}
+.usulan-dalam-angka-item {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 13px; padding: 5px 0;
+}
+.usulan-dalam-angka-item .tahun-badge {
+  background: rgba(79,124,255,.15); color: var(--primary);
+  border-radius: 5px; padding: 1px 7px; font-weight: 600; font-size: 12px;
+}
+.usulan-dalam-angka-item button {
+  background: rgba(255,255,255,.05); border: 1px solid var(--border);
+  color: var(--text-dim); border-radius: 6px; padding: 3px 9px;
+  font-size: 12px; cursor: pointer; display: inline-flex; align-items: center; gap: 4px;
+}
+.usulan-dalam-angka-item button:hover { color: var(--text); border-color: var(--primary); }
+
+#dalamAngkaList { padding: 12px 16px; }
+.dalam-angka-wilayah {
+  padding: 10px 0; border-bottom: 1px solid var(--border);
+}
+.dalam-angka-wilayah:last-child { border-bottom: none; }
+.dalam-angka-wilayah-title {
+  font-size: 13.5px; font-weight: 600; color: var(--text);
+  display: flex; align-items: center; gap: 8px; margin-bottom: 4px;
 }

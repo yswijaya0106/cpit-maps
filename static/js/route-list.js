@@ -1,4 +1,4 @@
-/* RouteGIS — route result list & per-route analysis panel rendering */
+/* The Next - SiJalan — route result list & per-route analysis panel rendering */
 
 function fastestRouteIndex() {
   if (!state.routes.length) return -1;

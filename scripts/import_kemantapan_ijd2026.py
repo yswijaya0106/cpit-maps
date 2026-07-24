@@ -15,39 +15,53 @@ import sys
 from pathlib import Path
 
 import openpyxl
-import pymysql
+import psycopg
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 DEFAULT_XLSX = BASE_DIR / "docs" / "docs" / "5_IJD 2026 - DATA (Kemantapan Jalan per Kab-Kota).xlsx"
 SCHEMA_PATH = Path(__file__).resolve().parent / "schema_kemantapan_ijd2026.sql"
 
-DB_HOST = os.environ.get("MYSQL_HOST", "127.0.0.1")
-DB_PORT = int(os.environ.get("MYSQL_PORT", "3306"))
-DB_USER = os.environ.get("MYSQL_USER", "root")
-DB_PASS = os.environ.get("MYSQL_PASS", "")
-DB_NAME = os.environ.get("MYSQL_DB", "route_gis")
+DB_HOST = os.environ.get("PG_HOST", "127.0.0.1")
+DB_PORT = int(os.environ.get("PG_PORT", "5432"))
+DB_USER = os.environ.get("PG_USER", "postgres")
+DB_PASS = os.environ.get("PG_PASS", "")
+DB_NAME = os.environ.get("PG_DB", "route_gis")
 
 
 def connect():
-    conn = pymysql.connect(
-        host=DB_HOST, port=DB_PORT, user=DB_USER, password=DB_PASS,
-        charset="utf8mb4", autocommit=False,
+    return psycopg.connect(
+        host=DB_HOST, port=DB_PORT, user=DB_USER, password=DB_PASS, dbname=DB_NAME,
     )
-    with conn.cursor() as cur:
-        cur.execute(
-            "CREATE DATABASE IF NOT EXISTS %s CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci"
-            % DB_NAME
-        )
-    conn.select_db(DB_NAME)
-    return conn
 
 
 def run_schema(conn):
-    sql_text = SCHEMA_PATH.read_text(encoding="utf-8")
-    code = "\n".join(l for l in sql_text.splitlines() if not l.strip().startswith("--"))
+    """Tabel sudah dibuat via scripts/migrate_pg_01_schema.py -- di sini
+    cuma pastikan ada (lihat docs/migrasi_mysql_ke_postgresql.md)."""
     with conn.cursor() as cur:
-        for stmt in [s.strip() for s in code.split(";") if s.strip()]:
-            cur.execute(stmt)
+        cur.execute(
+            "SELECT 1 FROM information_schema.tables "
+            "WHERE table_schema='public' AND table_name='kemantapan_ijd_2026'"
+        )
+        if not cur.fetchone():
+            raise RuntimeError(
+                "Tabel kemantapan_ijd_2026 belum ada di PostgreSQL -- jalankan "
+                "scripts/migrate_pg_01_schema.py dulu."
+            )
+
+
+def _ensure_bps_jalan_kolom_ijd(conn):
+    """bps_kabupaten_jalan sudah ada dari scripts/extract_dalam_angka.py
+    (kolom hasil ekstraksi PDF BPS) sebelum kolom pembanding
+    tidak_mantap_pct_ijd ditambahkan -- ADD COLUMN IF NOT EXISTS native
+    Postgres (tidak perlu cek information_schema manual spt MySQL 8)."""
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT 1 FROM information_schema.tables "
+            "WHERE table_schema='public' AND table_name='bps_kabupaten_jalan'"
+        )
+        if not cur.fetchone():
+            return  # belum pernah diisi scripts/extract_dalam_angka.py --load -- tidak ada yang perlu di-update
+        cur.execute("ALTER TABLE bps_kabupaten_jalan ADD COLUMN IF NOT EXISTS tidak_mantap_pct_ijd NUMERIC(6,2)")
     conn.commit()
 
 
@@ -100,6 +114,16 @@ def main():
             (str(row[14]).strip() if len(row) > 14 and row[14] else None),
         ))
 
+    # Kolom L "Tidak mantap (%)" (row[11]) utk baris Kab./Kota saja -- juga
+    # dititip ke bps_kabupaten_jalan.tidak_mantap_pct_ijd sbg pembanding
+    # independen thd kondisi_*_km hasil ekstraksi PDF BPS (lihat
+    # scripts/schema_bps_jalan.sql). kode_kab di sana CHAR(4), kode_wilayah
+    # di baris Kab./Kota di file ini sudah 4 digit.
+    jalan_updates = [
+        (f"{r[1]:04d}", r[9])  # r[1]=kode_wilayah, r[9]=tidak_mantap_pct (row[11] asli)
+        for r in out if r[4] in ("Kab.", "Kota")
+    ]
+
     conn = connect()
     try:
         run_schema(conn)
@@ -109,21 +133,37 @@ def main():
                 "kabupaten_kota, jenis_adm, panjang_km, mantap_km, mantap_pct, tidak_mantap_km, "
                 "tidak_mantap_pct, status_pkrms, rasio_kfd, kategori_fiskal) "
                 "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) "
-                "ON DUPLICATE KEY UPDATE provinsi=VALUES(provinsi), kabupaten_kota=VALUES(kabupaten_kota), "
-                "panjang_km=VALUES(panjang_km), mantap_km=VALUES(mantap_km), mantap_pct=VALUES(mantap_pct), "
-                "tidak_mantap_km=VALUES(tidak_mantap_km), tidak_mantap_pct=VALUES(tidak_mantap_pct), "
-                "status_pkrms=VALUES(status_pkrms), rasio_kfd=VALUES(rasio_kfd), "
-                "kategori_fiskal=VALUES(kategori_fiskal)",
+                "ON CONFLICT (kode_provinsi, kode_wilayah, jenis_adm) DO UPDATE SET "
+                "provinsi=EXCLUDED.provinsi, kabupaten_kota=EXCLUDED.kabupaten_kota, "
+                "panjang_km=EXCLUDED.panjang_km, mantap_km=EXCLUDED.mantap_km, mantap_pct=EXCLUDED.mantap_pct, "
+                "tidak_mantap_km=EXCLUDED.tidak_mantap_km, tidak_mantap_pct=EXCLUDED.tidak_mantap_pct, "
+                "status_pkrms=EXCLUDED.status_pkrms, rasio_kfd=EXCLUDED.rasio_kfd, "
+                "kategori_fiskal=EXCLUDED.kategori_fiskal",
                 out,
             )
         conn.commit()
         with conn.cursor() as cur:
             cur.execute("SELECT COUNT(*) FROM kemantapan_ijd_2026")
             total = cur.fetchone()[0]
+
+        _ensure_bps_jalan_kolom_ijd(conn)
+        n_jalan_updated = 0
+        with conn.cursor() as cur:
+            cur.execute("SELECT 1 FROM information_schema.tables "
+                        "WHERE table_schema='public' AND table_name='bps_kabupaten_jalan'")
+            if cur.fetchone():
+                cur.executemany(
+                    "UPDATE bps_kabupaten_jalan SET tidak_mantap_pct_ijd = %s WHERE kode_kab = %s",
+                    [(tmp, kk) for kk, tmp in jalan_updates],
+                )
+                n_jalan_updated = cur.rowcount
+        conn.commit()
     finally:
         conn.close()
 
     print(f"Import kemantapan jalan: {len(out)} baris diproses ({skipped} dilewati), total di DB: {total}")
+    print(f"bps_kabupaten_jalan.tidak_mantap_pct_ijd: {n_jalan_updated} baris terupdate "
+          f"({len(jalan_updates)} kandidat kab/kota dari file)")
 
 
 if __name__ == "__main__":

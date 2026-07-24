@@ -1,469 +1,637 @@
 <!DOCTYPE html>
 <html lang="id">
+
 <head>
-<meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>RouteGIS — Analisis &amp; Konversi Rute ke SHP</title>
-<link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
-<link rel="stylesheet" href="/css/style.css" />
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>The Next - SiJalan — Analisis &amp; Konversi Rute ke SHP</title>
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
+  <link rel="stylesheet" href="/css/style.css" />
 </head>
+
 <body>
-<div class="app">
+  <div class="app">
 
-  <header class="topbar">
-    <button id="btnSidebarToggle" class="icon-btn" aria-label="Toggle menu"><i class="bi bi-list"></i></button>
-    <div class="brand">
-      <span class="brand-logo"><i class="bi bi-geo-alt-fill"></i></span>
-      <span class="brand-name">Route<strong>GIS</strong></span>
-    </div>
-    <div class="topbar-search">
-      <i class="bi bi-search"></i>
-      <input type="text" id="inputMapSearch" placeholder="Cari alamat / tempat di peta..." autocomplete="off" />
-    </div>
-    <button type="button" class="topbar-basemap" id="btnBasemapToggle" title="Ganti basemap Google Maps / OpenStreetMap">
-      <i class="bi bi-map"></i>
-      <span id="basemapLabel">Google Maps</span>
-    </button>
-    <div class="topbar-maplayer" id="mapLayerControl" hidden>
-      <i class="bi bi-layers-fill"></i>
-      <button type="button" class="maplayer-toggle" id="mapLayerToggle">
-        <span id="mapLayerLabel">Overlay Peta</span>
-        <i class="bi bi-chevron-down"></i>
+    <header class="topbar">
+      <button id="btnSidebarToggle" class="icon-btn" aria-label="Toggle menu"><i class="bi bi-list"></i></button>
+      <div class="brand">
+        <span class="brand-logo"><i class="bi bi-geo-alt-fill"></i></span>
+        <span class="brand-name">The Next - <strong>SiJalan</strong></span>
+      </div>
+      <div class="topbar-search">
+        <i class="bi bi-search"></i>
+        <input type="text" id="inputMapSearch" placeholder="Cari alamat / tempat di peta..." autocomplete="off" />
+      </div>
+      <button type="button" class="topbar-basemap" id="btnBasemapToggle"
+        title="Ganti basemap Google Maps / OpenStreetMap">
+        <i class="bi bi-map"></i>
+        <span id="basemapLabel">Google Maps</span>
       </button>
-      <div class="maplayer-panel" id="mapLayerPanel" hidden>
-        <div class="maplayer-panel-header">
-          <span>Overlay Peta</span>
-          <button type="button" class="maplayer-close" id="mapLayerClose" aria-label="Tutup panel overlay"><i class="bi bi-x-lg"></i></button>
-        </div>
-        <div class="maplayer-combo" id="mapLayerProvinsiField">
-          <button type="button" class="maplayer-combo-toggle" id="mapLayerProvinsiToggle">
-            <span id="mapLayerProvinsiLabel">Pilih provinsi...</span>
-            <i class="bi bi-chevron-down"></i>
-          </button>
-          <div class="maplayer-combo-panel" id="mapLayerProvinsiPanel" hidden></div>
-        </div>
-        <div class="maplayer-combo" id="mapLayerKabupatenField">
-          <button type="button" class="maplayer-combo-toggle" id="mapLayerKabupatenToggle">
-            <span id="mapLayerKabupatenLabel">Pilih kabupaten...</span>
-            <i class="bi bi-chevron-down"></i>
-          </button>
-          <div class="maplayer-combo-panel" id="mapLayerKabupatenPanel" hidden></div>
-        </div>
-        <div class="maplayer-list" id="mapLayerList"></div>
-      </div>
-    </div>
-    <div class="topbar-datatable" id="dataTableControl">
-      <button type="button" class="topbar-basemap" id="btnDataTable" title="Lihat isi tabel database">
-        <i class="bi bi-table"></i>
-        <span>Data</span>
-        <i class="bi bi-chevron-down"></i>
-      </button>
-      <div class="datatable-menu" id="dataTableMenu" hidden></div>
-    </div>
-    <button type="button" class="topbar-basemap" id="btnLokusBappenas" title="Lokus Aspek A Bappenas: pilih kriteria, preview datagrid, import xlsx">
-      <i class="bi bi-geo"></i>
-      <span>Lokus Bappenas</span>
-    </button>
-    <button type="button" class="topbar-basemap" id="btnLaporanPrioritas" title="Laporan Daerah Prioritas: checklist Aspek A/B agregat per kabupaten/kota, per provinsi">
-      <i class="bi bi-clipboard-check"></i>
-      <span>Laporan Prioritas</span>
-    </button>
-    <div class="topbar-status" id="topbarStatus">Siap</div>
-  </header>
-
-  <div class="datatable-overlay" id="dataTableOverlay" hidden>
-    <div class="datatable-modal">
-      <div class="datatable-head">
-        <div class="datatable-head-title">
-          <h3 id="dataTableTitle"><i class="bi bi-table"></i> <span></span></h3>
-          <span class="datatable-meta" id="dataTableMeta"></span>
-        </div>
-        <div class="datatable-head-actions">
-          <div class="datatable-filters" id="dataTableFilters" hidden>
-            <div class="maplayer-combo" id="dataTableFilterProvinsiField">
-              <button type="button" class="maplayer-combo-toggle" id="dataTableFilterProvinsiToggle">
-                <span id="dataTableFilterProvinsiLabel">Semua provinsi</span>
-                <i class="bi bi-chevron-down"></i>
-              </button>
-              <div class="maplayer-combo-panel" id="dataTableFilterProvinsiPanel" hidden></div>
-            </div>
-            <div class="maplayer-combo" id="dataTableFilterKabupatenField">
-              <button type="button" class="maplayer-combo-toggle" id="dataTableFilterKabupatenToggle">
-                <span id="dataTableFilterKabupatenLabel">Semua kabupaten</span>
-                <i class="bi bi-chevron-down"></i>
-              </button>
-              <div class="maplayer-combo-panel" id="dataTableFilterKabupatenPanel" hidden></div>
-            </div>
+      <div class="topbar-maplayer" id="mapLayerControl" hidden>
+        <i class="bi bi-layers-fill"></i>
+        <button type="button" class="maplayer-toggle" id="mapLayerToggle">
+          <span id="mapLayerLabel">Overlay Peta</span>
+          <i class="bi bi-chevron-down"></i>
+        </button>
+        <div class="maplayer-panel" id="mapLayerPanel" hidden>
+          <div class="maplayer-panel-header">
+            <span>Overlay Peta</span>
+            <button type="button" class="maplayer-close" id="mapLayerClose" aria-label="Tutup panel overlay"><i
+                class="bi bi-x-lg"></i></button>
           </div>
-          <div class="datatable-import" id="dataTableImport" hidden>
-            <div class="maplayer-combo" id="dataTableImportKriteriaField">
-              <button type="button" class="maplayer-combo-toggle" id="dataTableImportKriteriaToggle">
-                <span id="dataTableImportKriteriaLabel">Pilih kriteria...</span>
-                <i class="bi bi-chevron-down"></i>
-              </button>
-              <div class="maplayer-combo-panel" id="dataTableImportKriteriaPanel" hidden></div>
-            </div>
-            <button type="button" class="btn btn-ghost btn-sm" id="dataTableImportBtn" disabled>
-              <i class="bi bi-file-earmark-arrow-up"></i> Import xlsx
-            </button>
-            <input type="file" id="dataTableImportFile" accept=".xlsx" hidden />
-          </div>
-          <button type="button" class="btn btn-ghost btn-sm" id="dataTableExport"><i class="bi bi-file-earmark-excel"></i> Export Excel</button>
-          <button type="button" class="icon-btn" id="dataTableClose" aria-label="Tutup"><i class="bi bi-x-lg"></i></button>
-        </div>
-      </div>
-      <div class="datatable-scroll" id="dataTableScroll"></div>
-      <div class="datatable-foot">
-        <div class="datatable-pagesize">
-          Baris per halaman:
-          <select id="dataTablePageSize">
-            <option value="25">25</option>
-            <option value="50" selected>50</option>
-            <option value="100">100</option>
-            <option value="200">200</option>
-          </select>
-        </div>
-        <div class="datatable-pager">
-          <button type="button" class="btn btn-ghost btn-sm" id="dataTablePrev"><i class="bi bi-chevron-left"></i> Sebelumnya</button>
-          <span id="dataTablePageInfo"></span>
-          <button type="button" class="btn btn-ghost btn-sm" id="dataTableNext">Berikutnya <i class="bi bi-chevron-right"></i></button>
-        </div>
-      </div>
-    </div>
-  </div>
-
-  <div class="datatable-overlay" id="ijdPreviewOverlay" hidden>
-    <div class="datatable-modal">
-      <div class="datatable-head">
-        <div class="datatable-head-title">
-          <h3><i class="bi bi-file-earmark-bar-graph"></i> <span id="ijdPreviewTitle">Preview Export Skor IJD</span></h3>
-          <span class="datatable-meta" id="ijdPreviewMeta"></span>
-        </div>
-        <div class="datatable-head-actions">
-          <label class="ijd-narasi-force" title="Proses ulang &amp; timpa narasi AI yang sudah ada (bukan cuma yang belum punya narasi)">
-            <input type="checkbox" id="ijdPreviewNarasiForce" /> Timpa narasi lama
-          </label>
-          <button type="button" class="btn btn-ghost btn-sm" id="ijdPreviewNarasiAi">
-            <i class="bi bi-stars"></i> Proses Narasi AI
-          </button>
-          <button type="button" class="btn btn-primary btn-sm" id="ijdPreviewExport">
-            <i class="bi bi-file-earmark-excel"></i> Export Excel
-          </button>
-          <button type="button" class="icon-btn" id="ijdPreviewClose" aria-label="Tutup"><i class="bi bi-x-lg"></i></button>
-        </div>
-      </div>
-      <div class="datatable-scroll" id="ijdPreviewScroll"></div>
-      <div class="datatable-foot">
-        <div class="datatable-pagesize">
-          Baris per halaman:
-          <select id="ijdPreviewPageSize">
-            <option value="25">25</option>
-            <option value="50" selected>50</option>
-            <option value="100">100</option>
-            <option value="200">200</option>
-          </select>
-        </div>
-        <div class="datatable-pager">
-          <button type="button" class="btn btn-ghost btn-sm" id="ijdPreviewPrev"><i class="bi bi-chevron-left"></i> Sebelumnya</button>
-          <span id="ijdPreviewPageInfo"></span>
-          <button type="button" class="btn btn-ghost btn-sm" id="ijdPreviewNext">Berikutnya <i class="bi bi-chevron-right"></i></button>
-        </div>
-      </div>
-    </div>
-  </div>
-
-  <div class="datatable-overlay" id="laporanPrioritasOverlay" hidden>
-    <div class="datatable-modal">
-      <div class="datatable-head">
-        <div class="datatable-head-title">
-          <h3><i class="bi bi-clipboard-check"></i> <span id="laporanPrioritasTitle">Laporan Daerah Prioritas</span></h3>
-          <span class="datatable-meta" id="laporanPrioritasMeta"></span>
-        </div>
-        <div class="datatable-head-actions">
-          <div class="maplayer-combo" id="laporanPrioritasProvinsiField">
-            <button type="button" class="maplayer-combo-toggle" id="laporanPrioritasProvinsiToggle">
-              <span id="laporanPrioritasProvinsiLabel">Pilih provinsi...</span>
+          <div class="maplayer-combo" id="mapLayerProvinsiField">
+            <button type="button" class="maplayer-combo-toggle" id="mapLayerProvinsiToggle">
+              <span id="mapLayerProvinsiLabel">Pilih provinsi...</span>
               <i class="bi bi-chevron-down"></i>
             </button>
-            <div class="maplayer-combo-panel" id="laporanPrioritasProvinsiPanel" hidden></div>
+            <div class="maplayer-combo-panel" id="mapLayerProvinsiPanel" hidden></div>
           </div>
-          <button type="button" class="btn btn-primary btn-sm" id="laporanPrioritasExport" disabled>
-            <i class="bi bi-file-earmark-excel"></i> Export Excel
-          </button>
-          <button type="button" class="icon-btn" id="laporanPrioritasClose" aria-label="Tutup"><i class="bi bi-x-lg"></i></button>
+          <div class="maplayer-combo" id="mapLayerKabupatenField">
+            <button type="button" class="maplayer-combo-toggle" id="mapLayerKabupatenToggle">
+              <span id="mapLayerKabupatenLabel">Pilih kabupaten...</span>
+              <i class="bi bi-chevron-down"></i>
+            </button>
+            <div class="maplayer-combo-panel" id="mapLayerKabupatenPanel" hidden></div>
+          </div>
+          <div class="maplayer-list" id="mapLayerList"></div>
         </div>
       </div>
-      <div class="datatable-tabs">
-        <button type="button" class="datatable-tab active" id="laporanTabChecklist">
-          <i class="bi bi-table"></i> Checklist
+      <div class="topbar-datatable" id="dataTableControl">
+        <button type="button" class="topbar-basemap" id="btnDataTable" title="Lihat isi tabel database">
+          <i class="bi bi-table"></i>
+          <span>Data</span>
+          <i class="bi bi-chevron-down"></i>
         </button>
-        <button type="button" class="datatable-tab" id="laporanTabDistribusi">
-          <i class="bi bi-bar-chart-line"></i> Distribusi Skor
-        </button>
-        <button type="button" class="datatable-tab" id="laporanTabDashboard">
-          <i class="bi bi-speedometer2"></i> Dashboard
-        </button>
+        <div class="datatable-menu" id="dataTableMenu" hidden></div>
       </div>
-      <div id="laporanPrioritasChecklistView">
-        <div class="datatable-scroll" id="laporanPrioritasScroll">
-          <div class="datatable-loading">Pilih provinsi untuk melihat laporan.</div>
+      <button type="button" class="topbar-basemap" id="btnLokusBappenas"
+        title="Lokus Aspek A Bappenas: pilih kriteria, preview datagrid, import xlsx">
+        <i class="bi bi-geo"></i>
+        <span>Lokus Bappenas</span>
+      </button>
+      <button type="button" class="topbar-basemap" id="btnDalamAngka"
+        title="Dalam Angka: cari dan pratinjau PDF BPS Dalam Angka seluruh provinsi/kabupaten/kota">
+        <i class="bi bi-file-earmark-pdf"></i>
+        <span>Dalam Angka</span>
+      </button>
+      <button type="button" class="topbar-basemap" id="btnLaporanPrioritas"
+        title="Laporan Daerah Prioritas: checklist Aspek A/B agregat per kabupaten/kota, per provinsi">
+        <i class="bi bi-clipboard-check"></i>
+        <span>Laporan Prioritas</span>
+      </button>
+      <div class="topbar-status" id="topbarStatus">Siap</div>
+    </header>
+
+    <div class="datatable-overlay" id="dataTableOverlay" hidden>
+      <div class="datatable-modal">
+        <div class="datatable-head">
+          <div class="datatable-head-title">
+            <h3 id="dataTableTitle"><i class="bi bi-table"></i> <span></span></h3>
+            <span class="datatable-meta" id="dataTableMeta"></span>
+          </div>
+          <div class="datatable-head-actions">
+            <div class="datatable-filters" id="dataTableFilters" hidden>
+              <div class="maplayer-combo" id="dataTableFilterProvinsiField">
+                <button type="button" class="maplayer-combo-toggle" id="dataTableFilterProvinsiToggle">
+                  <span id="dataTableFilterProvinsiLabel">Semua provinsi</span>
+                  <i class="bi bi-chevron-down"></i>
+                </button>
+                <div class="maplayer-combo-panel" id="dataTableFilterProvinsiPanel" hidden></div>
+              </div>
+              <div class="maplayer-combo" id="dataTableFilterKabupatenField">
+                <button type="button" class="maplayer-combo-toggle" id="dataTableFilterKabupatenToggle">
+                  <span id="dataTableFilterKabupatenLabel">Semua kabupaten</span>
+                  <i class="bi bi-chevron-down"></i>
+                </button>
+                <div class="maplayer-combo-panel" id="dataTableFilterKabupatenPanel" hidden></div>
+              </div>
+            </div>
+            <div class="datatable-import" id="dataTableImport" hidden>
+              <div class="maplayer-combo" id="dataTableImportKriteriaField">
+                <button type="button" class="maplayer-combo-toggle" id="dataTableImportKriteriaToggle">
+                  <span id="dataTableImportKriteriaLabel">Pilih kriteria...</span>
+                  <i class="bi bi-chevron-down"></i>
+                </button>
+                <div class="maplayer-combo-panel" id="dataTableImportKriteriaPanel" hidden></div>
+              </div>
+              <button type="button" class="btn btn-ghost btn-sm" id="dataTableImportBtn" disabled>
+                <i class="bi bi-file-earmark-arrow-up"></i> Import xlsx
+              </button>
+              <input type="file" id="dataTableImportFile" accept=".xlsx" hidden />
+            </div>
+            <button type="button" class="btn btn-ghost btn-sm" id="dataTableExport"><i
+                class="bi bi-file-earmark-excel"></i> Export Excel</button>
+            <button type="button" class="icon-btn" id="dataTableClose" aria-label="Tutup"><i
+                class="bi bi-x-lg"></i></button>
+          </div>
         </div>
+        <div class="datatable-scroll" id="dataTableScroll"></div>
         <div class="datatable-foot">
           <div class="datatable-pagesize">
             Baris per halaman:
-            <select id="laporanPrioritasPageSize">
+            <select id="dataTablePageSize">
               <option value="25">25</option>
               <option value="50" selected>50</option>
               <option value="100">100</option>
+              <option value="200">200</option>
             </select>
           </div>
           <div class="datatable-pager">
-            <button type="button" class="btn btn-ghost btn-sm" id="laporanPrioritasPrev"><i class="bi bi-chevron-left"></i> Sebelumnya</button>
-            <span id="laporanPrioritasPageInfo"></span>
-            <button type="button" class="btn btn-ghost btn-sm" id="laporanPrioritasNext">Berikutnya <i class="bi bi-chevron-right"></i></button>
+            <button type="button" class="btn btn-ghost btn-sm" id="dataTablePrev"><i class="bi bi-chevron-left"></i>
+              Sebelumnya</button>
+            <span id="dataTablePageInfo"></span>
+            <button type="button" class="btn btn-ghost btn-sm" id="dataTableNext">Berikutnya <i
+                class="bi bi-chevron-right"></i></button>
           </div>
         </div>
       </div>
-      <div id="laporanPrioritasDistribusiView" class="laporan-distribusi-view" hidden>
-        <div class="laporan-distribusi-empty" id="laporanDistribusiEmpty">Pilih provinsi untuk melihat distribusi skor.</div>
+    </div>
+
+    <div class="datatable-overlay" id="dalamAngkaOverlay" hidden>
+      <div class="datatable-modal">
+        <div class="datatable-head">
+          <div class="datatable-head-title">
+            <h3><i class="bi bi-file-earmark-pdf"></i> <span>Dalam Angka (BPS) — Provinsi &amp; Kab/Kota</span></h3>
+            <span class="datatable-meta" id="dalamAngkaMeta"></span>
+          </div>
+          <div class="datatable-head-actions">
+            <div class="ijd-provinsi-search">
+              <i class="bi bi-search"></i>
+              <input type="text" id="dalamAngkaSearch" placeholder="Cari nama provinsi/kabupaten/kota..." />
+            </div>
+            <button type="button" class="icon-btn" id="dalamAngkaClose" aria-label="Tutup"><i
+                class="bi bi-x-lg"></i></button>
+          </div>
+        </div>
+        <div class="datatable-scroll" id="dalamAngkaList"></div>
       </div>
-      <div id="laporanPrioritasDashboardView" class="laporan-distribusi-view" hidden>
-        <div class="laporan-distribusi-empty">Pilih provinsi untuk melihat dashboard.</div>
+    </div>
+
+    <div class="datatable-overlay" id="ijdPreviewOverlay" hidden>
+      <div class="datatable-modal">
+        <div class="datatable-head">
+          <div class="datatable-head-title">
+            <h3><i class="bi bi-file-earmark-bar-graph"></i> <span id="ijdPreviewTitle">Preview Export Skor IJD</span>
+            </h3>
+            <span class="datatable-meta" id="ijdPreviewMeta"></span>
+          </div>
+          <div class="datatable-head-actions">
+            <div class="maplayer-combo ijd-provinsi-multiselect" id="ijdPreviewProvinsiField">
+              <button type="button" class="maplayer-combo-toggle" id="ijdPreviewProvinsiToggle">
+                <span id="ijdPreviewProvinsiLabel">Semua provinsi (Nasional)</span>
+                <i class="bi bi-chevron-down"></i>
+              </button>
+              <div class="maplayer-combo-panel ijd-provinsi-panel" id="ijdPreviewProvinsiPanel" hidden>
+                <div class="ijd-provinsi-search">
+                  <i class="bi bi-search"></i>
+                  <input type="text" id="ijdPreviewProvinsiSearch" placeholder="Cari provinsi..." autocomplete="off" />
+                </div>
+                <div class="ijd-provinsi-options" id="ijdPreviewProvinsiOptions"></div>
+                <div class="ijd-provinsi-actions">
+                  <button type="button" class="btn btn-ghost btn-sm" id="ijdPreviewProvinsiClear">Bersihkan</button>
+                  <button type="button" class="btn btn-primary btn-sm" id="ijdPreviewProvinsiApply">Terapkan</button>
+                </div>
+              </div>
+            </div>
+            <label class="ijd-narasi-force"
+              title="Proses ulang &amp; timpa narasi AI yang sudah ada (bukan cuma yang belum punya narasi)">
+              <input type="checkbox" id="ijdPreviewNarasiForce" /> Timpa narasi lama
+            </label>
+            <span class="ijd-narasi-progress" id="ijdPreviewNarasiProgress" hidden>
+              <span class="ijd-narasi-progress-bar"><span id="ijdPreviewNarasiProgressFill"></span></span>
+              <span id="ijdPreviewNarasiProgressText"></span>
+            </span>
+            <button type="button" class="btn btn-ghost btn-sm" id="ijdPreviewNarasiAi">
+              <i class="bi bi-stars"></i> Proses Narasi AI
+            </button>
+            <button type="button" class="btn btn-primary btn-sm" id="ijdPreviewExport">
+              <i class="bi bi-file-earmark-excel"></i> Export Excel
+            </button>
+            <button type="button" class="icon-btn" id="ijdPreviewClose" aria-label="Tutup"><i
+                class="bi bi-x-lg"></i></button>
+          </div>
+        </div>
+        <div class="datatable-scroll" id="ijdPreviewScroll"></div>
+        <div class="datatable-foot">
+          <div class="datatable-pagesize">
+            Baris per halaman:
+            <select id="ijdPreviewPageSize">
+              <option value="25">25</option>
+              <option value="50" selected>50</option>
+              <option value="100">100</option>
+              <option value="200">200</option>
+            </select>
+          </div>
+          <div class="datatable-pager">
+            <button type="button" class="btn btn-ghost btn-sm" id="ijdPreviewPrev"><i class="bi bi-chevron-left"></i>
+              Sebelumnya</button>
+            <span id="ijdPreviewPageInfo"></span>
+            <button type="button" class="btn btn-ghost btn-sm" id="ijdPreviewNext">Berikutnya <i
+                class="bi bi-chevron-right"></i></button>
+          </div>
+        </div>
       </div>
+    </div>
+
+    <div class="datatable-overlay" id="ijdDashboardOverlay" hidden>
+      <div class="datatable-modal">
+        <div class="datatable-head">
+          <div class="datatable-head-title">
+            <h3><i class="bi bi-speedometer2"></i> Dashboard Skor IJD Prioritisasi Teknokratik (A-E)</h3>
+            <span class="datatable-meta" id="ijdDashboardMeta"></span>
+          </div>
+          <div class="datatable-head-actions">
+            <button type="button" class="icon-btn" id="ijdDashboardClose" aria-label="Tutup"><i
+                class="bi bi-x-lg"></i></button>
+          </div>
+        </div>
+        <div class="laporan-distribusi-view" id="ijdDashboardView">
+          <div class="laporan-distribusi-empty">Memuat dashboard...</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="datatable-overlay" id="nprPreviewOverlay" hidden>
+      <div class="datatable-modal">
+        <div class="datatable-head">
+          <div class="datatable-head-title">
+            <h3><i class="bi bi-graph-up-arrow"></i> <span id="nprPreviewTitle">Preview NPR</span></h3>
+            <span class="datatable-meta" id="nprPreviewMeta"></span>
+          </div>
+          <div class="datatable-head-actions">
+            <button type="button" class="btn btn-primary btn-sm" id="nprPreviewExport">
+              <i class="bi bi-file-earmark-excel"></i> Export Excel
+            </button>
+            <button type="button" class="icon-btn" id="nprPreviewClose" aria-label="Tutup"><i
+                class="bi bi-x-lg"></i></button>
+          </div>
+        </div>
+        <div class="datatable-scroll" id="nprPreviewScroll"></div>
+        <div class="datatable-foot">
+          <div class="datatable-pagesize">
+            Baris per halaman:
+            <select id="nprPreviewPageSize">
+              <option value="25">25</option>
+              <option value="50" selected>50</option>
+              <option value="100">100</option>
+              <option value="200">200</option>
+            </select>
+          </div>
+          <div class="datatable-pager">
+            <button type="button" class="btn btn-ghost btn-sm" id="nprPreviewPrev"><i class="bi bi-chevron-left"></i>
+              Sebelumnya</button>
+            <span id="nprPreviewPageInfo"></span>
+            <button type="button" class="btn btn-ghost btn-sm" id="nprPreviewNext">Berikutnya <i
+                class="bi bi-chevron-right"></i></button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="datatable-overlay" id="laporanPrioritasOverlay" hidden>
+      <div class="datatable-modal">
+        <div class="datatable-head">
+          <div class="datatable-head-title">
+            <h3><i class="bi bi-clipboard-check"></i> <span id="laporanPrioritasTitle">Laporan Daerah Prioritas</span>
+            </h3>
+            <span class="datatable-meta" id="laporanPrioritasMeta"></span>
+          </div>
+          <div class="datatable-head-actions">
+            <div class="maplayer-combo" id="laporanPrioritasProvinsiField">
+              <button type="button" class="maplayer-combo-toggle" id="laporanPrioritasProvinsiToggle">
+                <span id="laporanPrioritasProvinsiLabel">Pilih provinsi...</span>
+                <i class="bi bi-chevron-down"></i>
+              </button>
+              <div class="maplayer-combo-panel" id="laporanPrioritasProvinsiPanel" hidden></div>
+            </div>
+            <button type="button" class="btn btn-primary btn-sm" id="laporanPrioritasExport" disabled>
+              <i class="bi bi-file-earmark-excel"></i> Export Excel
+            </button>
+            <button type="button" class="icon-btn" id="laporanPrioritasClose" aria-label="Tutup"><i
+                class="bi bi-x-lg"></i></button>
+          </div>
+        </div>
+        <div class="datatable-tabs">
+          <button type="button" class="datatable-tab active" id="laporanTabChecklist">
+            <i class="bi bi-table"></i> Checklist
+          </button>
+          <button type="button" class="datatable-tab" id="laporanTabDistribusi">
+            <i class="bi bi-bar-chart-line"></i> Distribusi Skor
+          </button>
+          <button type="button" class="datatable-tab" id="laporanTabDashboard">
+            <i class="bi bi-speedometer2"></i> Dashboard
+          </button>
+        </div>
+        <div id="laporanPrioritasChecklistView">
+          <div class="datatable-scroll" id="laporanPrioritasScroll">
+            <div class="datatable-loading">Pilih provinsi untuk melihat laporan.</div>
+          </div>
+          <div class="datatable-foot">
+            <div class="datatable-pagesize">
+              Baris per halaman:
+              <select id="laporanPrioritasPageSize">
+                <option value="25">25</option>
+                <option value="50" selected>50</option>
+                <option value="100">100</option>
+              </select>
+            </div>
+            <div class="datatable-pager">
+              <button type="button" class="btn btn-ghost btn-sm" id="laporanPrioritasPrev"><i
+                  class="bi bi-chevron-left"></i> Sebelumnya</button>
+              <span id="laporanPrioritasPageInfo"></span>
+              <button type="button" class="btn btn-ghost btn-sm" id="laporanPrioritasNext">Berikutnya <i
+                  class="bi bi-chevron-right"></i></button>
+            </div>
+          </div>
+        </div>
+        <div id="laporanPrioritasDistribusiView" class="laporan-distribusi-view" hidden>
+          <div class="laporan-distribusi-controls">
+            <label for="laporanDistribusiStep">Lebar Rentang</label>
+            <input type="number" id="laporanDistribusiStep" min="1" step="1" value="2" />
+            <button type="button" class="btn btn-ghost btn-sm" id="laporanDistribusiProses">
+              <i class="bi bi-arrow-repeat"></i> Proses
+            </button>
+          </div>
+          <div id="laporanDistribusiCharts">
+            <div class="laporan-distribusi-empty" id="laporanDistribusiEmpty">Pilih provinsi untuk melihat distribusi
+              skor.</div>
+          </div>
+        </div>
+        <div id="laporanPrioritasDashboardView" class="laporan-distribusi-view" hidden>
+          <div class="laporan-distribusi-empty">Pilih provinsi untuk melihat dashboard.</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="layout">
+      <aside class="sidebar" id="sidebar">
+        <div class="sidebar-scroll">
+
+          <section class="panel">
+            <h2 class="panel-title">1. Titik Lokasi</h2>
+
+            <div class="point-row" data-role="origin">
+              <span class="point-marker origin-marker">A</span>
+              <input type="text" id="inputOrigin" placeholder="Titik Awal (Origin) — cari alamat atau klik peta"
+                autocomplete="off" />
+              <button class="icon-btn small" data-action="locate-origin" title="Gunakan lokasi saya"><i
+                  class="bi bi-crosshair"></i></button>
+            </div>
+
+            <div id="waypointList" class="waypoint-list"></div>
+
+            <button id="btnAddStop" class="btn btn-ghost btn-block">+ Add Stop (Waypoint)</button>
+
+            <div class="point-row" data-role="destination">
+              <span class="point-marker destination-marker">B</span>
+              <input type="text" id="inputDestination" placeholder="Titik Tujuan (Destination)" autocomplete="off" />
+            </div>
+
+            <details class="manual-coord">
+              <summary>Input koordinat manual / import CSV</summary>
+              <div class="manual-coord-body">
+                <div class="coord-fields">
+                  <input type="number" step="any" id="manualLat" placeholder="Latitude" />
+                  <input type="number" step="any" id="manualLng" placeholder="Longitude" />
+                  <select id="manualTarget">
+                    <option value="origin">Origin</option>
+                    <option value="waypoint">Tambah sebagai Waypoint</option>
+                    <option value="destination">Destination</option>
+                  </select>
+                  <button id="btnManualAdd" class="btn btn-sm">Set</button>
+                </div>
+                <label class="file-label">
+                  Import titik (CSV: lat,lng,label)
+                  <input type="file" id="csvImport" accept=".csv" hidden />
+                </label>
+              </div>
+            </details>
+          </section>
+
+          <section class="panel">
+            <h2 class="panel-title">2. Moda Transportasi</h2>
+            <div class="mode-grid" id="modeGrid">
+              <button class="mode-btn active" data-mode="DRIVING"><i
+                  class="bi bi-car-front-fill"></i><span>Mobil</span></button>
+              <button class="mode-btn" data-mode="MOTORCYCLE"><i class="bi bi-scooter"></i><span>Motor*</span></button>
+              <button class="mode-btn" data-mode="WALKING"><i class="bi bi-person-walking"></i><span>Jalan
+                  Kaki</span></button>
+              <button class="mode-btn" data-mode="BICYCLING"><i class="bi bi-bicycle"></i><span>Sepeda</span></button>
+            </div>
+            <p class="hint">*Motor memakai profil rute mobil (Google Directions tidak menyediakan profil motor
+              terpisah).</p>
+
+            <div class="toggle-row">
+              <label class="switch">
+                <input type="checkbox" id="toggleAlternatives" checked />
+                <span class="slider"></span>
+              </label>
+              <span>Tampilkan rute alternatif</span>
+            </div>
+            <div class="toggle-row">
+              <label class="switch">
+                <input type="checkbox" id="toggleCompareTolls" />
+                <span class="slider"></span>
+              </label>
+              <span>Bandingkan dengan/tanpa tol</span>
+            </div>
+            <p class="hint" id="waypointAltHint" hidden><i class="bi bi-info-circle"></i> Google tidak menyediakan
+              alternatif resmi bila ada Waypoint, jadi alternatif dihitung per-segmen (Origin→Stop→...→Destination) dan
+              digabung — hasilnya bisa sedikit berbeda dari alternatif tanpa waypoint.</p>
+          </section>
+
+          <button id="btnFindRoute" class="btn btn-primary btn-block btn-lg"><i class="bi bi-signpost-split-fill"></i>
+            Cari Rute</button>
+
+          <section class="panel" id="routeResultsPanel" hidden>
+            <h2 class="panel-title">3. Alternatif Rute</h2>
+            <div id="routeList" class="route-list"></div>
+          </section>
+
+          <section class="panel" id="analysisPanel" hidden>
+            <h2 class="panel-title">4. Analisis Rute</h2>
+            <div id="analysisContent"></div>
+          </section>
+
+          <section class="panel" id="advancedPanel" hidden>
+            <h2 class="panel-title">5. Analisis Lanjutan</h2>
+            <div class="adv-block">
+              <button id="btnAdminRegions" class="btn btn-ghost btn-block"><i class="bi bi-map"></i> Wilayah
+                Administratif</button>
+              <div id="adminRegionsContent"></div>
+            </div>
+            <div class="adv-block">
+              <button id="btnRoadClass" class="btn btn-ghost btn-block"><i class="bi bi-signpost-2-fill"></i>
+                Klasifikasi Jalan (OSM)</button>
+              <div id="roadClassContent"></div>
+            </div>
+            <div class="adv-block">
+              <button id="btnUsulanInpres" class="btn btn-ghost btn-block"><i class="bi bi-cash-coin"></i> Usulan Inpres
+                Jalan/Jembatan</button>
+              <div id="usulanInpresContent"></div>
+            </div>
+          </section>
+
+          <section class="panel" id="exportPanel" hidden>
+            <h2 class="panel-title">6. Export Data</h2>
+            <div class="export-grid">
+              <button class="btn btn-export" data-format="geojson">GeoJSON</button>
+              <button class="btn btn-export" data-format="csv">CSV</button>
+              <button class="btn btn-export" data-format="gpx">GPX</button>
+              <button class="btn btn-export" data-format="wkt">WKT</button>
+              <button class="btn btn-export btn-export-shp" data-format="shp"><i class="bi bi-box-seam-fill"></i> ESRI
+                Shapefile (SHP)</button>
+            </div>
+          </section>
+
+          <section class="panel" id="usulanBrowsePanel">
+            <h2 class="panel-title">7. Jelajahi Usulan Inpres Jalan/Jembatan</h2>
+            <div class="usulan-io-row">
+              <button id="btnUsulanImport" class="btn btn-ghost btn-sm"><i class="bi bi-upload"></i> Import
+                XLSX</button>
+              <button id="btnUsulanExport" class="btn btn-ghost btn-sm"><i class="bi bi-download"></i> Export
+                XLSX</button>
+              <button id="btnUsulanExportIjdScore" class="btn btn-ghost btn-sm"><i
+                  class="bi bi-file-earmark-bar-graph"></i> Export Skor IJD (xlsx)</button>
+              <button id="btnIjdDashboard" class="btn btn-ghost btn-sm"><i class="bi bi-speedometer2"></i> Dashboard
+                Skor IJD</button>
+              <button id="btnUsulanExportNpr" class="btn btn-ghost btn-sm"><i class="bi bi-graph-up-arrow"></i> Preview
+                NPR</button>
+              <input type="file" id="usulanImportFile" accept=".xlsx" hidden />
+            </div>
+            <div class="usulan-browse-filters">
+              <div class="usulan-filter-field usulan-combo" id="usulanProvinsiField">
+                <i class="bi bi-map-fill"></i>
+                <button type="button" class="usulan-combo-toggle" id="usulanProvinsiToggle">
+                  <span id="usulanProvinsiLabel">Semua Provinsi</span>
+                  <i class="bi bi-chevron-down"></i>
+                </button>
+                <div class="usulan-combo-panel" id="usulanProvinsiPanel" hidden>
+                  <div class="usulan-combo-option selected" data-value="">Semua Provinsi</div>
+                </div>
+              </div>
+              <div class="usulan-filter-field">
+                <i class="bi bi-search"></i>
+                <input type="text" id="usulanSearchInput" placeholder="Cari nama ruas, kegiatan, atau kode ruas..."
+                  autocomplete="off" />
+              </div>
+            </div>
+            <div id="usulanBrowseList" class="usulan-browse-list"></div>
+            <div id="usulanBrowseMore" class="usulan-browse-more" hidden>
+              <button id="btnUsulanLoadMore" class="btn btn-ghost btn-block btn-sm">Muat lebih banyak</button>
+            </div>
+            <div id="usulanBrowseDetail"></div>
+          </section>
+
+        </div>
+      </aside>
+
+      <main class="map-area">
+        <div id="map"></div>
+        <div class="osm-attribution" id="osmAttribution" hidden>&copy; <a href="https://www.openstreetmap.org/copyright"
+            target="_blank" rel="noopener">OpenStreetMap</a> contributors</div>
+
+        <div class="map-toolbar" id="mapToolbar">
+          <button class="maptool-btn" data-tool="add-point"
+            title="Tambah Titik Rute — klik peta (termasuk di atas layer overlay) untuk mengisi Origin/Tujuan/Waypoint"><i
+              class="bi bi-geo-alt-fill"></i></button>
+          <button class="maptool-btn" data-tool="identify"
+            title="Identify — klik fitur layer aktif untuk melihat atributnya"><i
+              class="bi bi-info-circle-fill"></i></button>
+          <button class="maptool-btn" data-tool="select"
+            title="Select — klik fitur untuk memilih, Shift+klik untuk multi-select"><i
+              class="bi bi-cursor-fill"></i></button>
+          <button class="maptool-btn" data-tool="measure-distance" title="Ukur jarak"><i
+              class="bi bi-rulers"></i></button>
+          <button class="maptool-btn" data-tool="measure-area" title="Ukur luas area"><i
+              class="bi bi-bounding-box"></i></button>
+          <div class="maptool-sep"></div>
+          <button class="maptool-btn" id="btnMapLegend" title="Legend layer aktif"><i
+              class="bi bi-list-ul"></i></button>
+        </div>
+
+        <div class="map-legend" id="mapLegend" hidden>
+          <div class="map-panel-header">
+            <span>Legend — Layer Aktif</span>
+            <button type="button" class="maplayer-clearall" id="mapLegendClearAll"
+              title="Matikan semua layer overlay"><i class="bi bi-x-square"></i> Hapus semua</button>
+            <button type="button" class="maplayer-close" id="mapLegendClose" aria-label="Tutup legend"><i
+                class="bi bi-x-lg"></i></button>
+          </div>
+          <div class="map-legend-list" id="mapLegendList"></div>
+        </div>
+
+        <div class="map-measure-result" id="mapMeasureResult" hidden>
+          <span id="mapMeasureText"></span>
+          <button type="button" id="btnMeasureFinish" class="btn btn-sm">Selesai</button>
+          <button type="button" id="btnMeasureClear" class="btn btn-sm btn-ghost">Hapus</button>
+        </div>
+
+        <div class="map-selection-panel" id="mapSelectionPanel" hidden>
+          <div class="map-panel-header">
+            <span id="mapSelectionCount">0 fitur terpilih</span>
+            <button type="button" class="maplayer-close" id="mapSelectionClear" aria-label="Hapus seleksi"><i
+                class="bi bi-x-lg"></i></button>
+          </div>
+          <div class="map-selection-list" id="mapSelectionList"></div>
+        </div>
+
+        <div class="map-fab-group">
+          <button id="btnChatToggle" class="fab" title="Asisten The Next - SiJalan (Gemini)"><i
+              class="bi bi-stars"></i></button>
+          <button id="btnClearAll" class="fab" title="Reset semua"><i class="bi bi-trash-fill"></i></button>
+        </div>
+
+        <div class="chat-panel" id="chatPanel" hidden>
+          <div class="map-panel-header">
+            <span><i class="bi bi-stars"></i> Asisten The Next - SiJalan</span>
+            <button type="button" class="maplayer-close" id="chatClose" aria-label="Tutup asisten"><i
+                class="bi bi-x-lg"></i></button>
+          </div>
+          <div class="chat-messages" id="chatMessages"></div>
+          <button type="button" class="btn btn-ghost btn-block btn-sm" id="btnChatSummary"><i class="bi bi-magic"></i>
+            Ringkasan Rute</button>
+          <form id="chatForm" class="chat-form">
+            <input type="text" id="chatInput" placeholder="Tanya sesuatu tentang rute ini..." autocomplete="off" />
+            <button type="submit" class="icon-btn" aria-label="Kirim"><i class="bi bi-send-fill"></i></button>
+          </form>
+        </div>
+
+        <div id="toast" class="toast" hidden></div>
+      </main>
     </div>
   </div>
 
-  <div class="layout">
-    <aside class="sidebar" id="sidebar">
-      <div class="sidebar-scroll">
-
-        <section class="panel">
-          <h2 class="panel-title">1. Titik Lokasi</h2>
-
-          <div class="point-row" data-role="origin">
-            <span class="point-marker origin-marker">A</span>
-            <input type="text" id="inputOrigin" placeholder="Titik Awal (Origin) — cari alamat atau klik peta" autocomplete="off" />
-            <button class="icon-btn small" data-action="locate-origin" title="Gunakan lokasi saya"><i class="bi bi-crosshair"></i></button>
-          </div>
-
-          <div id="waypointList" class="waypoint-list"></div>
-
-          <button id="btnAddStop" class="btn btn-ghost btn-block">+ Add Stop (Waypoint)</button>
-
-          <div class="point-row" data-role="destination">
-            <span class="point-marker destination-marker">B</span>
-            <input type="text" id="inputDestination" placeholder="Titik Tujuan (Destination)" autocomplete="off" />
-          </div>
-
-          <details class="manual-coord">
-            <summary>Input koordinat manual / import CSV</summary>
-            <div class="manual-coord-body">
-              <div class="coord-fields">
-                <input type="number" step="any" id="manualLat" placeholder="Latitude" />
-                <input type="number" step="any" id="manualLng" placeholder="Longitude" />
-                <select id="manualTarget">
-                  <option value="origin">Origin</option>
-                  <option value="waypoint">Tambah sebagai Waypoint</option>
-                  <option value="destination">Destination</option>
-                </select>
-                <button id="btnManualAdd" class="btn btn-sm">Set</button>
-              </div>
-              <label class="file-label">
-                Import titik (CSV: lat,lng,label)
-                <input type="file" id="csvImport" accept=".csv" hidden />
-              </label>
-            </div>
-          </details>
-        </section>
-
-        <section class="panel">
-          <h2 class="panel-title">2. Moda Transportasi</h2>
-          <div class="mode-grid" id="modeGrid">
-            <button class="mode-btn active" data-mode="DRIVING"><i class="bi bi-car-front-fill"></i><span>Mobil</span></button>
-            <button class="mode-btn" data-mode="MOTORCYCLE"><i class="bi bi-scooter"></i><span>Motor*</span></button>
-            <button class="mode-btn" data-mode="WALKING"><i class="bi bi-person-walking"></i><span>Jalan Kaki</span></button>
-            <button class="mode-btn" data-mode="BICYCLING"><i class="bi bi-bicycle"></i><span>Sepeda</span></button>
-          </div>
-          <p class="hint">*Motor memakai profil rute mobil (Google Directions tidak menyediakan profil motor terpisah).</p>
-
-          <div class="toggle-row">
-            <label class="switch">
-              <input type="checkbox" id="toggleAlternatives" checked />
-              <span class="slider"></span>
-            </label>
-            <span>Tampilkan rute alternatif</span>
-          </div>
-          <div class="toggle-row">
-            <label class="switch">
-              <input type="checkbox" id="toggleCompareTolls" />
-              <span class="slider"></span>
-            </label>
-            <span>Bandingkan dengan/tanpa tol</span>
-          </div>
-          <p class="hint" id="waypointAltHint" hidden><i class="bi bi-info-circle"></i> Google tidak menyediakan alternatif resmi bila ada Waypoint, jadi alternatif dihitung per-segmen (Origin→Stop→...→Destination) dan digabung — hasilnya bisa sedikit berbeda dari alternatif tanpa waypoint.</p>
-        </section>
-
-        <button id="btnFindRoute" class="btn btn-primary btn-block btn-lg"><i class="bi bi-signpost-split-fill"></i> Cari Rute</button>
-
-        <section class="panel" id="routeResultsPanel" hidden>
-          <h2 class="panel-title">3. Alternatif Rute</h2>
-          <div id="routeList" class="route-list"></div>
-        </section>
-
-        <section class="panel" id="analysisPanel" hidden>
-          <h2 class="panel-title">4. Analisis Rute</h2>
-          <div id="analysisContent"></div>
-        </section>
-
-        <section class="panel" id="advancedPanel" hidden>
-          <h2 class="panel-title">5. Analisis Lanjutan</h2>
-          <div class="adv-block">
-            <button id="btnAdminRegions" class="btn btn-ghost btn-block"><i class="bi bi-map"></i> Wilayah Administratif</button>
-            <div id="adminRegionsContent"></div>
-          </div>
-          <div class="adv-block">
-            <button id="btnRoadClass" class="btn btn-ghost btn-block"><i class="bi bi-signpost-2-fill"></i> Klasifikasi Jalan (OSM)</button>
-            <div id="roadClassContent"></div>
-          </div>
-          <div class="adv-block">
-            <button id="btnUsulanInpres" class="btn btn-ghost btn-block"><i class="bi bi-cash-coin"></i> Usulan Inpres Jalan/Jembatan</button>
-            <div id="usulanInpresContent"></div>
-          </div>
-        </section>
-
-        <section class="panel" id="exportPanel" hidden>
-          <h2 class="panel-title">6. Export Data</h2>
-          <div class="export-grid">
-            <button class="btn btn-export" data-format="geojson">GeoJSON</button>
-            <button class="btn btn-export" data-format="csv">CSV</button>
-            <button class="btn btn-export" data-format="gpx">GPX</button>
-            <button class="btn btn-export" data-format="wkt">WKT</button>
-            <button class="btn btn-export btn-export-shp" data-format="shp"><i class="bi bi-box-seam-fill"></i> ESRI Shapefile (SHP)</button>
-          </div>
-        </section>
-
-        <section class="panel" id="usulanBrowsePanel">
-          <h2 class="panel-title">7. Jelajahi Usulan Inpres Jalan/Jembatan</h2>
-          <div class="usulan-io-row">
-            <button id="btnUsulanImport" class="btn btn-ghost btn-sm"><i class="bi bi-upload"></i> Import XLSX</button>
-            <button id="btnUsulanExport" class="btn btn-ghost btn-sm"><i class="bi bi-download"></i> Export XLSX</button>
-            <button id="btnUsulanExportIjdScore" class="btn btn-ghost btn-sm"><i class="bi bi-file-earmark-bar-graph"></i> Export Skor IJD (xlsx)</button>
-            <input type="file" id="usulanImportFile" accept=".xlsx" hidden />
-          </div>
-          <div class="usulan-browse-filters">
-            <div class="usulan-filter-field usulan-combo" id="usulanProvinsiField">
-              <i class="bi bi-map-fill"></i>
-              <button type="button" class="usulan-combo-toggle" id="usulanProvinsiToggle">
-                <span id="usulanProvinsiLabel">Semua Provinsi</span>
-                <i class="bi bi-chevron-down"></i>
-              </button>
-              <div class="usulan-combo-panel" id="usulanProvinsiPanel" hidden>
-                <div class="usulan-combo-option selected" data-value="">Semua Provinsi</div>
-              </div>
-            </div>
-            <div class="usulan-filter-field">
-              <i class="bi bi-search"></i>
-              <input type="text" id="usulanSearchInput" placeholder="Cari nama ruas, kegiatan, atau kode ruas..." autocomplete="off" />
-            </div>
-          </div>
-          <div id="usulanBrowseList" class="usulan-browse-list"></div>
-          <div id="usulanBrowseMore" class="usulan-browse-more" hidden>
-            <button id="btnUsulanLoadMore" class="btn btn-ghost btn-block btn-sm">Muat lebih banyak</button>
-          </div>
-          <div id="usulanBrowseDetail"></div>
-        </section>
-
-      </div>
-    </aside>
-
-    <main class="map-area">
-      <div id="map"></div>
-      <div class="osm-attribution" id="osmAttribution" hidden>&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a> contributors</div>
-
-      <div class="map-toolbar" id="mapToolbar">
-        <button class="maptool-btn" data-tool="add-point" title="Tambah Titik Rute — klik peta (termasuk di atas layer overlay) untuk mengisi Origin/Tujuan/Waypoint"><i class="bi bi-geo-alt-fill"></i></button>
-        <button class="maptool-btn" data-tool="identify" title="Identify — klik fitur layer aktif untuk melihat atributnya"><i class="bi bi-info-circle-fill"></i></button>
-        <button class="maptool-btn" data-tool="select" title="Select — klik fitur untuk memilih, Shift+klik untuk multi-select"><i class="bi bi-cursor-fill"></i></button>
-        <button class="maptool-btn" data-tool="measure-distance" title="Ukur jarak"><i class="bi bi-rulers"></i></button>
-        <button class="maptool-btn" data-tool="measure-area" title="Ukur luas area"><i class="bi bi-bounding-box"></i></button>
-        <div class="maptool-sep"></div>
-        <button class="maptool-btn" id="btnMapLegend" title="Legend layer aktif"><i class="bi bi-list-ul"></i></button>
-      </div>
-
-      <div class="map-legend" id="mapLegend" hidden>
-        <div class="map-panel-header">
-          <span>Legend — Layer Aktif</span>
-          <button type="button" class="maplayer-clearall" id="mapLegendClearAll" title="Matikan semua layer overlay"><i class="bi bi-x-square"></i> Hapus semua</button>
-          <button type="button" class="maplayer-close" id="mapLegendClose" aria-label="Tutup legend"><i class="bi bi-x-lg"></i></button>
-        </div>
-        <div class="map-legend-list" id="mapLegendList"></div>
-      </div>
-
-      <div class="map-measure-result" id="mapMeasureResult" hidden>
-        <span id="mapMeasureText"></span>
-        <button type="button" id="btnMeasureFinish" class="btn btn-sm">Selesai</button>
-        <button type="button" id="btnMeasureClear" class="btn btn-sm btn-ghost">Hapus</button>
-      </div>
-
-      <div class="map-selection-panel" id="mapSelectionPanel" hidden>
-        <div class="map-panel-header">
-          <span id="mapSelectionCount">0 fitur terpilih</span>
-          <button type="button" class="maplayer-close" id="mapSelectionClear" aria-label="Hapus seleksi"><i class="bi bi-x-lg"></i></button>
-        </div>
-        <div class="map-selection-list" id="mapSelectionList"></div>
-      </div>
-
-      <div class="map-fab-group">
-        <button id="btnChatToggle" class="fab" title="Asisten RouteGIS (Gemini)"><i class="bi bi-stars"></i></button>
-        <button id="btnClearAll" class="fab" title="Reset semua"><i class="bi bi-trash-fill"></i></button>
-      </div>
-
-      <div class="chat-panel" id="chatPanel" hidden>
-        <div class="map-panel-header">
-          <span><i class="bi bi-stars"></i> Asisten RouteGIS</span>
-          <button type="button" class="maplayer-close" id="chatClose" aria-label="Tutup asisten"><i class="bi bi-x-lg"></i></button>
-        </div>
-        <div class="chat-messages" id="chatMessages"></div>
-        <button type="button" class="btn btn-ghost btn-block btn-sm" id="btnChatSummary"><i class="bi bi-magic"></i> Ringkasan Rute</button>
-        <form id="chatForm" class="chat-form">
-          <input type="text" id="chatInput" placeholder="Tanya sesuatu tentang rute ini..." autocomplete="off" />
-          <button type="submit" class="icon-btn" aria-label="Kirim"><i class="bi bi-send-fill"></i></button>
-        </form>
-      </div>
-
-      <div id="toast" class="toast" hidden></div>
-    </main>
-  </div>
-</div>
-
-<script>
-  window.addEventListener("DOMContentLoaded", async () => {
-    const res = await fetch("/api/config");
-    const cfg = await res.json();
-    const script = document.createElement("script");
-    script.src = `https://maps.googleapis.com/maps/api/js?key=${cfg.googleMapsApiKey}&libraries=places,geometry&callback=initApp`;
-    script.async = true;
-    script.defer = true;
-    document.head.appendChild(script);
-  });
-</script>
-<script src="/js/state.js"></script>
-<script src="/js/utils.js"></script>
-<script src="/js/data-viewer.js"></script>
-<script src="/js/map-bootstrap.js"></script>
-<script src="/js/points.js"></script>
-<script src="/js/routing.js"></script>
-<script src="/js/drawing.js"></script>
-<script src="/js/maps-overlay.js"></script>
-<script src="/js/map-tools.js"></script>
-<script src="/js/route-list.js"></script>
-<script src="/js/analysis.js"></script>
-<script src="/js/usulan-inpres.js"></script>
-<script src="/js/chat.js"></script>
-<script src="/js/export.js"></script>
-<script src="/js/main.js"></script>
+  <script>
+    window.addEventListener("DOMContentLoaded", async () => {
+      const res = await fetch("/api/config");
+      const cfg = await res.json();
+      const script = document.createElement("script");
+      script.src = `https://maps.googleapis.com/maps/api/js?key=${cfg.googleMapsApiKey}&libraries=places,geometry&callback=initApp`;
+      script.async = true;
+      script.defer = true;
+      document.head.appendChild(script);
+    });
+  </script>
+  <script src="/js/state.js"></script>
+  <script src="/js/utils.js"></script>
+  <script src="/js/data-viewer.js"></script>
+  <script src="/js/dalam-angka.js"></script>
+  <script src="/js/map-bootstrap.js"></script>
+  <script src="/js/points.js"></script>
+  <script src="/js/routing.js"></script>
+  <script src="/js/drawing.js"></script>
+  <script src="/js/maps-overlay.js"></script>
+  <script src="/js/map-tools.js"></script>
+  <script src="/js/route-list.js"></script>
+  <script src="/js/analysis.js"></script>
+  <script src="/js/usulan-inpres.js"></script>
+  <script src="/js/chat.js"></script>
+  <script src="/js/export.js"></script>
+  <script src="/js/main.js"></script>
 </body>
+
 </html>

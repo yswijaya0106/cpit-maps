@@ -1,4 +1,4 @@
-/* RouteGIS — Google Maps bootstrap, geocoding, address search */
+/* The Next - SiJalan — Google Maps bootstrap, geocoding, address search */
 
 function initApp() {
   state.map = new google.maps.Map(document.getElementById("map"), {

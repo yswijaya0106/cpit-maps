@@ -1,4 +1,4 @@
-/* RouteGIS — travel mode selection & Google Directions route computation */
+/* The Next - SiJalan — travel mode selection & Google Directions route computation */
 
 function bindModeGrid() {
   document.querySelectorAll(".mode-btn").forEach((btn) => {

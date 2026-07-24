@@ -32,17 +32,18 @@ from collections import defaultdict
 from pathlib import Path
 
 import openpyxl
-import pymysql
+import psycopg
+from psycopg.rows import dict_row
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 DEFAULT_XLSX = BASE_DIR / "docs" / "docs" / "DPP_IJD 2025.xlsx"
 SCHEMA_PATH = Path(__file__).resolve().parent / "schema_dpp_ijd_2025.sql"
 
-DB_HOST = os.environ.get("MYSQL_HOST", "127.0.0.1")
-DB_PORT = int(os.environ.get("MYSQL_PORT", "3306"))
-DB_USER = os.environ.get("MYSQL_USER", "root")
-DB_PASS = os.environ.get("MYSQL_PASS", "")
-DB_NAME = os.environ.get("MYSQL_DB", "route_gis")
+DB_HOST = os.environ.get("PG_HOST", "127.0.0.1")
+DB_PORT = int(os.environ.get("PG_PORT", "5432"))
+DB_USER = os.environ.get("PG_USER", "postgres")
+DB_PASS = os.environ.get("PG_PASS", "")
+DB_NAME = os.environ.get("PG_DB", "route_gis")
 
 COLS = [
     "sumber", "no_urut", "id_sitia_2025", "nama_kegiatan", "jenis_penanganan",
@@ -60,38 +61,31 @@ _ACTIVITY_WORDS = {
 
 
 def connect():
-    conn = pymysql.connect(
-        host=DB_HOST, port=DB_PORT, user=DB_USER, password=DB_PASS,
-        charset="utf8mb4", autocommit=False,
+    return psycopg.connect(
+        host=DB_HOST, port=DB_PORT, user=DB_USER, password=DB_PASS, dbname=DB_NAME,
     )
-    with conn.cursor() as cur:
-        cur.execute(
-            "CREATE DATABASE IF NOT EXISTS %s CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci"
-            % DB_NAME
-        )
-    conn.select_db(DB_NAME)
-    return conn
 
 
 def run_schema(conn):
-    sql_text = SCHEMA_PATH.read_text(encoding="utf-8")
-    code_lines = [ln for ln in sql_text.splitlines() if not ln.strip().startswith("--")]
+    """Tabel sudah dibuat via scripts/migrate_pg_01_schema.py (lihat
+    docs/migrasi_mysql_ke_postgresql.md) -- schema_dpp_ijd_2025.sql aslinya
+    DDL MySQL, tidak bisa dieksekusi langsung ke PostgreSQL. Di sini cuma
+    pastikan tabelnya ada + kolom flag penuntasan di usulan_inpres
+    (native ADD COLUMN IF NOT EXISTS, tidak perlu cek information_schema
+    manual spt versi MySQL 8)."""
     with conn.cursor() as cur:
-        for stmt in [s.strip() for s in "\n".join(code_lines).split(";") if s.strip()]:
-            cur.execute(stmt)
-        # Kolom flag penuntasan di usulan_inpres (MySQL 8 belum mendukung
-        # ADD COLUMN IF NOT EXISTS, jadi cek information_schema dulu).
         cur.execute(
-            "SELECT COUNT(*) FROM information_schema.columns "
-            "WHERE table_schema = %s AND table_name = 'usulan_inpres' "
-            "AND column_name = 'lanjutan_ijd_2025'",
-            (DB_NAME,),
+            "SELECT 1 FROM information_schema.tables "
+            "WHERE table_schema='public' AND table_name='dpp_ijd_2025'"
         )
-        if cur.fetchone()[0] == 0:
-            cur.execute(
-                "ALTER TABLE usulan_inpres ADD COLUMN lanjutan_ijd_2025 TINYINT NULL "
-                "COMMENT 'Parameter E: 1=lanjutan/penuntasan IJD TA 2025, 0=usulan baru, NULL=belum dicocokkan'"
+        if not cur.fetchone():
+            raise RuntimeError(
+                "Tabel dpp_ijd_2025 belum ada di PostgreSQL -- jalankan "
+                "scripts/migrate_pg_01_schema.py dulu."
             )
+        cur.execute(
+            "ALTER TABLE usulan_inpres ADD COLUMN IF NOT EXISTS lanjutan_ijd_2025 SMALLINT"
+        )
     conn.commit()
 
 
@@ -165,8 +159,8 @@ def upsert(conn, rows):
     sql = (
         f"INSERT INTO dpp_ijd_2025 ({', '.join(COLS)}) "
         f"VALUES ({', '.join(['%s'] * len(COLS))}) "
-        "ON DUPLICATE KEY UPDATE "
-        + ", ".join(f"{c} = VALUES({c})" for c in COLS if c not in ("sumber", "no_urut"))
+        "ON CONFLICT (sumber, no_urut) DO UPDATE SET "
+        + ", ".join(f"{c} = EXCLUDED.{c}" for c in COLS if c not in ("sumber", "no_urut"))
     )
     with conn.cursor() as cur:
         cur.executemany(sql, [[row[c] for c in COLS] for row in rows])
@@ -201,7 +195,7 @@ def norm_prov(s):
 
 
 def run_match(conn):
-    with conn.cursor(pymysql.cursors.DictCursor) as cur:
+    with conn.cursor(row_factory=dict_row) as cur:
         cur.execute("SELECT id, nama_ruas, nama_kegiatan, provinsi, kabupaten_kota FROM usulan_inpres")
         usulan = cur.fetchall()
         cur.execute("SELECT id, nama_kegiatan, provinsi, kewenangan FROM dpp_ijd_2025")

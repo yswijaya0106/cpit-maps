@@ -28,7 +28,8 @@ import sys
 from pathlib import Path
 
 import geopandas as gpd
-import pymysql
+import psycopg
+from psycopg.rows import dict_row
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 if sys.stdout.encoding and sys.stdout.encoding.lower() != "utf-8":
@@ -38,34 +39,33 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 SHP_PATH = BASE_DIR / "Maps" / "JALAN NASIONAL" / "Jalan Nasional.shp"
 SCHEMA_PATH = Path(__file__).resolve().parent / "schema_konektivitas_jalan.sql"
 
-DB_HOST = os.environ.get("MYSQL_HOST", "127.0.0.1")
-DB_PORT = int(os.environ.get("MYSQL_PORT", "3306"))
-DB_USER = os.environ.get("MYSQL_USER", "root")
-DB_PASS = os.environ.get("MYSQL_PASS", "")
-DB_NAME = os.environ.get("MYSQL_DB", "route_gis")
+DB_HOST = os.environ.get("PG_HOST", "127.0.0.1")
+DB_PORT = int(os.environ.get("PG_PORT", "5432"))
+DB_USER = os.environ.get("PG_USER", "postgres")
+DB_PASS = os.environ.get("PG_PASS", "")
+DB_NAME = os.environ.get("PG_DB", "route_gis")
 
 
 def connect():
-    conn = pymysql.connect(
+    return psycopg.connect(
         host=DB_HOST, port=DB_PORT, user=DB_USER, password=DB_PASS,
-        charset="utf8mb4", autocommit=False, cursorclass=pymysql.cursors.DictCursor,
+        dbname=DB_NAME, row_factory=dict_row,
     )
-    with conn.cursor() as cur:
-        cur.execute(
-            "CREATE DATABASE IF NOT EXISTS %s CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci"
-            % DB_NAME
-        )
-    conn.select_db(DB_NAME)
-    return conn
 
 
 def run_schema(conn):
-    sql_text = SCHEMA_PATH.read_text(encoding="utf-8")
-    code = "\n".join(l for l in sql_text.splitlines() if not l.strip().startswith("--"))
+    """Tabel sudah dibuat via scripts/migrate_pg_01_schema.py -- di sini
+    cuma pastikan ada (lihat docs/migrasi_mysql_ke_postgresql.md)."""
     with conn.cursor() as cur:
-        for stmt in [s.strip() for s in code.split(";") if s.strip()]:
-            cur.execute(stmt)
-    conn.commit()
+        cur.execute(
+            "SELECT 1 FROM information_schema.tables "
+            "WHERE table_schema='public' AND table_name='konektivitas_jaringan_jalan'"
+        )
+        if not cur.fetchone():
+            raise RuntimeError(
+                "Tabel konektivitas_jaringan_jalan belum ada di PostgreSQL -- "
+                "jalankan scripts/migrate_pg_01_schema.py dulu."
+            )
 
 
 def main():
@@ -102,8 +102,9 @@ def main():
         with conn.cursor() as cur:
             cur.executemany(
                 "INSERT INTO konektivitas_jaringan_jalan (kode_kabupaten, ada_jalan_nasional, n_ruas_nasional) "
-                "VALUES (%s, 1, %s) "
-                "ON DUPLICATE KEY UPDATE ada_jalan_nasional=1, n_ruas_nasional=VALUES(n_ruas_nasional)",
+                "VALUES (%s, TRUE, %s) "
+                "ON CONFLICT (kode_kabupaten) DO UPDATE SET ada_jalan_nasional=TRUE, "
+                "n_ruas_nasional=EXCLUDED.n_ruas_nasional",
                 rows,
             )
         conn.commit()

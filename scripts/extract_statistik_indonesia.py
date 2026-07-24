@@ -183,72 +183,88 @@ def extract_all():
     return data
 
 
-def load_mysql(data):
-    import pymysql
+def load_pg(data):
+    import psycopg
     try:
         from dotenv import load_dotenv
         load_dotenv(os.path.join(os.path.dirname(os.path.dirname(PDF_PATH)), ".env"))
         load_dotenv()
     except ImportError:
         pass
-    conn = pymysql.connect(
-        host=os.getenv("MYSQL_HOST", "127.0.0.1"),
-        port=int(os.getenv("MYSQL_PORT", "3306")),
-        user=os.getenv("MYSQL_USER", "root"),
-        password=os.getenv("MYSQL_PASS", ""),
-        database=os.getenv("MYSQL_DB", "route_gis"),
-        charset="utf8mb4",
+    conn = psycopg.connect(
+        host=os.getenv("PG_HOST", "127.0.0.1"),
+        port=int(os.getenv("PG_PORT", "5432")),
+        user=os.getenv("PG_USER", "postgres"),
+        password=os.getenv("PG_PASS", ""),
+        dbname=os.getenv("PG_DB", "route_gis"),
     )
-    schema = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                          "schema_statistik_indonesia.sql")
     with conn:
         with conn.cursor() as cur:
-            with open(schema, encoding="utf-8") as f:
-                stmts = "\n".join(ln for ln in f
-                                  if not ln.lstrip().startswith("--"))
-            for stmt in [s.strip() for s in stmts.split(";") if s.strip()]:
-                cur.execute(stmt)
+            # Tabel sudah dibuat via scripts/migrate_pg_01_schema.py.
+            cur.execute(
+                "SELECT 1 FROM information_schema.tables "
+                "WHERE table_schema='public' AND table_name='si_panjang_jalan_provinsi'"
+            )
+            if not cur.fetchone():
+                raise RuntimeError(
+                    "Tabel si_panjang_jalan_provinsi belum ada di PostgreSQL -- "
+                    "jalankan scripts/migrate_pg_01_schema.py dulu."
+                )
             for r in data["panjang_jalan_provinsi"]:
                 cur.execute(
-                    """REPLACE INTO si_panjang_jalan_provinsi
+                    """INSERT INTO si_panjang_jalan_provinsi
                        (kode_provinsi, provinsi, tahun, nasional_km,
                         provinsi_km, kabkota_km, jumlah_km)
-                       VALUES (%s,%s,%s,%s,%s,%s,%s)""",
+                       VALUES (%s,%s,%s,%s,%s,%s,%s)
+                       ON CONFLICT (kode_provinsi, tahun) DO UPDATE SET
+                       provinsi=EXCLUDED.provinsi, nasional_km=EXCLUDED.nasional_km,
+                       provinsi_km=EXCLUDED.provinsi_km, kabkota_km=EXCLUDED.kabkota_km,
+                       jumlah_km=EXCLUDED.jumlah_km""",
                     (r["kode_provinsi"], r["provinsi"], r["tahun"],
                      r["nasional_km"], r["provinsi_km"], r["kabkota_km"],
                      r["jumlah_km"]))
             for r in data["kendaraan_provinsi"]:
                 cur.execute(
-                    """REPLACE INTO si_kendaraan_provinsi
+                    """INSERT INTO si_kendaraan_provinsi
                        (kode_provinsi, provinsi, tahun, mobil_penumpang, bus,
                         mobil_barang, sepeda_motor, jumlah)
-                       VALUES (%s,%s,%s,%s,%s,%s,%s,%s)""",
+                       VALUES (%s,%s,%s,%s,%s,%s,%s,%s)
+                       ON CONFLICT (kode_provinsi, tahun) DO UPDATE SET
+                       provinsi=EXCLUDED.provinsi, mobil_penumpang=EXCLUDED.mobil_penumpang,
+                       bus=EXCLUDED.bus, mobil_barang=EXCLUDED.mobil_barang,
+                       sepeda_motor=EXCLUDED.sepeda_motor, jumlah=EXCLUDED.jumlah""",
                     (r["kode_provinsi"], r["provinsi"], r["tahun"],
                      r["mobil_penumpang"], r["bus"], r["mobil_barang"],
                      r["sepeda_motor"], r["jumlah"]))
             for r in data["lahan_sawah_provinsi"]:
                 cur.execute(
-                    """REPLACE INTO si_lahan_sawah_provinsi
+                    """INSERT INTO si_lahan_sawah_provinsi
                        (kode_provinsi, provinsi, luas_wilayah_km2,
                         lahan_sawah_2019_km2, lahan_sawah_2024_km2,
                         persen_2019, persen_2024)
-                       VALUES (%s,%s,%s,%s,%s,%s,%s)""",
+                       VALUES (%s,%s,%s,%s,%s,%s,%s)
+                       ON CONFLICT (kode_provinsi) DO UPDATE SET
+                       provinsi=EXCLUDED.provinsi, luas_wilayah_km2=EXCLUDED.luas_wilayah_km2,
+                       lahan_sawah_2019_km2=EXCLUDED.lahan_sawah_2019_km2,
+                       lahan_sawah_2024_km2=EXCLUDED.lahan_sawah_2024_km2,
+                       persen_2019=EXCLUDED.persen_2019, persen_2024=EXCLUDED.persen_2024""",
                     (r["kode_provinsi"], r["provinsi"], r["luas_wilayah_km2"],
                      r["lahan_sawah_2019_km2"], r["lahan_sawah_2024_km2"],
                      r["persen_2019"], r["persen_2024"]))
         conn.commit()
-    print("Loaded ke MySQL:", {k: len(v) for k, v in data.items()},
+    conn.close()
+    print("Loaded ke PostgreSQL:", {k: len(v) for k, v in data.items()},
           file=sys.stderr)
 
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--load", action="store_true", help="muat hasil ke MySQL")
+    ap.add_argument("--load", action="store_true", help="muat hasil ke PostgreSQL")
     args = ap.parse_args()
     data = extract_all()
     json.dump(data, sys.stdout, ensure_ascii=False, indent=1)
     if args.load:
-        load_mysql(data)
+        load_pg(data)
 
 
 if __name__ == "__main__":

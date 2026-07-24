@@ -1,6 +1,6 @@
 ---
 name: ijd-scoring-parameter
-description: Use when adding, extending, or reweighting an IJD/CPIT scoring parameter (A1-A4, B, C, D, E, F) in the RouteGIS repo (analytic-maps) — seeding pre-weighted rules into ijd_scoring_rules, writing or extending a _ijd_score_* function in app.py, registering it in _IJD_SCORERS, and verifying the endpoint. Triggers on requests like "tambah parameter skoring IJD", "ubah bobot kaidah 2026/2027", "hitung sub-parameter A3/A4/C.A1", "kaidah IJD tahun baru", or any change touching ijd_scoring_rules / _compute_ijd_score.
+description: Use when adding, extending, or reweighting an IJD/CPIT scoring parameter (A1-A4, B, C, D, E, F) in the The Next - SiJalan repo (analytic-maps) — seeding pre-weighted rules into ijd_scoring_rules, writing or extending a _ijd_score_* function in app.py, registering it in _IJD_SCORERS, and verifying the endpoint. Triggers on requests like "tambah parameter skoring IJD", "ubah bobot kaidah 2026/2027", "hitung sub-parameter A3/A4/C.A1", "kaidah IJD tahun baru", or any change touching ijd_scoring_rules / _compute_ijd_score.
 ---
 
 # Menambah / mengubah parameter skoring IJD

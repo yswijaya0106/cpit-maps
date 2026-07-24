@@ -1,4 +1,4 @@
-/* RouteGIS — reset action & top-level UI wiring */
+/* The Next - SiJalan — reset action & top-level UI wiring */
 
 function resetAll() {
   state.origin = null;

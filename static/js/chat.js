@@ -1,4 +1,4 @@
-/* RouteGIS — asisten chat (Gemini), digroundkan ke data rute/analisis yang sedang aktif */
+/* The Next - SiJalan — asisten chat (Gemini), digroundkan ke data rute/analisis yang sedang aktif */
 
 function buildChatContext() {
   const route = state.routes[state.selectedIndex];

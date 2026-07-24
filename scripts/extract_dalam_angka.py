@@ -31,10 +31,10 @@ Yang diekstrak:
 
 Pemakaian:
     python scripts/extract_dalam_angka.py            # ekstrak -> JSON di stdout
-    python scripts/extract_dalam_angka.py --load     # ekstrak + muat ke MySQL
+    python scripts/extract_dalam_angka.py --load     # ekstrak + muat ke PostgreSQL
     python scripts/extract_dalam_angka.py --load --workers 4  # paralel per provinsi
 
-Loader butuh kredensial MySQL dari .env (sama dengan app.py) dan schema dari
+Loader butuh kredensial PostgreSQL (PG_*) dari .env (sama dengan app.py) dan schema dari
 scripts/schema_bps_kemanfaatan.sql serta scripts/schema_bps_potensi_tematik.sql
 sudah dijalankan.
 
@@ -43,9 +43,9 @@ per provinsi CPU-bound & saling independen (tidak ada provinsi yang baca
 file provinsi lain), jadi aman dibagi ke N proses OS lewat
 ProcessPoolExecutor -- BUKAN threading, karena GIL bikin threading biasa
 tidak mempercepat kerja CPU-bound seperti parsing regex/teks. Tiap worker
-proses mengembalikan hasil murni di memori (list of dict); MySQL TETAP
-ditulis sekali di proses utama setelah semua worker selesai (load_mysql()
-tidak dipanggil per-worker) -- proses tidak bisa berbagi koneksi pymysql,
+proses mengembalikan hasil murni di memori (list of dict); PostgreSQL TETAP
+ditulis sekali di proses utama setelah semua worker selesai (load_pg()
+tidak dipanggil per-worker) -- proses tidak bisa berbagi koneksi psycopg,
 dan tidak perlu: menulis di akhir jauh lebih murah drpd parsing PDF-nya.
 """
 import argparse
@@ -256,9 +256,20 @@ def extract_kecamatan_demografi(books, total_names=()):
 
 
 def _is_total_row(name, total_names=()):
-    # baris total: "Kabupaten X"/"Kota X"/"Jumlah"/nama provinsi polos
-    return (name in total_names or name.startswith(("Kabupaten ", "Kota "))
-            or name.startswith("Jumlah"))
+    # Baris total: nama kab/kota polos ("Aceh Besar") ATAU berprefiks
+    # "Kabupaten X"/"Kota X" -- TAPI prefiks itu HARUS dicocokkan balik ke
+    # total_names (nama bare kab/kota ybs.), bukan startswith("Kota ") polos
+    # -- 41 kecamatan nasional namanya SENDIRI diawali "Kota " (mis. Kota
+    # Jantho di Aceh Besar, 5 kecamatan Kota Barat/Selatan/Timur/Utara/
+    # Tengah di Gorontalo) dan sebelumnya TERTELAN sbg baris total,
+    # datanya hilang total dari bps_kecamatan_potensi_tematik (bug
+    # ditemukan 21 Jul 2026 lewat cross-check ekstraksi per-komoditas).
+    if name in total_names or name.startswith("Jumlah"):
+        return True
+    if name.startswith(("Kabupaten ", "Kota ")):
+        bare = re.sub(r"^(Kabupaten|Kota)\s+", "", name)
+        return bare in total_names
+    return False
 
 
 def _clean_name(name):
@@ -365,7 +376,7 @@ def extract_padi_provinsi(doc, row_kab, row_kota):
 
 def extract_kendaraan_provinsi(doc, row_kab, row_kota):
     """Tabel 9.1.2 provinsi: kendaraan per kab per jenis. Baris per kab = 3
-    tahun (2023/2024/2025) x 5 nilai + label tahun di kolom (2)... label tahun
+    tahun (2023/2024/2025) x N nilai + label tahun di kolom (2)... label tahun
     ('20231', '20242', '2025*,2') ikut tertangkap sebagai baris numerik/nama —
     tangani khusus. Dua varian nama baris teramati antar provinsi:
       - polos satu baris ("Pandeglang", section header "Kabupaten/Regency")
@@ -374,9 +385,44 @@ def extract_kendaraan_provinsi(doc, row_kab, row_kota):
     Sebagian buku (kolom sempit) juga menggabungkan 2 nilai kolom terakhir
     dalam satu baris teks ('1.433.350  1.664.859') — NUMERICISH tetap cocok
     (spasi diizinkan), jadi tiap baris numerik dipecah per token, bukan
-    diperlakukan sebagai satu nilai."""
+    diperlakukan sebagai satu nilai.
+
+    N (jumlah nilai per baris tahun) TIDAK selalu 5 (Mobil Penumpang/Bus/
+    Mobil Barang/Sepeda Motor/Jumlah) -- ditemukan 23 Jul 2026 (audit narasi
+    AI usulan NTT, lihat docs/verifikasi_kendaraan_ntt.md): tabel 9.1.2
+    provinsi NTT 2026 cuma py 3 kolom (Mobil Penumpang/Bus/Mobil Barang,
+    TANPA Sepeda Motor/Jumlah). Kode LAMA menunggu tepat 5 token sebelum
+    commit satu baris (kab, tahun) -- utk tabel 3-kolom ini artinya token
+    dari baris tahun BERIKUTNYA (termasuk LABEL TAHUN itu sendiri) ikut
+    "ditelan" jadi nilai kolom ke-4/ke-5, mencemari kab & tahun sebelumnya.
+    Diperbaiki: commit baris pending SEKARANG JUGA begitu ketemu penanda
+    baris baru (label tahun baru / nama kab baru / akhir tabel), bukan
+    menunggu tepat 5 token -- panjang values per baris jadi APA ADANYA (3
+    atau 5), row-builder di bawah menghitung "jumlah" sendiri (sum) kalau
+    kolom Jumlah resminya memang tidak ada. Kalau varian ini 0 baris (label
+    tahun tak pernah cocok sama sekali), coba varian lain lewat
+    extract_kendaraan_provinsi_grouped() sebelum menyerah — beda provinsi
+    beda tata letak kolom, lihat docstring fungsi itu."""
     p = _find_prov_page(doc, "9.1.2", "Kendaraan Bermotor")
     out = {}
+
+    def _commit(section, name, tahun, values):
+        if name is None or tahun is None or not values:
+            return
+        # sebagian buku provinsi (mis. Sumatera Utara) TIDAK punya baris
+        # pemisah "Kabupaten/Regency"/"Kota/Municipality" sama sekali -- kab
+        # & kota tercampur satu daftar rata. Kalau section belum pernah
+        # ke-set dari header, coba cocokkan ke kedua kamus (row_kab lalu
+        # row_kota) alih-alih membuang baris.
+        target = section
+        if target is None:
+            if name in row_kab:
+                target = row_kab
+            elif name in row_kota:
+                target = row_kota
+        if target and name in target:
+            out[(target[name], tahun)] = values
+
     for pno in (p, p + 1):
         lines = page_lines(doc[pno])
         marker_idx = [i for i, ln in enumerate(lines) if MARKER.match(ln)]
@@ -386,22 +432,27 @@ def extract_kendaraan_provinsi(doc, row_kab, row_kota):
         awaiting_continuation = False
         for ln in lines[marker_idx[-1] + 1:]:
             if STOPLINE.match(ln):
+                _commit(section, name, tahun, values)
                 break
             if ln.startswith("Kabupaten/"):
-                section, name, awaiting_continuation = row_kab, None, False
+                _commit(section, name, tahun, values)
+                section, name, tahun, values, awaiting_continuation = row_kab, None, None, [], False
                 continue
             if ln.startswith("Kota/"):
-                section, name, awaiting_continuation = row_kota, None, False
+                _commit(section, name, tahun, values)
+                section, name, tahun, values, awaiting_continuation = row_kota, None, None, [], False
                 continue
             # baris nama bilingual per-kab, mis. "Kabupaten Bogor/" / "Kota Bogor/"
             if ln.endswith("/") and (ln.startswith("Kabupaten ") or ln.startswith("Kota ")):
+                _commit(section, name, tahun, values)
                 sect = row_kab if ln.startswith("Kabupaten ") else row_kota
                 prefix_len = len("Kabupaten ") if ln.startswith("Kabupaten ") else len("Kota ")
                 section, name = sect, ln[prefix_len:-1]
                 tahun, values, awaiting_continuation = None, [], True
                 continue
             m = re.match(r"^(20\d\d)\W*\d?$", ln)  # label tahun: 20231 / 2025*,2
-            if m and len(ln) <= 8 and not values:
+            if m and len(ln) <= 8:
+                _commit(section, name, tahun, values)  # tutup baris tahun sebelumnya dulu
                 tahun, values, awaiting_continuation = int(m.group(1)), [], False
                 continue
             if NUMERICISH.match(ln) or DASH.match(ln):
@@ -411,33 +462,65 @@ def extract_kendaraan_provinsi(doc, row_kab, row_kota):
                 for tok in ln.split():
                     values.append(num(tok))
                     if len(values) == 5:
-                        # sebagian buku provinsi (mis. Sumatera Utara) TIDAK
-                        # punya baris pemisah "Kabupaten/Regency"/"Kota/
-                        # Municipality" sama sekali -- kab & kota tercampur
-                        # satu daftar rata. Kalau section belum pernah
-                        # ke-set dari header, coba cocokkan ke kedua kamus
-                        # (row_kab lalu row_kota) alih-alih membuang baris.
-                        target = section
-                        if target is None:
-                            if name in row_kab:
-                                target = row_kab
-                            elif name in row_kota:
-                                target = row_kota
-                        if target and name in target:
-                            out[(target[name], tahun)] = values
+                        # varian 5-kolom asli: commit persis begitu genap 5
+                        # (SEBELUM baris tahun berikutnya sempat kebaca, jadi
+                        # tidak pernah ikut ke cabang _commit di atas).
+                        _commit(section, name, tahun, values)
                         tahun, values = None, []
             elif awaiting_continuation:
                 # baris kedua nama bilingual (Inggris) — bukan nama baru
                 awaiting_continuation = False
             else:
+                _commit(section, name, tahun, values)
                 name, tahun, values = strip_row_numbering(ln), None, []
+        _commit(section, name, tahun, values)  # baris terakhir halaman (mis. tahun 2025 tanpa penutup)
     rows = []
     for (kode, tahun), v in sorted(out.items()):
-        rows.append({
-            "kode_kab": kode, "tahun": tahun,
-            "mobil_penumpang": v[0], "bus": v[1], "mobil_barang": v[2],
-            "sepeda_motor": v[3], "jumlah": v[4],
-        })
+        if len(v) >= 5:
+            row = {"mobil_penumpang": v[0], "bus": v[1], "mobil_barang": v[2],
+                   "sepeda_motor": v[3], "jumlah": v[4]}
+        elif len(v) == 3:
+            # varian 3-kolom (mis. NTT 2026) -- tidak ada kolom Sepeda
+            # Motor/Jumlah resmi, "jumlah" dihitung ulang (sum 3 jenis yang
+            # ada) drpd dikarang dari token yang salah baca.
+            row = {"mobil_penumpang": v[0], "bus": v[1], "mobil_barang": v[2],
+                   "sepeda_motor": None, "jumlah": sum(x for x in v if x is not None)}
+        else:
+            continue  # jumlah token tak dikenali (bukan 3 atau >=5) -- lewati drpd menebak
+        row["kode_kab"], row["tahun"] = kode, tahun
+        rows.append(row)
+    if not rows:
+        rows = extract_kendaraan_provinsi_grouped(doc, row_kab, row_kota)
+    return rows
+
+
+def extract_kendaraan_provinsi_grouped(doc, row_kab, row_kota):
+    """Varian Tabel 9.1.2 tanpa label tahun per blok (beda dari varian
+    default di atas) -- ditemukan di Jawa Timur (audit 20 Jul 2026, lihat
+    checklist_implementasi_cpit.md). Kolom dikelompokkan per JENIS
+    kendaraan lalu per tahun berurutan (Mobil Penumpang 2023/24/25, Bus
+    2023/24/25 di halaman utama; Mobil Barang/Sepeda Motor 2023/24/25 di
+    halaman "Lanjutan Tabel") -- SATU baris per kab berisi 6 token numerik
+    langsung (bukan 3 baris terpisah per tahun x label tahun spt varian
+    default), pola persis sama dgn parse_prov_rows() generik yang sudah
+    dipakai extract_padi_provinsi() (ncols=nilai per baris, tanpa parsing
+    label tahun). Tidak ada kolom "Jumlah" total di sumbernya -- dihitung
+    ulang (sum ke-4 jenis) drpd dipercaya dari BPS."""
+    p = _find_prov_page(doc, "9.1.2", "Kendaraan Bermotor")
+    page1 = parse_prov_rows(page_lines(doc[p]), 6, row_kab, row_kota)      # MP23 MP24 MP25 Bus23 Bus24 Bus25
+    page2 = parse_prov_rows(page_lines(doc[p + 1]), 6, row_kab, row_kota)  # MB23 MB24 MB25 SM23 SM24 SM25
+    rows = []
+    for kode in sorted(set(page1) | set(page2)):
+        v1 = page1.get(kode, [None] * 6)
+        v2 = page2.get(kode, [None] * 6)
+        for i, tahun in enumerate((2023, 2024, 2025)):
+            mp, bus, mb, sm = v1[i], v1[3 + i], v2[i], v2[3 + i]
+            terisi = [v for v in (mp, bus, mb, sm) if v is not None]
+            rows.append({
+                "kode_kab": kode, "tahun": tahun,
+                "mobil_penumpang": mp, "bus": bus, "mobil_barang": mb,
+                "sepeda_motor": sm, "jumlah": sum(terisi) if terisi else None,
+            })
     return rows
 
 
@@ -522,21 +605,44 @@ POTENSI_TABLES = {
 # jenis tanaman/ternak, satuan konsisten).
 PRODUKSI_TABLES = {
     "pertanian_produksi_ton": [
-        (("Padi Sawah", "Menurut Kecamatan"), (), 2, None),   # kolom ke-3: Produksi (Ton)
-        (("Padi Ladang", "Menurut Kecamatan"), (), 2, None),
-        (("Jagung", "Menurut Kecamatan"), (), 2, None),        # sama pola 3-kolom Luas Tanam/Panen/Produksi
+        # forbid=KBLI -- sebagian kab/kota (mis. Sumba Timur) TIDAK
+        # menerbitkan tabel produksi Padi/Jagung per kecamatan tahun ini;
+        # tanpa forbid ini, must_all ("Padi"/"Jagung" + "Menurut Kecamatan")
+        # salah nyantol ke tabel INDUSTRI penggilingan (Tabel 6.2.4/6.2.6
+        # "Jumlah Industri Penggilingan ... (KBLI: ...)") yang judulnya
+        # kebetulan memuat frasa yang sama tapi kolomnya nilai investasi/
+        # produksi RUPIAH, bukan ton -- lihat
+        # docs/verifikasi_npr_ciparay_cikumpay.md temuan Sumba Timur.
+        (("Padi Sawah", "Menurut Kecamatan"), ("KBLI",), 2, None),   # kolom ke-3: Produksi (Ton)
+        (("Padi Ladang", "Menurut Kecamatan"), ("KBLI",), 2, None),
+        # forbid=Kedelai -- sebagian buku (mis. Sanggau Tabel 5.3.3 "Produksi
+        # Jagung dan Kedelai Menurut Kecamatan") menerbitkan Jagung DIGABUNG
+        # Kedelai dlm 1 tabel 2-kolom (bukan pola 3-kolom Luas Tanam/Luas
+        # Panen/Produksi yang diasumsikan col_index=2 di sini) -- col_index=2
+        # thd tabel begini salah ambil kolom (bahkan menelan kode kecamatan
+        # baris berikutnya krn ncols kurang hitung, lihat
+        # docs/verifikasi_npr_ciparay_cikumpay.md). Belum ada varian parser
+        # utk pola gabungan ini -- lebih aman dilewati (tersedia:false) drpd
+        # data salah.
+        (("Jagung", "Menurut Kecamatan"), ("KBLI", "Kedelai"), 2, None),
     ],
     "perkebunan_produksi_ton": [
-        (("Produksi Perkebunan", "Menurut Kecamatan", "Jenis Tanaman"), (), None, None),
+        (("Produksi Perkebunan", "Menurut Kecamatan", "Jenis Tanaman"), ("KBLI",), None, None),
         # Varian judul Pandeglang: "Produksi TANAMAN Perkebunan ... (kuintal)"
         # -- elemen ke-5 opsional = faktor skala satuan (kuintal -> ton).
-        (("Produksi Tanaman Perkebunan", "Menurut Kecamatan", "Jenis Tanaman"), (), None, None, 0.1),
+        (("Produksi Tanaman Perkebunan", "Menurut Kecamatan", "Jenis Tanaman"), ("KBLI",), None, None, 0.1),
     ],
     "peternakan_produksi_daging_kg": [
-        (("Produksi Daging", "Kecamatan"), (), None, None),
+        (("Produksi Daging", "Kecamatan"), ("KBLI",), None, None),
     ],
     "peternakan_produksi_telur_kg": [
-        (("Produksi Telur", "Kecamatan"), (), None, None),
+        # exclude_trailing_total=True -- tabel ini biasanya diakhiri kolom
+        # "Jumlah/Total" yang ISINYA sendiri penjumlahan kolom2 sebelumnya
+        # (Ayam Buras+Ayam Petelur+Itik/Entok) -- tanpa exclude ini,
+        # col_index=None (sum semua kolom) ikut menjumlah kolom Total itu
+        # sendiri, PERSIS DOBEL dari nilai sebenarnya -- lihat
+        # docs/verifikasi_npr_ciparay_cikumpay.md temuan Lombok Utara.
+        (("Produksi Telur", "Kecamatan"), ("KBLI",), None, None, 1, True),
     ],
     "perikanan_produksi_ton": [
         (("Perikanan Laut", "Kecamatan"), ("Nilai Tukar",), 0, None),  # kolom ke-1: Jumlah Produksi (Ton) -- laut saja
@@ -573,7 +679,44 @@ def _find_kecamatan_table_start(doc, must_all, forbid=()):
     return None, None, None
 
 
-def _extract_kecamatan_table_sum(doc, must_all, forbid, total_names, col_index=None, max_pages=None):
+def _scan_trailing_years(header_lines: list) -> list:
+    """Baris tahun kolom TEPAT SEBELUM marker (1) -- scan MUNDUR dari akhir
+    header_lines, berhenti begitu ketemu baris yang bukan pola tahun murni
+    ("2024"/"2025*"). Cuma window mundur-kontigu yang diambil, jadi imun
+    thd polusi teks lain lebih jauh di atas (mis. judul tabel yang
+    terbungkus baris PDF bisa menyisakan pecahan "2025*" sendirian di
+    barisnya sendiri, jauh dari marker -- lihat
+    docs/verifikasi_npr_ciparay_cikumpay.md, temuan Tabel 5.2.2 Sanggau)."""
+    year_rx = re.compile(r"((?:19|20)\d{2})\s*\*?$")
+    i = len(header_lines) - 1
+    years = []
+    while i >= 0:
+        m = year_rx.fullmatch(header_lines[i].strip())
+        if not m:
+            break
+        years.append(int(m.group(1)))
+        i -= 1
+    years.reverse()
+    return years
+
+
+def _trailing_total_columns(header_lines: list) -> int:
+    """Deteksi kolom "Jumlah/Total" bawaan di UJUNG header tabel (label
+    Indonesia+Inggris tepat sebelum marker (1), pola 2-baris-per-kolom sama
+    seperti _detect_column_groups) -- return 1 kalau ketemu, 0 kalau tidak.
+    Dipakai exclude_trailing_total di _extract_kecamatan_table_sum supaya
+    kolom penjumlahan bawaan BPS tidak ikut ke-double-count saat col_index
+    None menjumlah semua kolom."""
+    if len(header_lines) < 2:
+        return 0
+    id_label, en_label = header_lines[-2].strip(), header_lines[-1].strip()
+    if re.fullmatch(r"Jumlah", id_label, re.I) or re.fullmatch(r"Total", en_label, re.I):
+        return 1
+    return 0
+
+
+def _extract_kecamatan_table_sum(doc, must_all, forbid, total_names, col_index=None, max_pages=None,
+                                  exclude_trailing_total=False):
     """Jumlahkan kolom numerik per kecamatan pada tabel yang judulnya cocok
     must_all/forbid, termasuk halaman lanjutan ("Lanjutan Tabel"). Dengan
     col_index=None, semua kolom pada baris dijumlahkan (dipakai utk deteksi
@@ -584,7 +727,11 @@ def _extract_kecamatan_table_sum(doc, must_all, forbid, total_names, col_index=N
     halaman pertama (tanpa ikut "Lanjutan Tabel") -- dipakai kalau halaman
     lanjutan sebenarnya kelompok kolom yang beda makna (mis. Tabel 5.4.1 Kota
     Serang: hal.1 = tangkap laut/sungai, "lanjutan"-nya = budidaya tambak/
-    kolam -- beda kategori, jangan dijumlah jadi satu). Sama seperti
+    kolam -- beda kategori, jangan dijumlah jadi satu). exclude_trailing_total
+    = True membuang kolom terakhir dari sum kalau labelnya "Jumlah/Total" --
+    sebagian tabel BPS (mis. 5.4.5 Produksi Telur) sudah menyertakan kolom
+    total bawaan; ikut menjumlahkannya (col_index=None) berarti dobel-hitung
+    (lihat docs/verifikasi_npr_ciparay_cikumpay.md). Sama seperti
     extract_kendaraan_kecamatan tapi generik utk tabel manapun berpola
     satu-token-per-baris dgn marker (1)(2)(3)."""
     start, text0, table_no = _find_kecamatan_table_start(doc, must_all, forbid)
@@ -605,23 +752,36 @@ def _extract_kecamatan_table_sum(doc, must_all, forbid, total_names, col_index=N
         if len(marker_idx) < 2:
             continue
         ncols = len(marker_idx) - 1
-        if col_index is not None and col_index >= ncols:
-            continue  # halaman lanjutan dgn kolom lain (jenis tanaman berbeda) -- lewati
         # Banyak tabel produksi memasang PASANGAN kolom tahun per jenis tanaman
         # ("2024 | 2025*" berulang, mis. Tabel 5.2.2/5.3.2 perkebunan) --
         # menjumlah semua kolom berarti dobel hitung 2024+2025. Kalau semua
-        # kolom berlabel tahun (persis ncols baris tahun di header sebelum
-        # marker "(1)"), jumlahkan hanya kolom tahun terbaru. Cuma berlaku utk
+        # kolom berlabel tahun (baris tahun kontigu tepat sebelum marker
+        # "(1)"), jumlahkan hanya kolom tahun terbaru. Cuma berlaku utk
         # col_index=None; pemanggil dgn col_index sudah menunjuk kolom pasti.
         year_cols = None
         if col_index is None and ncols > 0:
-            header_years = [int(m.group(1)) for ln in lines[:marker_idx[0]]
-                            if (m := re.fullmatch(r"((?:19|20)\d{2})\s*\*?", ln.strip()))]
-            if len(header_years) >= ncols:
-                years = header_years[-ncols:]
+            trailing_years = _scan_trailing_years(lines[:marker_idx[0]])
+            if trailing_years:
+                if len(trailing_years) != ncols:
+                    # Sebagian buku kab/kota menomori kolom "Kode Wilayah"
+                    # TERPISAH dari "Kecamatan" (2 kolom teks bermarker,
+                    # bukan cuma 1) -- ncols dari jumlah marker jadi
+                    # kelebihan hitung. Deret tahun kontigu ini authoritative
+                    # (dia scan mundur PERSIS dari marker, imun thd itu),
+                    # jadi override ncols dgn panjangnya supaya baris tidak
+                    # "kurang nilai" & menelan kode kecamatan berikutnya
+                    # sbg data (bug ditemukan & diverifikasi lewat PDF
+                    # Sanggau Tabel 5.2.2, lihat
+                    # docs/verifikasi_npr_ciparay_cikumpay.md).
+                    ncols = len(trailing_years)
+                years = trailing_years
                 if len(set(years)) > 1:
                     latest = max(years)
                     year_cols = [i for i, y in enumerate(years) if y == latest]
+        if col_index is not None and col_index >= ncols:
+            continue  # halaman lanjutan dgn kolom lain (jenis tanaman berbeda) -- lewati
+        trailing_total = (_trailing_total_columns(lines[:marker_idx[0]])
+                           if exclude_trailing_total and col_index is None and year_cols is None else 0)
         name, values = None, []
         for ln in lines[marker_idx[-1] + 1:]:
             if STOPLINE.match(ln):
@@ -636,6 +796,8 @@ def _extract_kecamatan_table_sum(doc, must_all, forbid, total_names, col_index=N
                         tambahan = values[col_index]
                     elif year_cols is not None:
                         tambahan = sum(values[i] for i in year_cols)
+                    elif trailing_total:
+                        tambahan = sum(values[:ncols - trailing_total])
                     else:
                         tambahan = sum(values)
                     # Baris total kab/prov tidak dibuang lagi, tapi disimpan di
@@ -644,6 +806,102 @@ def _extract_kecamatan_table_sum(doc, must_all, forbid, total_names, col_index=N
                     # mis. Kelapa Angsana Pandeglang "45.918.000" kuintal).
                     key = "__TOTAL__" if _is_total_row(cname, total_names) else cname
                     out[key] = out.get(key, 0) + tambahan
+                    name, values = None, []
+            else:
+                if name is not None and not values:
+                    continue
+                name, values = ln, []
+    return out
+
+
+def _detect_column_groups(header_lines: list, ncols: int) -> list:
+    """Deteksi label kolom-per-komoditas dari header tabel "Menurut Kecamatan
+    dan Jenis Tanaman" (mis. Tabel 5.3.2 Produksi Perkebunan). Header PDF-nya
+    (get_text urutan baca) taruh SEMUA label komoditas dulu ("Kelapa Sawit/
+    Oil Palm", "Kelapa/Coconut", ...), BARU SETELAHNYA seluruh baris tahun
+    ("2024","2025*", berurutan per komoditas) -- bukan interleaved
+    label-tahun-label-tahun. Judul tabel/nomor halaman di ATAS "Kecamatan/
+    District" itu noise, bukan label komoditas -- makanya discan dari
+    BELAKANG (dekat marker kolom), bukan dari depan: kumpulkan baris tahun
+    trailing dulu, lalu baris non-tahun setelahnya sbg label, berhenti begitu
+    ketemu "Kecamatan"/"District" (batas kolom nama baris). Return
+    [(label, [col_idx,...])] atau [] kalau polanya tidak cocok (jumlah baris
+    tahun tidak habis dibagi jumlah label, atau tidak ada label sama sekali)
+    -- pemanggil harus lewati halaman itu. `ncols` HARUS sudah dikoreksi
+    pemanggil (lihat _extract_kecamatan_table_by_group) memakai panjang
+    deret tahun ini kalau beda dari hitungan marker -- fungsi ini tidak
+    lagi menolak cuma krn len(years) != ncols, supaya kasus kolom teks
+    ekstra ("Kode Wilayah" bermarker terpisah dari "Kecamatan", lihat
+    docs/verifikasi_npr_ciparay_cikumpay.md) tetap bisa diproses."""
+    years = _scan_trailing_years(header_lines)
+    i = len(header_lines) - 1 - len(years)
+    labels = []
+    while i >= 0:
+        s = header_lines[i].strip()
+        if not s or s.lower() in ("kecamatan", "district"):
+            break
+        labels.append(s)
+        i -= 1
+    labels.reverse()
+    if not labels or not years or ncols % len(labels) != 0:
+        return []
+    per_label = ncols // len(labels)
+    return [(labels[i], list(range(i * per_label, (i + 1) * per_label))) for i in range(len(labels))]
+
+
+def _extract_kecamatan_table_by_group(doc, must_all, forbid, total_names, max_pages=None):
+    """Varian _extract_kecamatan_table_sum yang MEMPERTAHANKAN pemisahan per
+    komoditas/jenis tanaman (kolom dikelompokkan via _detect_column_groups)
+    alih-alih menjumlahkan semua kolom jadi satu angka. Dalam grup yang sama,
+    tetap ambil kolom TAHUN TERBARU saja (hindari dobel-hitung 2024+2025,
+    pola sama dgn col_index=None di _extract_kecamatan_table_sum). Return
+    {kecamatan: {label_komoditas: nilai}}; baris total kab/kota disimpan di
+    kunci "__TOTAL__" per label (dibuang oleh pemanggil, dipakai cuma utk
+    sanity check kalau dibutuhkan nanti)."""
+    start, text0, table_no = _find_kecamatan_table_start(doc, must_all, forbid)
+    if start is None:
+        return {}
+    rx_lanjut = re.compile(r"Lanjutan Tabel/Continued Table " + re.escape(table_no)) if table_no else None
+    out: dict = {}
+    for pno in range(start, min(start + 12, doc.page_count)):
+        if max_pages is not None and pno >= start + max_pages:
+            break
+        text = doc[pno].get_text()
+        if pno > start:
+            is_lanjutan = rx_lanjut.search(text) if rx_lanjut else "Lanjutan Tabel" in text[:400]
+            if not is_lanjutan:
+                break
+        lines = page_lines(doc[pno])
+        marker_idx = [i for i, ln in enumerate(lines) if MARKER.match(ln)]
+        if len(marker_idx) < 2:
+            continue
+        ncols = len(marker_idx) - 1
+        trailing_years = _scan_trailing_years(lines[:marker_idx[0]])
+        if trailing_years and len(trailing_years) != ncols:
+            # Kolom teks ekstra bermarker terpisah ("Kode Wilayah" selain
+            # "Kecamatan") -- lihat docs/verifikasi_npr_ciparay_cikumpay.md.
+            ncols = len(trailing_years)
+        groups = _detect_column_groups(lines[:marker_idx[0]], ncols)
+        if not groups:
+            continue  # halaman yang polanya tak terdeteksi -- lewati drpd salah kelompok
+        name, values = None, []
+        for ln in lines[marker_idx[-1] + 1:]:
+            if STOPLINE.match(ln):
+                break
+            if NUMERICISH.match(ln) or DASH.match(ln):
+                if name is None:
+                    continue
+                values.append(num(ln) or 0)
+                if len(values) == ncols:
+                    cname = _clean_name(name)
+                    key = "__TOTAL__" if _is_total_row(cname, total_names) else cname
+                    rec = out.setdefault(key, {})
+                    for label, cols in groups:
+                        # cols per grup (biasanya 2 kolom tahun, mis. 2024 lalu
+                        # 2025*) -- ambil kolom TERAKHIR grup (tahun terbaru),
+                        # hindari dobel-hitung 2024+2025 seperti col_index=None
+                        # di _extract_kecamatan_table_sum.
+                        rec[label] = rec.get(label, 0) + values[cols[-1]]
                     name, values = None, []
             else:
                 if name is not None and not values:
@@ -685,7 +943,9 @@ def extract_kecamatan_potensi(books, names, total_names=()):
             for variant in variants:
                 must_all, forbid, col_index, max_pages = variant[:4]
                 scale = variant[4] if len(variant) > 4 else 1  # faktor satuan (kuintal->ton dsb.)
-                sums = _extract_kecamatan_table_sum(doc, must_all, forbid, totals_here, col_index, max_pages)
+                exclude_trailing_total = variant[5] if len(variant) > 5 else False
+                sums = _extract_kecamatan_table_sum(doc, must_all, forbid, totals_here, col_index, max_pages,
+                                                     exclude_trailing_total)
                 total_ref = sums.pop("__TOTAL__", None)
                 if sums:
                     found_any = True
@@ -699,6 +959,53 @@ def extract_kecamatan_potensi(books, names, total_names=()):
                     rec[field] = round(rec.get(field, 0) + total * scale, 2)
             if not found_any:
                 print(f"  WARNING: tabel produksi '{field}' tidak ditemukan di "
+                      f"{os.path.basename(path)} — dilewati", file=sys.stderr)
+        doc.close()
+    return out
+
+
+# Tabel "Menurut Kecamatan dan Jenis Tanaman" (kolom dikelompokkan per
+# komoditas, lihat _extract_kecamatan_table_by_group) -- pelengkap
+# PRODUKSI_TABLES["perkebunan_produksi_ton"] di atas (yang menjumlah SEMUA
+# komoditas jadi satu angka). Baru PERKEBUNAN yang punya pola tabel begini;
+# Pertanian (Padi/Jagung) sudah terpisah di level TABEL sendiri-sendiri
+# (bukan kolom dlm 1 tabel), jadi tidak butuh fungsi ini.
+KOMODITAS_TABLES = {
+    "PERKEBUNAN": [
+        (("Produksi Perkebunan", "Menurut Kecamatan", "Jenis Tanaman"), ()),
+        (("Produksi Tanaman Perkebunan", "Menurut Kecamatan", "Jenis Tanaman"), (), 0.1),
+    ],
+}
+
+
+def extract_kecamatan_komoditas(books, names, total_names=()):
+    """Produksi PER KOMODITAS (Kelapa Sawit/Karet/Kopi/dst. terpisah),
+    pelengkap extract_kecamatan_potensi() yang menjumlah semua komoditas
+    sektor yang sama jadi satu angka. Return list of dict siap load ke
+    bps_kecamatan_produksi_komoditas."""
+    out = []
+    for kode, path in books.items():
+        doc = fitz.open(path)
+        kab_bare = re.sub(r"^(Kabupaten|Kota)\s+", "", names.get(kode, ""))
+        totals_here = set(total_names) | {kab_bare}
+        for kategori, variants in KOMODITAS_TABLES.items():
+            found_any = False
+            for variant in variants:
+                must_all, forbid = variant[0], variant[1]
+                scale = variant[2] if len(variant) > 2 else 1
+                groups = _extract_kecamatan_table_by_group(doc, must_all, forbid, totals_here)
+                groups.pop("__TOTAL__", None)
+                if groups:
+                    found_any = True
+                for cname, per_komoditas in groups.items():
+                    for jenis, nilai in per_komoditas.items():
+                        out.append({
+                            "kode_kab": kode, "nama_kab": names[kode], "kecamatan": cname,
+                            "tahun": 2025, "kategori": kategori, "jenis_tanaman": jenis,
+                            "produksi_ton": round(nilai * scale, 2),
+                        })
+            if not found_any:
+                print(f"  WARNING: tabel komoditas '{kategori}' tidak ditemukan di "
                       f"{os.path.basename(path)} — dilewati", file=sys.stderr)
         doc.close()
     return out
@@ -817,7 +1124,7 @@ def extract_jalan_kabupaten(books):
 
 _EMPTY_EXTRACT = {
     "kecamatan_demografi": [], "kabupaten_padi": [], "kabupaten_kendaraan": [],
-    "kecamatan_potensi": [], "kabupaten_jalan": [],
+    "kecamatan_potensi": [], "kabupaten_jalan": [], "kecamatan_komoditas": [],
 }
 
 
@@ -825,8 +1132,8 @@ def _extract_province(prov):
     """Ekstrak SATU provinsi -- unit kerja worker ProcessPoolExecutor
     (lihat extract_all). Provinsi lain sama sekali tidak disentuh (tidak
     ada file/tabel/state yang di-share), jadi aman dipanggil paralel tanpa
-    locking apa pun. TIDAK menulis ke MySQL di sini -- return murni dict
-    hasil, digabung & ditulis sekali oleh main process (koneksi pymysql
+    locking apa pun. TIDAK menulis ke PostgreSQL di sini -- return murni dict
+    hasil, digabung & ditulis sekali oleh main process (koneksi psycopg
     tidak bisa dibagi antar proses)."""
     kecamatan_rows, padi_all, kendaraan_all, potensi_rows, jalan_rows = [], [], [], [], []
     names = prov["names"]
@@ -840,6 +1147,7 @@ def _extract_province(prov):
     demografi = extract_kecamatan_demografi(prov["books"], totals)
     kendaraan_kec = extract_kendaraan_kecamatan(prov["books"], totals)
     potensi = extract_kecamatan_potensi(prov["books"], names, totals)
+    komoditas_rows = extract_kecamatan_komoditas(prov["books"], names, totals)
     for r in extract_jalan_kabupaten(prov["books"]):
         r["nama_kab"] = names[r["kode_kab"]]
         jalan_rows.append(r)
@@ -897,6 +1205,7 @@ def _extract_province(prov):
         "kabupaten_kendaraan": kendaraan_all,
         "kecamatan_potensi": potensi_rows,
         "kabupaten_jalan": jalan_rows,
+        "kecamatan_komoditas": komoditas_rows,
     }
 
 
@@ -931,31 +1240,38 @@ def extract_all(prov_filter=None, workers=1):
     return merged
 
 
-def load_mysql(data):
-    import pymysql
+def load_pg(data):
+    import psycopg
     try:
         from dotenv import load_dotenv
         load_dotenv(os.path.join(os.path.dirname(DALAM_ANGKA_DIR), ".env"))
         load_dotenv()  # cwd fallback
     except ImportError:
         pass
-    conn = pymysql.connect(
-        host=os.getenv("MYSQL_HOST", "127.0.0.1"),
-        port=int(os.getenv("MYSQL_PORT", "3306")),
-        user=os.getenv("MYSQL_USER", "root"),
-        password=os.getenv("MYSQL_PASS", ""),
-        database=os.getenv("MYSQL_DB", "route_gis"),
-        charset="utf8mb4",
+    conn = psycopg.connect(
+        host=os.getenv("PG_HOST", "127.0.0.1"),
+        port=int(os.getenv("PG_PORT", "5432")),
+        user=os.getenv("PG_USER", "postgres"),
+        password=os.getenv("PG_PASS", ""),
+        dbname=os.getenv("PG_DB", "route_gis"),
     )
     with conn:
         with conn.cursor() as cur:
             for r in data["kecamatan_demografi"]:
                 cur.execute(
-                    """REPLACE INTO bps_kecamatan_demografi
+                    """INSERT INTO bps_kecamatan_demografi
                        (kode_kab, nama_kab, kecamatan, tahun, jumlah_penduduk,
                         laju_pertumbuhan_pct, persentase_penduduk, kepadatan_per_km2,
                         rasio_jenis_kelamin, luas_km2_derived, total_kendaraan)
-                       VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                       VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                       ON CONFLICT (kode_kab, kecamatan, tahun) DO UPDATE SET
+                       nama_kab=EXCLUDED.nama_kab, jumlah_penduduk=EXCLUDED.jumlah_penduduk,
+                       laju_pertumbuhan_pct=EXCLUDED.laju_pertumbuhan_pct,
+                       persentase_penduduk=EXCLUDED.persentase_penduduk,
+                       kepadatan_per_km2=EXCLUDED.kepadatan_per_km2,
+                       rasio_jenis_kelamin=EXCLUDED.rasio_jenis_kelamin,
+                       luas_km2_derived=EXCLUDED.luas_km2_derived,
+                       total_kendaraan=EXCLUDED.total_kendaraan""",
                     (r["kode_kab"], r["nama_kab"], r["kecamatan"], r["tahun"],
                      r["jumlah_penduduk"], r["laju_pertumbuhan_pct"],
                      r["persentase_penduduk"], r["kepadatan_per_km2"],
@@ -963,74 +1279,129 @@ def load_mysql(data):
                      r["total_kendaraan"]))
             for r in data["kabupaten_padi"]:
                 cur.execute(
-                    """REPLACE INTO bps_kabupaten_padi
+                    """INSERT INTO bps_kabupaten_padi
                        (kode_kab, nama_kab, tahun, luas_panen_ha,
                         produktivitas_ku_ha, produksi_ton)
-                       VALUES (%s,%s,%s,%s,%s,%s)""",
+                       VALUES (%s,%s,%s,%s,%s,%s)
+                       ON CONFLICT (kode_kab, tahun) DO UPDATE SET
+                       nama_kab=EXCLUDED.nama_kab, luas_panen_ha=EXCLUDED.luas_panen_ha,
+                       produktivitas_ku_ha=EXCLUDED.produktivitas_ku_ha,
+                       produksi_ton=EXCLUDED.produksi_ton""",
                     (r["kode_kab"], r["nama_kab"], r["tahun"],
                      r["luas_panen_ha"], r["produktivitas_ku_ha"], r["produksi_ton"]))
             for r in data["kabupaten_kendaraan"]:
                 cur.execute(
-                    """REPLACE INTO bps_kabupaten_kendaraan
+                    """INSERT INTO bps_kabupaten_kendaraan
                        (kode_kab, nama_kab, tahun, mobil_penumpang, bus,
                         mobil_barang, sepeda_motor, jumlah)
-                       VALUES (%s,%s,%s,%s,%s,%s,%s,%s)""",
+                       VALUES (%s,%s,%s,%s,%s,%s,%s,%s)
+                       ON CONFLICT (kode_kab, tahun) DO UPDATE SET
+                       nama_kab=EXCLUDED.nama_kab, mobil_penumpang=EXCLUDED.mobil_penumpang,
+                       bus=EXCLUDED.bus, mobil_barang=EXCLUDED.mobil_barang,
+                       sepeda_motor=EXCLUDED.sepeda_motor, jumlah=EXCLUDED.jumlah""",
                     (r["kode_kab"], r["nama_kab"], r["tahun"],
                      r["mobil_penumpang"], r["bus"], r["mobil_barang"],
                      r["sepeda_motor"], r["jumlah"]))
+            # DELETE dulu utk kode_kab yang diproses run ini, SEBELUM INSERT --
+            # tanpa ini, kecamatan yang tabel produksinya dulu SALAH NYANTOL
+            # (mis. bug row-shift/tabel-salah yg baru diperbaiki) tapi sekarang
+            # correctly gagal cocok (found_any=False) TIDAK PERNAH ditulis
+            # ulang (INSERT cuma menyentuh baris yang muncul di data run ini)
+            # -- baris lamanya yang SALAH tertinggal permanen di DB. Ditemukan
+            # 21 Jul 2026: setelah perbaikan parser Sumba Timur/Sanggau, re-run
+            # --load masih menyisakan angka lama krn kena persis kasus ini.
+            # kode_kab_scope diambil dari kecamatan_demografi (tabel yang
+            # nyaris selalu ada per kab/kota, cakupan run ini) supaya kab
+            # yang TIDAK ikut diproses (mis. run dgn --provinsi parsial)
+            # tidak ikut ke-DELETE.
+            kode_kab_scope = {r["kode_kab"] for r in data["kecamatan_demografi"]} | \
+                              {r["kode_kab"] for r in data["kecamatan_potensi"]}
+            if kode_kab_scope:
+                cur.execute(
+                    "DELETE FROM bps_kecamatan_potensi_tematik WHERE kode_kab = ANY(%s)",
+                    (list(kode_kab_scope),),
+                )
             for r in data["kecamatan_potensi"]:
                 cur.execute(
-                    """REPLACE INTO bps_kecamatan_potensi_tematik
+                    """INSERT INTO bps_kecamatan_potensi_tematik
                        (kode_kab, nama_kab, kecamatan, tahun, pertanian_ada,
                         perkebunan_ada, peternakan_ada, perikanan_ada,
                         pertanian_produksi_ton, perkebunan_produksi_ton,
                         peternakan_produksi_daging_kg, peternakan_produksi_telur_kg,
                         perikanan_produksi_ton)
-                       VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                       VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                       ON CONFLICT (kode_kab, kecamatan, tahun) DO UPDATE SET
+                       nama_kab=EXCLUDED.nama_kab, pertanian_ada=EXCLUDED.pertanian_ada,
+                       perkebunan_ada=EXCLUDED.perkebunan_ada, peternakan_ada=EXCLUDED.peternakan_ada,
+                       perikanan_ada=EXCLUDED.perikanan_ada,
+                       pertanian_produksi_ton=EXCLUDED.pertanian_produksi_ton,
+                       perkebunan_produksi_ton=EXCLUDED.perkebunan_produksi_ton,
+                       peternakan_produksi_daging_kg=EXCLUDED.peternakan_produksi_daging_kg,
+                       peternakan_produksi_telur_kg=EXCLUDED.peternakan_produksi_telur_kg,
+                       perikanan_produksi_ton=EXCLUDED.perikanan_produksi_ton""",
                     (r["kode_kab"], r["nama_kab"], r["kecamatan"], r["tahun"],
                      r["pertanian_ada"], r["perkebunan_ada"],
                      r["peternakan_ada"], r["perikanan_ada"],
                      r["pertanian_produksi_ton"], r["perkebunan_produksi_ton"],
                      r["peternakan_produksi_daging_kg"], r["peternakan_produksi_telur_kg"],
                      r["perikanan_produksi_ton"]))
-            # Panjang jalan per kab/kota -- tabel dibuat di sini (bukan file
-            # schema terpisah yang harus dijalankan manual) supaya job per
-            # provinsi yang sudah berjalan bisa langsung menulis begitu kode
-            # ini terbaca proses berikutnya; lihat scripts/schema_bps_jalan.sql
-            # utk dokumentasi kolom.
+            # Panjang jalan per kab/kota + produksi per komoditas -- tabel
+            # sudah dibuat via scripts/migrate_pg_01_schema.py (bukan lagi
+            # inline CREATE TABLE spt versi MySQL) -- cek eksistensi saja.
             cur.execute(
-                """CREATE TABLE IF NOT EXISTS bps_kabupaten_jalan (
-                     kode_kab   CHAR(4)     NOT NULL,
-                     nama_kab   VARCHAR(60) NOT NULL,
-                     tahun      SMALLINT    NOT NULL,
-                     panjang_negara_km      DECIMAL(10,2) NULL,
-                     panjang_provinsi_km    DECIMAL(10,2) NULL,
-                     panjang_kabkota_km     DECIMAL(10,2) NULL,
-                     panjang_total_km       DECIMAL(10,2) NULL,
-                     kondisi_baik_km        DECIMAL(10,2) NULL,
-                     kondisi_sedang_km      DECIMAL(10,2) NULL,
-                     kondisi_rusak_km       DECIMAL(10,2) NULL,
-                     kondisi_rusak_berat_km DECIMAL(10,2) NULL,
-                     kondisi_total_km       DECIMAL(10,2) NULL,
-                     PRIMARY KEY (kode_kab, tahun)
-                   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci""")
+                "SELECT 1 FROM information_schema.tables "
+                "WHERE table_schema='public' AND table_name='bps_kabupaten_jalan'"
+            )
+            if not cur.fetchone():
+                raise RuntimeError(
+                    "Tabel bps_kabupaten_jalan belum ada di PostgreSQL -- jalankan "
+                    "scripts/migrate_pg_01_schema.py dulu."
+                )
             for r in data.get("kabupaten_jalan", []):
                 cur.execute(
-                    """REPLACE INTO bps_kabupaten_jalan
+                    """INSERT INTO bps_kabupaten_jalan
                        (kode_kab, nama_kab, tahun, panjang_negara_km, panjang_provinsi_km,
                         panjang_kabkota_km, panjang_total_km, kondisi_baik_km,
                         kondisi_sedang_km, kondisi_rusak_km, kondisi_rusak_berat_km,
                         kondisi_total_km)
-                       VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                       VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                       ON CONFLICT (kode_kab, tahun) DO UPDATE SET
+                       nama_kab=EXCLUDED.nama_kab, panjang_negara_km=EXCLUDED.panjang_negara_km,
+                       panjang_provinsi_km=EXCLUDED.panjang_provinsi_km,
+                       panjang_kabkota_km=EXCLUDED.panjang_kabkota_km,
+                       panjang_total_km=EXCLUDED.panjang_total_km,
+                       kondisi_baik_km=EXCLUDED.kondisi_baik_km,
+                       kondisi_sedang_km=EXCLUDED.kondisi_sedang_km,
+                       kondisi_rusak_km=EXCLUDED.kondisi_rusak_km,
+                       kondisi_rusak_berat_km=EXCLUDED.kondisi_rusak_berat_km,
+                       kondisi_total_km=EXCLUDED.kondisi_total_km""",
                     (r["kode_kab"], r["nama_kab"], r["tahun"],
                      r.get("panjang_negara_km"), r.get("panjang_provinsi_km"),
                      r.get("panjang_kabkota_km"), r.get("panjang_total_km"),
                      r.get("kondisi_baik_km"), r.get("kondisi_sedang_km"),
                      r.get("kondisi_rusak_km"), r.get("kondisi_rusak_berat_km"),
                      r.get("kondisi_total_km")))
+            cur.execute(
+                "SELECT 1 FROM information_schema.tables "
+                "WHERE table_schema='public' AND table_name='bps_kecamatan_produksi_komoditas'"
+            )
+            if not cur.fetchone():
+                raise RuntimeError(
+                    "Tabel bps_kecamatan_produksi_komoditas belum ada di PostgreSQL -- "
+                    "jalankan scripts/migrate_pg_01_schema.py dulu."
+                )
+            for r in data.get("kecamatan_komoditas", []):
+                cur.execute(
+                    """INSERT INTO bps_kecamatan_produksi_komoditas
+                       (kode_kab, nama_kab, kecamatan, tahun, kategori, jenis_tanaman, produksi_ton)
+                       VALUES (%s,%s,%s,%s,%s,%s,%s)
+                       ON CONFLICT (kode_kab, kecamatan, tahun, kategori, jenis_tanaman) DO UPDATE SET
+                       nama_kab=EXCLUDED.nama_kab, produksi_ton=EXCLUDED.produksi_ton""",
+                    (r["kode_kab"], r["nama_kab"], r["kecamatan"], r["tahun"],
+                     r["kategori"], r["jenis_tanaman"], r["produksi_ton"]))
         conn.commit()
     counts = {k: len(v) for k, v in data.items()}
-    print(f"Loaded ke MySQL: {counts}", file=sys.stderr)
+    print(f"Loaded ke PostgreSQL: {counts}", file=sys.stderr)
 
 
 def main():
@@ -1041,28 +1412,28 @@ def main():
         if hasattr(stream, "reconfigure"):
             stream.reconfigure(encoding="utf-8", errors="replace")
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--load", action="store_true", help="muat hasil ke MySQL")
+    ap.add_argument("--load", action="store_true", help="muat hasil ke PostgreSQL")
     ap.add_argument("--provinsi", default=None,
                     help="hanya folder provinsi yang namanya mengandung teks ini "
                          "(mis. '36 Banten' atau 'banten'); default semua provinsi")
     ap.add_argument("--workers", type=int, default=1,
                     help="jumlah proses paralel utk parsing PDF per provinsi "
                          "(default 1 = sekuensial, sama seperti sebelumnya). "
-                         "MySQL tetap ditulis sekali di akhir, bukan per-worker.")
+                         "PostgreSQL tetap ditulis sekali di akhir, bukan per-worker.")
     args = ap.parse_args()
     data = extract_all(args.provinsi, workers=args.workers)
     # --load dulu SEBELUM print JSON ke stdout -- supaya crash pas nulis ke
     # stdout (mis. konsol Windows default cp1252, tidak bisa encode sebagian
     # karakter nama buku/kecamatan non-Latin1) tidak menyebabkan hasil
     # ekstraksi yang sudah susah payah didapat (bisa berjam-jam utk cakupan
-    # nasional) hilang percuma krn belum sempat tersimpan ke MySQL.
+    # nasional) hilang percuma krn belum sempat tersimpan ke PostgreSQL.
     if args.load:
-        load_mysql(data)
+        load_pg(data)
     try:
         json.dump(data, sys.stdout, ensure_ascii=False, indent=1)
     except UnicodeEncodeError as e:
         print(f"\n(dump JSON ke stdout dilewati -- encoding konsol tidak mendukung "
-              f"karakter tertentu: {e}; data {'sudah tersimpan ke MySQL' if args.load else 'ada di memori tapi tidak tercetak'})",
+              f"karakter tertentu: {e}; data {'sudah tersimpan ke PostgreSQL' if args.load else 'ada di memori tapi tidak tercetak'})",
               file=sys.stderr)
 
 

@@ -20,17 +20,17 @@ import sys
 from pathlib import Path
 
 import openpyxl
-import pymysql
+import psycopg
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 DOCS_DIR = BASE_DIR / "docs"
 SCHEMA_PATH = Path(__file__).resolve().parent / "schema_usulan_inpres.sql"
 
-DB_HOST = os.environ.get("MYSQL_HOST", "127.0.0.1")
-DB_PORT = int(os.environ.get("MYSQL_PORT", "3306"))
-DB_USER = os.environ.get("MYSQL_USER", "root")
-DB_PASS = os.environ.get("MYSQL_PASS", "")
-DB_NAME = os.environ.get("MYSQL_DB", "route_gis")
+DB_HOST = os.environ.get("PG_HOST", "127.0.0.1")
+DB_PORT = int(os.environ.get("PG_PORT", "5432"))
+DB_USER = os.environ.get("PG_USER", "postgres")
+DB_PASS = os.environ.get("PG_PASS", "")
+DB_NAME = os.environ.get("PG_DB", "route_gis")
 
 # Kolom sumber -> kolom tabel usulan_inpres. Kolom yang tidak disebut di sini
 # (terutama seluruh "File ..." dan jalur Kompetensi yang nyaris kosong)
@@ -211,43 +211,35 @@ def clean_value(col, value):
 
 
 def run_schema(conn):
-    sql_text = SCHEMA_PATH.read_text(encoding="utf-8")
-    code_lines = [
-        line for line in sql_text.splitlines()
-        if not line.strip().startswith("--")
-    ]
-    statements = [s.strip() for s in "\n".join(code_lines).split(";") if s.strip()]
+    """PostgreSQL (sejak migrasi 24 Jul 2026, lihat
+    docs/migrasi_mysql_ke_postgresql.md) -- schema_usulan_inpres.sql
+    ditulis dgn sintaks DDL MySQL (AUTO_INCREMENT/ENGINE=/FULLTEXT INDEX/
+    dst.), TIDAK bisa dieksekusi langsung ke Postgres. Tabel utamanya
+    sudah dibuat oleh scripts/migrate_pg_01_schema.py (introspeksi dari
+    MySQL, konversi tipe otomatis) -- di sini cuma pastikan tabelnya ADA,
+    dan tambahkan kolom opsional (OPTIONAL_COLUMN_MAP) yang belum ada lewat
+    ADD COLUMN IF NOT EXISTS (didukung native Postgres, beda dari MySQL 8
+    yang butuh workaround manual spt sebelumnya)."""
     with conn.cursor() as cur:
-        for stmt in statements:
-            cur.execute(stmt)
-        # Migrasi kolom opsional (tarikan 15 Juli+) untuk DB yang tabelnya
-        # sudah terlanjur dibuat dari schema lama (MySQL 8 belum mendukung
-        # ADD COLUMN IF NOT EXISTS).
         cur.execute(
-            "SELECT column_name FROM information_schema.columns "
-            "WHERE table_schema = %s AND table_name = 'usulan_inpres'",
-            (DB_NAME,),
+            "SELECT 1 FROM information_schema.tables "
+            "WHERE table_schema='public' AND table_name='usulan_inpres'"
         )
-        existing_cols = {r[0] for r in cur.fetchall()}
+        if not cur.fetchone():
+            raise RuntimeError(
+                "Tabel usulan_inpres belum ada di PostgreSQL -- jalankan "
+                "scripts/migrate_pg_01_schema.py dulu (lihat docs/migrasi_mysql_ke_postgresql.md)."
+            )
         for dest_col, ddl in OPTIONAL_COLUMN_MAP.values():
-            if dest_col not in existing_cols:
-                cur.execute(f"ALTER TABLE usulan_inpres ADD COLUMN {dest_col} {ddl}")
+            pg_ddl = ddl.replace(" UNSIGNED", "")  # Postgres tidak punya modifier UNSIGNED
+            cur.execute(f"ALTER TABLE usulan_inpres ADD COLUMN IF NOT EXISTS {dest_col} {pg_ddl}")
     conn.commit()
 
 
 def connect(select_db=True):
-    conn = pymysql.connect(
-        host=DB_HOST, port=DB_PORT, user=DB_USER, password=DB_PASS,
-        charset="utf8mb4", autocommit=False,
+    return psycopg.connect(
+        host=DB_HOST, port=DB_PORT, user=DB_USER, password=DB_PASS, dbname=DB_NAME,
     )
-    if select_db:
-        with conn.cursor() as cur:
-            cur.execute(
-                "CREATE DATABASE IF NOT EXISTS %s CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci"
-                % DB_NAME
-            )
-        conn.select_db(DB_NAME)
-    return conn
 
 
 def latest_xlsx():
@@ -288,12 +280,12 @@ def upsert_xlsx(source, conn):
     insert_sql = (
         f"INSERT INTO usulan_inpres ({', '.join(usulan_cols)}) "
         f"VALUES ({', '.join(['%s'] * len(usulan_cols))}) "
-        f"ON DUPLICATE KEY UPDATE " +
-        ", ".join(f"{c}=VALUES({c})" for c in usulan_cols if c != "id")
+        f"ON CONFLICT (id) DO UPDATE SET " +
+        ", ".join(f"{c}=EXCLUDED.{c}" for c in usulan_cols if c != "id")
     )
     doc_insert_sql = (
         "INSERT INTO usulan_dokumen (usulan_id, jenis_dokumen, url) VALUES (%s, %s, %s) "
-        "ON DUPLICATE KEY UPDATE url=VALUES(url)"
+        "ON CONFLICT (usulan_id, jenis_dokumen) DO UPDATE SET url=EXCLUDED.url"
     )
 
     usulan_batch, doc_batch = [], []
@@ -371,10 +363,11 @@ def export_xlsx(out, conn=None):
         # export -> import tidak menghilangkan data — tapi hanya yang sudah
         # ada di DB (export tidak menjalankan migrasi schema)
         with conn.cursor() as cur:
+            # table_schema PostgreSQL = 'public' (nama skema), BUKAN nama
+            # database spt di MySQL (di sana table_schema == nama DB).
             cur.execute(
                 "SELECT column_name FROM information_schema.columns "
-                "WHERE table_schema = %s AND table_name = 'usulan_inpres'",
-                (DB_NAME,),
+                "WHERE table_schema = 'public' AND table_name = 'usulan_inpres'"
             )
             existing_cols = {r[0] for r in cur.fetchall()}
         full_map = dict(COLUMN_MAP)

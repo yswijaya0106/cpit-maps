@@ -1,4 +1,4 @@
-/* RouteGIS — tool peta gaya ArcGIS: identify, select, ukur jarak/luas, legend layer overlay */
+/* The Next - SiJalan — tool peta gaya ArcGIS: identify, select, ukur jarak/luas, legend layer overlay */
 
 const MEASURE_LINE_COLOR = "#ffb648";
 

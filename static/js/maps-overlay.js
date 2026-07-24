@@ -1,4 +1,4 @@
-/* RouteGIS — overlay peta referensi (layer SHP dari folder Maps/<provinsi>/<kabupaten>/)
+/* The Next - SiJalan — overlay peta referensi (layer SHP dari folder Maps/<provinsi>/<kabupaten>/)
    Daftar provinsi/kabupaten/layer dibaca langsung dari isi folder Maps/ setiap
    dropdown dibuka (bukan sekali saat load halaman) — supaya file yang
    ditambah/dipindah di folder tersebut otomatis muncul tanpa reload. */

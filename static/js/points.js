@@ -1,4 +1,4 @@
-/* RouteGIS — origin/destination/waypoint point handling, markers, manual/CSV input */
+/* The Next - SiJalan — origin/destination/waypoint point handling, markers, manual/CSV input */
 
 function handleMapClick(pt) {
   // If the user focused a specific field (Origin/Destination/a waypoint row)

@@ -33,40 +33,42 @@ import sys
 from pathlib import Path
 
 import openpyxl
-import pymysql
+import psycopg
+from psycopg.rows import dict_row
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 DOCS_DIR = BASE_DIR / "docs" / "docs"
 SCHEMA_PATH = Path(__file__).resolve().parent / "schema_bappenas_lokus_a.sql"
 
-DB_HOST = os.environ.get("MYSQL_HOST", "127.0.0.1")
-DB_PORT = int(os.environ.get("MYSQL_PORT", "3306"))
-DB_USER = os.environ.get("MYSQL_USER", "root")
-DB_PASS = os.environ.get("MYSQL_PASS", "")
-DB_NAME = os.environ.get("MYSQL_DB", "route_gis")
+DB_HOST = os.environ.get("PG_HOST", "127.0.0.1")
+DB_PORT = int(os.environ.get("PG_PORT", "5432"))
+DB_USER = os.environ.get("PG_USER", "postgres")
+DB_PASS = os.environ.get("PG_PASS", "")
+DB_NAME = os.environ.get("PG_DB", "route_gis")
 
 
 def connect():
-    conn = pymysql.connect(
+    return psycopg.connect(
         host=DB_HOST, port=DB_PORT, user=DB_USER, password=DB_PASS,
-        charset="utf8mb4", autocommit=False, cursorclass=pymysql.cursors.DictCursor,
+        dbname=DB_NAME, row_factory=dict_row,
     )
-    with conn.cursor() as cur:
-        cur.execute(
-            "CREATE DATABASE IF NOT EXISTS %s CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci"
-            % DB_NAME
-        )
-    conn.select_db(DB_NAME)
-    return conn
 
 
 def run_schema(conn):
-    sql_text = SCHEMA_PATH.read_text(encoding="utf-8")
-    code = "\n".join(l for l in sql_text.splitlines() if not l.strip().startswith("--"))
+    """Tabel sudah dibuat via scripts/migrate_pg_01_schema.py (lihat
+    docs/migrasi_mysql_ke_postgresql.md) -- schema_bappenas_lokus_a.sql
+    aslinya DDL MySQL, tidak bisa dieksekusi langsung ke PostgreSQL. Di
+    sini cuma pastikan tabelnya benar-benar ada."""
     with conn.cursor() as cur:
-        for stmt in [s.strip() for s in code.split(";") if s.strip()]:
-            cur.execute(stmt)
-    conn.commit()
+        cur.execute(
+            "SELECT 1 FROM information_schema.tables "
+            "WHERE table_schema='public' AND table_name='bappenas_lokus_a'"
+        )
+        if not cur.fetchone():
+            raise RuntimeError(
+                "Tabel bappenas_lokus_a belum ada di PostgreSQL -- jalankan "
+                "scripts/migrate_pg_01_schema.py dulu."
+            )
 
 
 def norm(s):
@@ -230,22 +232,30 @@ def _row(kriteria, level, provinsi, kabupaten, kecamatan, kode_prov, kode_kab, k
 
 def import_lokpri_rpjmn(wb, ctx, sumber_file="Data Highlight Intervensi Bab 4 RPJMN 2025 - 2029_R1_Konektivitas Jalan_20062025.xlsx"):
     """Sheet1 "Data Highlight Intervensi..." -- kolom Provinsi (B) terisi
-    sekali per grup baris (gaya sel gabung, perlu forward-fill), TIAP baris
-    dalam grup punya kolom "Tematik RPJMN" (D) sendiri berisi label kawasan
-    spt "Kawasan Perkotaan Lhoksumawe - Bireuen" -- kerangka CPIT
-    (18.7.26 & 20.7.26, sheet "Kumpulan Data") mencatat Level Data kriteria
-    ini "Kab/Kota" sumber "Kolom D", TAPI kode sebelumnya cuma ambil kolom
-    Provinsi dan skip semua baris lanjutan per grup (dedup by provinsi) --
-    jadi kode_kabupaten selalu kosong walau datanya (sebagian) sebenarnya
-    ada di kolom D. Diperbaiki 20 Jul 2026: proses SEMUA baris per grup,
-    ekstrak nama kab/kota yg disebut di kolom D via _match_kab_tokens_in_text
-    (lihat docstring situ utk detail & keterbatasan -- ~42% baris kolom D
-    memang menyebut kab/kota spesifik, sisanya cuma label region makro tanpa
-    granularitas kab/kota sama sekali, genuinely tidak bisa diturunkan).
-    Provinsi yang tidak ada satupun kab/kota ketemu di kolom D-nya tetap
-    fallback ke baris level PROVINSI (perilaku lama, tidak kehilangan
-    cakupan)."""
+    sekali per grup baris (gaya sel gabung, perlu forward-fill).
+
+    Sumber diperbarui 21 Jul 2026: versi file yang baru menambahkan kolom F
+    "Kota/Kabupaten" yang TIDAK ADA di versi lama -- berisi nama kab/kota
+    eksplisit per baris (kadang multi, dipisah KOMA, mis. "Kabupaten
+    Kolaka, Kabupaten Bombana, Kabupaten Kolaka Timur"), jauh lebih andal
+    drpd fuzzy-matching teks bebas kolom D "Tematik RPJMN" yang dipakai
+    sebelumnya (cakupan cuma ~42%, lihat riwayat 20 Jul 2026 di bawah) --
+    jadi kolom F ini SEKARANG JADI SUMBER UTAMA. Parenthetical spt
+    "(Bangko)"/"(wilayah perintis)" & trailing "*" dibuang dulu sebelum
+    match_kab() (itu keterangan ibukota/catatan, bukan bagian nama kab).
+    "dan" SENGAJA TIDAK dipakai sbg pemisah multi-kab (beda dari
+    _match_kab_tokens_in_text di bawah) krn ada nama kabupaten sah yang
+    memuat kata itu ("Kabupaten Pangkajene dan Kepulauan") -- pemisah
+    multi-kab di kolom F ini cuma koma, dikonfirmasi manual thd 179 baris.
+
+    Fuzzy _match_kab_tokens_in_text() thd kolom D TETAP dijalankan sbg
+    PELENGKAP (bukan diganti) -- bisa nangkap kab/kota tambahan yang
+    disebut di teks kawasan tapi tidak eksplisit di kolom F baris itu.
+    Provinsi yang tidak ada satupun kab/kota ketemu (kolom F maupun D)
+    tetap fallback ke baris level PROVINSI (perilaku lama, tidak
+    kehilangan cakupan)."""
     ws = wb[wb.sheetnames[0]]
+    kab_idx = ctx["kab_idx"]
     kab_name_list_by_prov = ctx["kab_name_list_by_prov"]
     all_prov, kab_hits = [], {}
     last_prov = None
@@ -258,11 +268,20 @@ def import_lokpri_rpjmn(wb, ctx, sumber_file="Data Highlight Intervensi Bab 4 RP
         if not last_prov:
             continue
         tematik = clean(row[3]) if len(row) > 3 else None
-        if not tematik:
-            continue
-        for m in _match_kab_tokens_in_text(kab_name_list_by_prov, last_prov, tematik):
-            kab_hits.setdefault(last_prov, {}).setdefault(
-                m["kode_kabupaten"], (m["kabupaten_kota"], tematik))
+        kolom_f = clean(row[5]) if len(row) > 5 else None
+        if kolom_f:
+            for seg in kolom_f.split(","):
+                seg = re.sub(r"\([^)]*\)?", " ", seg).replace("*", "").strip()
+                if not seg:
+                    continue
+                m = match_kab(kab_idx, last_prov, seg)
+                if m:
+                    kab_hits.setdefault(last_prov, {}).setdefault(
+                        m["kode_kabupaten"], (m["kabupaten_kota"], tematik or seg))
+        if tematik:
+            for m in _match_kab_tokens_in_text(kab_name_list_by_prov, last_prov, tematik):
+                kab_hits.setdefault(last_prov, {}).setdefault(
+                    m["kode_kabupaten"], (m["kabupaten_kota"], tematik))
 
     out = []
     for provinsi in all_prov:
@@ -677,7 +696,7 @@ def main():
             all_rows.extend(rows)
 
         with conn.cursor() as cur:
-            cur.execute("DELETE FROM bappenas_lokus_a WHERE kriteria IN %s", (tuple(KRITERIA_SOURCES.keys()),))
+            cur.execute("DELETE FROM bappenas_lokus_a WHERE kriteria = ANY(%s)", (list(KRITERIA_SOURCES.keys()),))
             cur.executemany(
                 "INSERT INTO bappenas_lokus_a (kriteria, level, provinsi_asli, kabupaten_asli, "
                 "kecamatan_asli, kode_provinsi, kode_kabupaten, kode_kecamatan, keterangan, "

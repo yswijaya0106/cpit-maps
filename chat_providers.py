@@ -1,4 +1,4 @@
-"""Asisten chat RouteGIS -- provider LLM (Groq/Grok/OpenAI/Claude/Gemini),
+"""Asisten chat The Next - SiJalan -- provider LLM (Groq/Grok/OpenAI/Claude/Gemini),
 tool-calling read-only ke database usulan Inpres, dan pemilihan provider
 (dicoba berurutan lewat _call_chat sampai satu berhasil).
 
@@ -38,7 +38,7 @@ CLAUDE_MODEL = os.getenv("CLAUDE_MODEL", "claude-opus-4-8")
 
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash-lite")
 
-CHAT_SYSTEM_PROMPT = """Anda adalah asisten analisis rute di aplikasi RouteGIS, sebuah alat perencanaan rute \
+CHAT_SYSTEM_PROMPT = """Anda adalah asisten analisis rute di aplikasi The Next - SiJalan, sebuah alat perencanaan rute \
 dan analisis GIS untuk jalan di Indonesia. Jawab dalam Bahasa Indonesia, singkat dan langsung ke inti.
 Anda diberi data ringkas tentang rute yang sedang dilihat pengguna (jarak, durasi, wilayah administratif yang \
 dilalui, perkiraan klasifikasi jalan dari OpenStreetMap, dan usulan Inpres Jalan/Jembatan di sekitar rute). \

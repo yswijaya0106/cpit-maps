@@ -1,4 +1,4 @@
-/* RouteGIS — export selected route to GIS formats */
+/* The Next - SiJalan — export selected route to GIS formats */
 
 function bindExportButtons() {
   document.querySelectorAll(".btn-export").forEach((btn) => {

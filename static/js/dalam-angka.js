@@ -186,10 +186,12 @@ async function bpsSubjekLoadData(varId, thId) {
     const res = await fetch(`/api/bps-subjek/${encodeURIComponent(varId)}/data?th=${encodeURIComponent(thId)}`);
     if (!res.ok) throw new Error((await res.json()).detail || "Gagal memuat data");
     const data = await res.json();
-    const rows = data.rows.map((r) => `
-      <tr><td>${escapeHtml(r.wilayah || "-")}</td>
-        <td class="bps-subjek-nilai">${r.nilai === null ? "-" : Number(r.nilai).toLocaleString("id-ID")}</td></tr>`
-    ).join("");
+    const rows = data.rows.map((r) => {
+      const nama = escapeHtml(r.wilayah || "-");
+      return `
+      <tr><td>${r.is_provinsi ? `<strong>${nama}</strong>` : nama}</td>
+        <td class="bps-subjek-nilai">${r.nilai === null ? "-" : Number(r.nilai).toLocaleString("id-ID")}</td></tr>`;
+    }).join("");
     resultEl.innerHTML = `
       <div class="bps-subjek-meta">
         <strong>${escapeHtml(data.var || "")}</strong>

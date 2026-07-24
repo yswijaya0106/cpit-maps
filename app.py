@@ -6209,6 +6209,22 @@ def _bps_subjek_cached(cache_key: tuple, builder) -> list:
     return _bps_subjek_cache[cache_key]
 
 
+_BPS_HTML_TAG_RE = re.compile(r"<[^>]+>")
+
+
+def _bps_clean_wilayah_label(label: Optional[str]) -> tuple:
+    """vervar.label BPS suka dibungkus <b>...</b> utk baris level provinsi
+    saat 1 variabel mencampur provinsi & kab/kota sekaligus (indikasi
+    hierarki visual dari portal BPS sendiri, mis. var Angka Harapan Hidup,
+    546 wilayah) -- dipetakan jadi flag is_provinsi drpd ditampilkan mentah
+    (escapeHtml() di frontend bikin tag-nya kelihatan literal sbg teks,
+    bukan dirender sbg bold)."""
+    if not label:
+        return "", False
+    is_provinsi = bool(re.search(r"<b>", label, re.IGNORECASE))
+    return _BPS_HTML_TAG_RE.sub("", label).strip(), is_provinsi
+
+
 @app.get("/api/bps-subjek/subcat")
 def bps_subjek_subcat():
     """Kategori subjek BPS (Sosial-Kependudukan, Ekonomi-Perdagangan, dst) --
@@ -6276,7 +6292,9 @@ def bps_subjek_data(var_id: int, th: int):
         key = f"{v.get('val')}{var_id}0{th}0"
         if key not in datacontent:
             continue
-        rows.append({"kode_wilayah": v.get("val"), "wilayah": v.get("label"), "nilai": datacontent[key]})
+        label, is_provinsi = _bps_clean_wilayah_label(v.get("label"))
+        rows.append({"kode_wilayah": v.get("val"), "wilayah": label,
+                     "is_provinsi": is_provinsi, "nilai": datacontent[key]})
     if not rows:
         raise HTTPException(502, "Tidak ada wilayah yang cocok dgn data BPS -- "
                              "format kunci datacontent tidak sesuai dugaan.")

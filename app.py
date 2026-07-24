@@ -492,6 +492,27 @@ def usulan_inpres_provinsi_list():
         return cur.fetchall()
 
 
+@app.get("/api/usulan-inpres/kabupaten")
+def usulan_inpres_kabupaten_list(provinsi: Optional[str] = None):
+    where_clause = "WHERE kabupaten_kota IS NOT NULL"
+    params: list = []
+    if provinsi:
+        where_clause += " AND provinsi = %s"
+        params.append(provinsi)
+    with db_cursor() as cur:
+        cur.execute(
+            f"""
+            SELECT kabupaten_kota, COUNT(*) AS jumlah
+            FROM usulan_inpres
+            {where_clause}
+            GROUP BY kabupaten_kota
+            ORDER BY kabupaten_kota ASC
+            """,
+            params,
+        )
+        return cur.fetchall()
+
+
 @app.get("/api/usulan-inpres")
 def usulan_inpres_list(
     provinsi: Optional[str] = None,

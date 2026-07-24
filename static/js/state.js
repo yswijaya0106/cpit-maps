@@ -5,6 +5,7 @@ const ROUTE_COLORS = ["#4f7cff", "#22d3a5", "#ffb648", "#ff5c7c", "#a78bfa", "#3
 const state = {
   map: null,
   mapProvider: "osm", // "google" | "osm" — basemap aktif, default OpenStreetMap
+  mapTheme: "light",  // "dark" | "light" — tema warna roadmap Google Maps
   origin: null,       // {lat, lng, label}
   destination: null,
   waypoints: [],       // [{lat, lng, label}]
@@ -16,7 +17,7 @@ const state = {
   activeField: null,   // "origin" | "destination" | <waypoint index> | null — which field the next map click should fill
   usulanPolylines: [], // overlay layer: geometri usulan Inpres yang ditampilkan di peta
   usulanBounds: null,  // akumulasi bounds semua usulan yang sudah ditampilkan, supaya klik berikutnya tidak "menyembunyikan" yang sebelumnya
-  usulanBrowse: { provinsi: "", q: "", offset: 0, limit: 50, total: 0 },
+  usulanBrowse: { provinsi: "", kabupaten_kota: "", q: "", offset: 0, limit: 50, total: 0 },
   browseUsulanPolylines: [], // geometri usulan yang sedang dilihat di panel "Jelajahi Usulan Inpres"
   mapLayers: { active: {}, colors: {}, opacity: {}, labels: {}, meta: {}, selectedProvinsi: null, selectedKabupaten: null },
   // overlay peta referensi (SHP) dari folder Maps/ — bisa multi-provinsi/kabupaten aktif

@@ -8,7 +8,7 @@ function initApp() {
     disableDefaultUI: false,
     fullscreenControl: false,
     streetViewControl: false,
-    styles: mapDarkStyle(),
+    styles: mapStyleForTheme(state.mapTheme),
   });
 
   state.map.addListener("click", (e) => {
@@ -38,6 +38,7 @@ function initApp() {
   registerOsmMapType();
   bindBasemapToggle();
   applyBasemapProvider(state.mapProvider);
+  bindMapThemeToggle();
 
   bindUI();
   initMapLayersControl();
@@ -85,6 +86,8 @@ function applyBasemapProvider(provider) {
   if (label) label.textContent = provider === "osm" ? "OpenStreetMap" : "Google Maps";
   const attribution = document.getElementById("osmAttribution");
   if (attribution) attribution.hidden = provider !== "osm";
+  const themeToggle = document.getElementById("btnMapThemeToggle");
+  if (themeToggle) themeToggle.hidden = provider === "osm";
 }
 
 function bindBasemapToggle() {
@@ -107,6 +110,39 @@ function mapDarkStyle() {
     { featureType: "poi", elementType: "labels", stylers: [{ visibility: "off" }] },
     { featureType: "transit", stylers: [{ visibility: "off" }] },
   ];
+}
+
+function mapLightStyle() {
+  return [
+    { elementType: "labels.text.stroke", stylers: [{ color: "#ffffff" }] },
+    { elementType: "labels.text.fill", stylers: [{ color: "#5b6472" }] },
+    { featureType: "road", elementType: "geometry", stylers: [{ color: "#ffffff" }] },
+    { featureType: "road.highway", elementType: "geometry", stylers: [{ color: "#f0c674" }] },
+    { featureType: "water", elementType: "geometry", stylers: [{ color: "#c9e0f5" }] },
+    { featureType: "landscape", elementType: "geometry", stylers: [{ color: "#f5f5f0" }] },
+    { featureType: "poi", elementType: "geometry", stylers: [{ color: "#e9ede2" }] },
+    { featureType: "poi", elementType: "labels", stylers: [{ visibility: "off" }] },
+    { featureType: "transit", stylers: [{ visibility: "off" }] },
+  ];
+}
+
+function mapStyleForTheme(theme) {
+  return theme === "light" ? mapLightStyle() : mapDarkStyle();
+}
+
+function applyMapTheme(theme) {
+  state.mapTheme = theme;
+  state.map.setOptions({ styles: mapStyleForTheme(theme) });
+  const icon = document.getElementById("mapThemeIcon");
+  if (icon) icon.className = theme === "light" ? "bi bi-sun-fill" : "bi bi-moon-stars-fill";
+}
+
+function bindMapThemeToggle() {
+  const btn = document.getElementById("btnMapThemeToggle");
+  if (!btn) return;
+  btn.addEventListener("click", () => {
+    applyMapTheme(state.mapTheme === "light" ? "dark" : "light");
+  });
 }
 
 function placeToPoint(place) {

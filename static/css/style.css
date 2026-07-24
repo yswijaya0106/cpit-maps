@@ -579,6 +579,20 @@ td.checklist-cell .ijd-badge { margin-right: 4px; }
 .maplayer-item-size { flex: 0 0 auto; color: var(--text-dim); font-size: 11px; }
 .maplayer-opacity { flex: 0 0 60px; width: 60px; accent-color: var(--primary); cursor: pointer; }
 
+/* Toggle tema gelap/terang -- floating di atas peta, di bawah kontrol native
+   Google Map/Satellite (top-left), hanya tampil saat basemap = Google Maps
+   (lihat applyBasemapProvider di map-bootstrap.js) karena tema cuma berlaku
+   utk styles roadmap Google, tidak relevan utk tile OSM. */
+.map-theme-toggle {
+  position: absolute; top: 60px; left: 14px; z-index: 6;
+  width: 38px; height: 38px; border-radius: 8px; border: 1px solid var(--border);
+  background: var(--panel); color: var(--text); font-size: 16px; cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  box-shadow: var(--shadow); transition: background .15s ease;
+}
+.map-theme-toggle:hover { background: rgba(255,255,255,.06); }
+.map-theme-toggle[hidden] { display: none; }
+
 /* Map tools (ArcGIS-style toolbar: identify, select, measure, legend) */
 .map-toolbar {
   position: absolute; top: 14px; right: 14px; z-index: 6;

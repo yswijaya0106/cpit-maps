@@ -163,11 +163,38 @@ async function loadUsulanProvinsiOptions() {
   }
 }
 
-function bindUsulanProvinsiCombo() {
-  const field = document.getElementById("usulanProvinsiField");
-  const toggle = document.getElementById("usulanProvinsiToggle");
-  const panel = document.getElementById("usulanProvinsiPanel");
-  const label = document.getElementById("usulanProvinsiLabel");
+// Kabupaten/kota tergantung provinsi yang sedang dipilih -- dipanggil ulang
+// tiap kali provinsi berganti (termasuk "Semua Provinsi", lalu menampilkan
+// seluruh kabupaten nasional).
+async function loadUsulanKabupatenOptions(provinsi) {
+  const panel = document.getElementById("usulanKabupatenPanel");
+  const label = document.getElementById("usulanKabupatenLabel");
+  panel.querySelectorAll(".usulan-combo-option:not([data-value=''])").forEach((el) => el.remove());
+  panel.querySelector('.usulan-combo-option[data-value=""]').classList.add("selected");
+  label.textContent = "Semua Kabupaten/Kota";
+  state.usulanBrowse.kabupaten_kota = "";
+  try {
+    const params = provinsi ? `?provinsi=${encodeURIComponent(provinsi)}` : "";
+    const res = await fetch(`/api/usulan-inpres/kabupaten${params}`);
+    if (!res.ok) throw new Error(await res.text());
+    const rows = await res.json();
+    rows.forEach((r) => {
+      const opt = document.createElement("div");
+      opt.className = "usulan-combo-option";
+      opt.dataset.value = r.kabupaten_kota;
+      opt.textContent = `${r.kabupaten_kota} (${r.jumlah})`;
+      panel.appendChild(opt);
+    });
+  } catch (err) {
+    console.error(err);
+  }
+}
+
+function bindUsulanComboField(fieldId, toggleId, panelId, labelId, onSelect) {
+  const field = document.getElementById(fieldId);
+  const toggle = document.getElementById(toggleId);
+  const panel = document.getElementById(panelId);
+  const label = document.getElementById(labelId);
 
   toggle.addEventListener("click", (e) => {
     e.stopPropagation();
@@ -184,8 +211,7 @@ function bindUsulanProvinsiCombo() {
     label.textContent = opt.textContent;
     panel.hidden = true;
     field.classList.remove("open");
-    state.usulanBrowse.provinsi = opt.dataset.value;
-    loadUsulanBrowseList(true);
+    onSelect(opt.dataset.value);
   });
 
   document.addEventListener("click", (e) => {
@@ -193,6 +219,18 @@ function bindUsulanProvinsiCombo() {
       panel.hidden = true;
       field.classList.remove("open");
     }
+  });
+}
+
+function bindUsulanProvinsiCombo() {
+  bindUsulanComboField("usulanProvinsiField", "usulanProvinsiToggle", "usulanProvinsiPanel", "usulanProvinsiLabel", (value) => {
+    state.usulanBrowse.provinsi = value;
+    loadUsulanKabupatenOptions(value);
+    loadUsulanBrowseList(true);
+  });
+  bindUsulanComboField("usulanKabupatenField", "usulanKabupatenToggle", "usulanKabupatenPanel", "usulanKabupatenLabel", (value) => {
+    state.usulanBrowse.kabupaten_kota = value;
+    loadUsulanBrowseList(true);
   });
 }
 
@@ -208,6 +246,7 @@ async function loadUsulanBrowseList(reset) {
 
   const params = new URLSearchParams({ limit: b.limit, offset: b.offset });
   if (b.provinsi) params.set("provinsi", b.provinsi);
+  if (b.kabupaten_kota) params.set("kabupaten_kota", b.kabupaten_kota);
   if (b.q) params.set("q", b.q);
 
   let data;
@@ -1597,6 +1636,7 @@ document.addEventListener("DOMContentLoaded", bindLaporanPrioritas);
 
 function bindUsulanBrowse() {
   loadUsulanProvinsiOptions();
+  loadUsulanKabupatenOptions("");
   loadUsulanBrowseList(true);
   bindUsulanProvinsiCombo();
   bindUsulanImportExport();

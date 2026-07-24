@@ -577,6 +577,16 @@
                   <div class="usulan-combo-option selected" data-value="">Semua Provinsi</div>
                 </div>
               </div>
+              <div class="usulan-filter-field usulan-combo" id="usulanKabupatenField">
+                <i class="bi bi-signpost-split-fill"></i>
+                <button type="button" class="usulan-combo-toggle" id="usulanKabupatenToggle">
+                  <span id="usulanKabupatenLabel">Semua Kabupaten/Kota</span>
+                  <i class="bi bi-chevron-down"></i>
+                </button>
+                <div class="usulan-combo-panel" id="usulanKabupatenPanel" hidden>
+                  <div class="usulan-combo-option selected" data-value="">Semua Kabupaten/Kota</div>
+                </div>
+              </div>
               <div class="usulan-filter-field">
                 <i class="bi bi-search"></i>
                 <input type="text" id="usulanSearchInput" placeholder="Cari nama ruas, kegiatan, atau kode ruas..."
@@ -597,6 +607,11 @@
         <div id="map"></div>
         <div class="osm-attribution" id="osmAttribution" hidden>&copy; <a href="https://www.openstreetmap.org/copyright"
             target="_blank" rel="noopener">OpenStreetMap</a> contributors</div>
+
+        <button type="button" class="map-theme-toggle" id="btnMapThemeToggle"
+          title="Ganti tema peta gelap / terang" hidden>
+          <i class="bi bi-sun-fill" id="mapThemeIcon"></i>
+        </button>
 
         <div class="map-toolbar" id="mapToolbar">
           <button class="maptool-btn" data-tool="add-point"

@@ -158,7 +158,8 @@ function bindDataViewerImport() {
     "dataTableImportKriteriaField", "dataTableImportKriteriaToggle",
     "dataTableImportKriteriaPanel", "dataTableImportKriteriaLabel",
     async () => {
-      const rows = await dataViewerBappenasKriteria();
+      const rows = (await dataViewerBappenasKriteria())
+        .slice().sort((a, b) => a.label.localeCompare(b.label, "id"));
       fillComboPanel("dataTableImportKriteriaPanel", "dataTableImportKriteriaLabel",
         rows, "kriteria", (r) => `${r.label} — ${r.total} baris`, dataViewer.importKriteria);
     },

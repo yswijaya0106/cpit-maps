@@ -821,9 +821,11 @@ function ijdPreviewRender(data) {
     `${data.total.toLocaleString("id-ID")} usulan`;
 
   const head = data.columns.map((c) => `<th>${escapeHtml(c)}</th>`).join("");
-  const cell = (v) => {
+  // Kolom "No." / "ID": angka identitas, bukan kuantitas -- tanpa pemisah ribuan.
+  const noSeparatorCols = new Set(data.columns.map((c, i) => (c === "No." || c === "ID" ? i : -1)).filter((i) => i >= 0));
+  const cell = (v, i) => {
     if (v === null || v === undefined || v === "") return '<td class="null">—</td>';
-    if (typeof v === "number") return `<td class="num">${v.toLocaleString("id-ID")}</td>`;
+    if (typeof v === "number") return `<td class="num">${noSeparatorCols.has(i) ? v : v.toLocaleString("id-ID")}</td>`;
     const s = String(v);
     // Sel checklist Aspek A/B: marker jadi ikon + tiap butir di baris sendiri.
     if (/\[Poin \d+\]|\[v\]|\[ \]/.test(s)) return `<td class="checklist-cell"><div>${checklistHtml(s)}</div></td>`;
@@ -1021,9 +1023,11 @@ function nprPreviewRender(data) {
     `${data.total.toLocaleString("id-ID")} usulan`;
 
   const head = data.columns.map((c) => `<th>${escapeHtml(c)}</th>`).join("");
-  const cell = (v) => {
+  // Kolom "No." / "ID": angka identitas, bukan kuantitas -- tanpa pemisah ribuan.
+  const noSeparatorCols = new Set(data.columns.map((c, i) => (c === "No." || c === "ID" ? i : -1)).filter((i) => i >= 0));
+  const cell = (v, i) => {
     if (v === null || v === undefined || v === "") return '<td class="null">—</td>';
-    if (typeof v === "number") return `<td class="num">${v.toLocaleString("id-ID")}</td>`;
+    if (typeof v === "number") return `<td class="num">${noSeparatorCols.has(i) ? v : v.toLocaleString("id-ID")}</td>`;
     return `<td>${escapeHtml(String(v))}</td>`;
   };
   const body = data.rows.map((r) => `<tr>${r.map(cell).join("")}</tr>`).join("");

@@ -4608,7 +4608,7 @@ CEK SATU-PER-SATU — kalau field-nya ADA pada data, kalimat terkait di bawah in
 "aspek_b_narasi_ai" (jangan diam-diam dilewati; kalau TIDAK ada field-nya, jangan menyinggung topik itu
 sama sekali):
 - "kemantapan_ruas" ada → satu kalimat pakai PERSIS field "pct_tidak_mantap" (jangan hitung ulang), gaya
-  "Dari aspek teknis, kondisi ruas ini tergolong <status> dengan persentase tidak mantap sekitar
+  "Dari aspek teknis, kondisi ruas ini tergolong <status> dengan persentase sekitar
   <pct_tidak_mantap>% (kondisi rusak ringan+berat dibanding panjang penanganan kompetensi)."
 - "konektivitas_jalan" ada → WAJIB satu kalimat, TERMASUK kalau ketiga "terhubung_..." semuanya false
   (jangan dilewati hanya krn tidak ada yang terhubung — ini tetap fakta yang harus dilaporkan): kalau ada
@@ -5084,7 +5084,7 @@ CEK SATU-PER-SATU untuk SETIAP usulan — kalau field-nya ADA di "fakta" usulan 
 masuk ke narasi usulan itu (jangan diam-diam dilewati; kalau TIDAK ada field-nya utk usulan itu, jangan \
 menyinggung topik itu sama sekali utk usulan itu):
 - "kemantapan_ruas" ada → satu kalimat pakai PERSIS field "pct_tidak_mantap" (jangan hitung ulang), gaya \
-"Dari aspek teknis, kondisi ruas ini tergolong <status> dengan persentase tidak mantap sekitar \
+"Dari aspek teknis, kondisi ruas ini tergolong <status> dengan persentase sekitar \
 <pct_tidak_mantap>% (kondisi rusak ringan+berat dibanding panjang penanganan kompetensi)."
 - "konektivitas_jalan" ada → WAJIB satu kalimat, TERMASUK kalau ketiga "terhubung_..." semuanya false \
 (jangan dilewati hanya krn tidak ada yang terhubung — ini tetap fakta yang harus dilaporkan): kalau ada \

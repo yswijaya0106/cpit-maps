@@ -248,8 +248,12 @@ async function bpsSubjekLoadTurth(varId, thId) {
   bpsSubjekTriggerData();
 }
 
+function bpsSubjekCurrentVarId() {
+  return document.querySelector("#bpsSubjekVarPanel .maplayer-combo-option.selected")?.dataset.value || "";
+}
+
 function bpsSubjekTriggerData() {
-  const varId = document.getElementById("bpsSubjekVar").value;
+  const varId = bpsSubjekCurrentVarId();
   const thId = document.getElementById("bpsSubjekTahun").value;
   if (!varId || !thId) return;
   const turvarField = document.getElementById("bpsSubjekTurvarField");
@@ -312,7 +316,7 @@ function bindDalamAngka() {
   bindMapLayerCombo("bpsSubjekVarField", "bpsSubjekVarToggle", "bpsSubjekVarPanel",
     "bpsSubjekVarLabel", async () => {}, (value) => bpsSubjekOnVarChange(value));
   document.getElementById("bpsSubjekTahun").addEventListener("change", (e) => {
-    const varId = document.getElementById("bpsSubjekVar").value;
+    const varId = bpsSubjekCurrentVarId();
     if (e.target.value && varId) bpsSubjekLoadTurth(varId, e.target.value);
   });
   document.getElementById("bpsSubjekTurvar").addEventListener("change", bpsSubjekTriggerData);

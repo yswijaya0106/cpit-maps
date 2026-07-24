@@ -135,6 +135,7 @@ async function bpsSubjekLoadSubject(subcatId) {
 async function bpsSubjekLoadVar(subjectId) {
   bpsSubjekResetSelect("bpsSubjekVar", "Memuat...");
   bpsSubjekResetSelect("bpsSubjekTahun", "—");
+  bpsSubjekHideTurunan();
   const el = document.getElementById("bpsSubjekVar");
   document.getElementById("bpsSubjekResult").innerHTML =
     `<div class="adv-loading">Pilih variabel untuk melihat data.</div>`;
@@ -148,9 +149,44 @@ async function bpsSubjekLoadVar(subjectId) {
     }
     el.innerHTML = items.map((v) => `<option value="${v.var_id}">${escapeHtml(v.title)}</option>`).join("");
     el.disabled = false;
-    bpsSubjekLoadTahun(items[0].var_id);
+    bpsSubjekOnVarChange(items[0].var_id);
   } catch (err) {
     el.innerHTML = `<option value="">Gagal memuat</option>`;
+    toast(err.message, true);
+  }
+}
+
+// Kategori Turunan (turvar) & Periode (turth): sebagian variabel BPS (mis.
+// Indeks Kedalaman Kemiskinan) punya dimensi tambahan di luar wilayah/tahun
+// -- turvar (Perkotaan/Perdesaan/dst) bergantung HANYA pada variabel, turth
+// (Semester 1/2/Tahunan) bergantung pada variabel + tahun yg dipilih.
+// Keduanya disembunyikan (dianggap "0" di /data) kalau variabelnya tak punya
+// dimensi itu -- lihat docstring bps_subjek_data() di app.py.
+function bpsSubjekHideTurunan() {
+  document.getElementById("bpsSubjekTurvarField").hidden = true;
+  document.getElementById("bpsSubjekTurthField").hidden = true;
+  document.getElementById("bpsSubjekTurvar").innerHTML = "";
+  document.getElementById("bpsSubjekTurth").innerHTML = "";
+}
+
+async function bpsSubjekOnVarChange(varId) {
+  bpsSubjekHideTurunan();
+  document.getElementById("bpsSubjekResult").innerHTML = `<div class="adv-loading">Memuat data...</div>`;
+  await bpsSubjekLoadTurvar(varId);
+  await bpsSubjekLoadTahun(varId);
+}
+
+async function bpsSubjekLoadTurvar(varId) {
+  const field = document.getElementById("bpsSubjekTurvarField");
+  const el = document.getElementById("bpsSubjekTurvar");
+  try {
+    const res = await fetch(`/api/bps-subjek/${encodeURIComponent(varId)}/turvar`);
+    if (!res.ok) throw new Error((await res.json()).detail || "Gagal memuat kategori turunan");
+    const items = await res.json();
+    if (!items.length) return;
+    el.innerHTML = items.map((t) => `<option value="${t.turvar_id}">${escapeHtml(t.turvar)}</option>`).join("");
+    field.hidden = false;
+  } catch (err) {
     toast(err.message, true);
   }
 }
@@ -172,18 +208,49 @@ async function bpsSubjekLoadTahun(varId) {
     }
     el.innerHTML = items.map((t) => `<option value="${t.th_id}">${escapeHtml(t.th)}</option>`).join("");
     el.disabled = false;
-    bpsSubjekLoadData(varId, items[0].th_id);
+    await bpsSubjekLoadTurth(varId, items[0].th_id);
   } catch (err) {
     el.innerHTML = `<option value="">Gagal memuat</option>`;
     toast(err.message, true);
   }
 }
 
-async function bpsSubjekLoadData(varId, thId) {
+async function bpsSubjekLoadTurth(varId, thId) {
+  const field = document.getElementById("bpsSubjekTurthField");
+  const el = document.getElementById("bpsSubjekTurth");
+  field.hidden = true;
+  el.innerHTML = "";
+  try {
+    const res = await fetch(`/api/bps-subjek/${encodeURIComponent(varId)}/turth?th=${encodeURIComponent(thId)}`);
+    if (!res.ok) throw new Error((await res.json()).detail || "Gagal memuat periode");
+    const items = await res.json();
+    if (items.length) {
+      el.innerHTML = items.map((t) => `<option value="${t.turth_id}">${escapeHtml(t.turth)}</option>`).join("");
+      field.hidden = false;
+    }
+  } catch (err) {
+    toast(err.message, true);
+  }
+  bpsSubjekTriggerData();
+}
+
+function bpsSubjekTriggerData() {
+  const varId = document.getElementById("bpsSubjekVar").value;
+  const thId = document.getElementById("bpsSubjekTahun").value;
+  if (!varId || !thId) return;
+  const turvarField = document.getElementById("bpsSubjekTurvarField");
+  const turthField = document.getElementById("bpsSubjekTurthField");
+  const turvar = turvarField.hidden ? 0 : (document.getElementById("bpsSubjekTurvar").value || 0);
+  const turth = turthField.hidden ? 0 : (document.getElementById("bpsSubjekTurth").value || 0);
+  bpsSubjekLoadData(varId, thId, turvar, turth);
+}
+
+async function bpsSubjekLoadData(varId, thId, turvar = 0, turth = 0) {
   const resultEl = document.getElementById("bpsSubjekResult");
   resultEl.innerHTML = `<div class="adv-loading">Memuat data...</div>`;
   try {
-    const res = await fetch(`/api/bps-subjek/${encodeURIComponent(varId)}/data?th=${encodeURIComponent(thId)}`);
+    const params = new URLSearchParams({ th: thId, turvar: turvar || 0, turth: turth || 0 });
+    const res = await fetch(`/api/bps-subjek/${encodeURIComponent(varId)}/data?${params.toString()}`);
     if (!res.ok) throw new Error((await res.json()).detail || "Gagal memuat data");
     const data = await res.json();
     const rows = data.rows.map((r) => {
@@ -192,11 +259,17 @@ async function bpsSubjekLoadData(varId, thId) {
       <tr><td>${r.is_provinsi ? `<strong>${nama}</strong>` : nama}</td>
         <td class="bps-subjek-nilai">${r.nilai === null ? "-" : Number(r.nilai).toLocaleString("id-ID")}</td></tr>`;
     }).join("");
+    const turvarField = document.getElementById("bpsSubjekTurvarField");
+    const turthField = document.getElementById("bpsSubjekTurthField");
+    const turvarLabel = turvarField.hidden ? "" :
+      ` · ${escapeHtml(document.getElementById("bpsSubjekTurvar").selectedOptions[0]?.textContent || "")}`;
+    const turthLabel = turthField.hidden ? "" :
+      ` · ${escapeHtml(document.getElementById("bpsSubjekTurth").selectedOptions[0]?.textContent || "")}`;
     resultEl.innerHTML = `
       <div class="bps-subjek-meta">
         <strong>${escapeHtml(data.var || "")}</strong>
         ${data.unit && data.unit !== "Tidak Ada Satuan" ? ` (${escapeHtml(data.unit)})` : ""}
-        — Tahun ${escapeHtml(String(data.tahun || ""))}
+        — Tahun ${escapeHtml(String(data.tahun || ""))}${turvarLabel}${turthLabel}
         · ${data.rows.length.toLocaleString("id-ID")} wilayah
         ${data.last_update ? ` · Terakhir diperbarui BPS: ${escapeHtml(data.last_update)}` : ""}
       </div>
@@ -224,12 +297,14 @@ function bindDalamAngka() {
     if (e.target.value) bpsSubjekLoadVar(e.target.value);
   });
   document.getElementById("bpsSubjekVar").addEventListener("change", (e) => {
-    if (e.target.value) bpsSubjekLoadTahun(e.target.value);
+    if (e.target.value) bpsSubjekOnVarChange(e.target.value);
   });
   document.getElementById("bpsSubjekTahun").addEventListener("change", (e) => {
     const varId = document.getElementById("bpsSubjekVar").value;
-    if (e.target.value && varId) bpsSubjekLoadData(varId, e.target.value);
+    if (e.target.value && varId) bpsSubjekLoadTurth(varId, e.target.value);
   });
+  document.getElementById("bpsSubjekTurvar").addEventListener("change", bpsSubjekTriggerData);
+  document.getElementById("bpsSubjekTurth").addEventListener("change", bpsSubjekTriggerData);
 
   const overlay = document.getElementById("dalamAngkaOverlay");
   document.getElementById("dalamAngkaClose").addEventListener("click", () => (overlay.hidden = true));

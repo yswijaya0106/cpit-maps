@@ -36,8 +36,11 @@ const DB_BOOL_COL_RX = /_ada$|_estimasi$/i;
 function isBoolDbCol(colName) {
   return DB_BOOL_COL_RX.test(colName);
 }
+// value bisa 0/1 (TINYINT(1) era MySQL) ATAU true/false (BOOLEAN native
+// PostgreSQL pasca migrasi 24 Jul 2026) -- API bisa balikin salah satu
+// tergantung kolomnya, terima keduanya.
 function boolCellHtml(value) {
-  return value === 1
+  return value === 1 || value === true
     ? '<i class="bi bi-check-circle-fill bool-true" title="Ya"></i>'
     : '<i class="bi bi-x-circle bool-false" title="Tidak"></i>';
 }

@@ -142,7 +142,7 @@ function attachKecamatanJoin(container, kodeKec) {
       }
       const boolCols = data.columns.map(isBoolDbCol);
       const joinCell = (v, j) =>
-        boolCols[j] && (v === 0 || v === 1) ? boolCellHtml(v) : escapeHtml(String(v ?? "—"));
+        boolCols[j] && (v === 0 || v === 1 || v === true || v === false) ? boolCellHtml(v) : escapeHtml(String(v ?? "—"));
       if (data.rows.length === 1) {
         // satu baris -> tampilkan tegak (kolom: nilai) biar muat di popup
         bodyEl.innerHTML = `<table class="identify-table">${data.columns.map((c, i) =>

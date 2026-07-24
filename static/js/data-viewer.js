@@ -240,7 +240,7 @@ function dataViewerRender(data) {
   // -> tampilkan sebagai ikon centang/silang, bukan angka 0/1 mentah.
   const boolCols = data.columns.map(isBoolDbCol);
   const cell = (v, j) => {
-    if (boolCols[j] && (v === 0 || v === 1)) {
+    if (boolCols[j] && (v === 0 || v === 1 || v === true || v === false)) {
       return `<td class="bool-cell">${boolCellHtml(v)}</td>`;
     }
     if (v === null || v === undefined) return '<td class="null">—</td>';

@@ -6253,28 +6253,44 @@ def bps_subjek_tahun(var_id: int):
                                lambda: _bps_api_list_all("th", domain="0000", var=var_id))
 
 
+@app.get("/api/bps-subjek/{var_id}/turvar")
+def bps_subjek_turvar(var_id: int):
+    """Kategori turunan (turvar) variabel ini, kalau ada -- mis. Perkotaan/
+    Perdesaan/Perkotaan+Perdesaan utk variabel kemiskinan P0/P1/P2. List
+    kosong berarti variabel ini tak punya sub-kategori sama sekali (frontend
+    sembunyikan dropdown-nya, turvar dianggap 0 di /data). HANYA bergantung
+    pada var (dikonfirmasi manual: tidak butuh th)."""
+    return _bps_subjek_cached(("turvar", var_id),
+                               lambda: _bps_api_list_all("turvar", domain="0000", var=var_id))
+
+
+@app.get("/api/bps-subjek/{var_id}/turth")
+def bps_subjek_turth(var_id: int, th: int):
+    """Periode turunan (turth) variabel ini utk 1 tahun tertentu, kalau ada --
+    mis. Semester 1 (Maret)/Semester 2 (September)/Tahunan utk variabel yg
+    disurvei 2x setahun (Susenas). BEDA dari turvar: turth bergantung pada th
+    yg dipilih, bisa jadi beda opsi antar tahun -- jadi selalu refetch tiap
+    tahun berganti, bukan cuma sekali per var spt turvar."""
+    return _bps_subjek_cached(("turth", var_id, th),
+                               lambda: _bps_api_list_all("turth", domain="0000", var=var_id, th=th))
+
+
 @app.get("/api/bps-subjek/{var_id}/data")
-def bps_subjek_data(var_id: int, th: int):
-    """Nilai 1 variabel BPS utk 1 tahun, seluruh wilayah yg tersedia (biasanya
-    38 provinsi -- granularitas ditentukan definisi variabel itu sendiri oleh
-    BPS, bukan dipilih di sini). HANYA variabel tanpa sub-kategori (turvar) --
-    utk yang ada turvar, datacontent berisi kombinasi vervar x turvar dan
-    kuncinya tidak lagi 1:1 dgn vervar saja, jadi ditolak eksplisit alih-alih
-    ditebak. Kunci datacontent (utk kasus 1 var + 1 th, tanpa turvar/turtahun)
-    dikonfirmasi manual = f"{vervar_val}{var_id}0{th_id}0" (contoh var=128
-    th_id=125, vervar 1100/Aceh -> key "110012801250"); dipakai lookup
-    langsung per-vervar alih-alih order-zip krn vervar suka menyelipkan baris
-    agregat "INDONESIA" tanpa entri datacontent-nya sendiri (jumlah vervar
-    39 vs datacontent 38 utk var 128, dikonfirmasi manual 24 Jul 2026 --
-    order-zip akan salah geser dari titik itu, lookup-per-key aman krn baris
-    yg tak match otomatis terlewat)."""
+def bps_subjek_data(var_id: int, th: int, turvar: int = 0, turth: int = 0):
+    """Nilai 1 variabel BPS utk 1 tahun (+ turvar/turth kalau berlaku), seluruh
+    wilayah yg tersedia (granularitas ditentukan definisi variabel itu sendiri
+    oleh BPS, bukan dipilih di sini). turvar/turth WAJIB dipilih dulu oleh
+    caller lewat /turvar /turth kalau list-nya tidak kosong -- dibiarkan 0
+    (default) kalau variabelnya memang tak punya dimensi itu. Kunci
+    datacontent dikonfirmasi manual = f"{vervar_val}{var_id}{turvar}{th}
+    {turth}" (var 128 IKK tanpa turvar/turth: "1100"+"128"+"0"+"125"+"0" =
+    "110012801250"; var 503 Kemiskinan P1 dgn turvar=191 Perkotaan+Perdesaan,
+    turth=61 Semester 1: "1100"+"503"+"191"+"125"+"61" = "110050319112561" --
+    keduanya dites cocok 24 Jul 2026). vervar di-lookup per-key (bukan
+    order-zip) krn vervar suka menyelipkan baris agregat "INDONESIA" tanpa
+    entri datacontent-nya sendiri (39 vervar vs 38 datacontent utk var 128)."""
     if not os.getenv("BPS_API_KEY"):
         raise HTTPException(503, "BPS_API_KEY belum dikonfigurasi di .env")
-
-    turvar_check = _bps_api_get("turvar", domain="0000", var=var_id)
-    if turvar_check and turvar_check.get("data-availability") == "available":
-        raise HTTPException(400, "Variabel ini punya sub-kategori (turvar) -- "
-                             "belum didukung di tampilan ini.")
 
     data = _bps_api_get("data", domain="0000", var=var_id, th=th)
     if not data:
@@ -6289,7 +6305,7 @@ def bps_subjek_data(var_id: int, th: int):
     tahun_meta = (data.get("tahun") or [{}])[0]
     rows = []
     for v in vervar:
-        key = f"{v.get('val')}{var_id}0{th}0"
+        key = f"{v.get('val')}{var_id}{turvar}{th}{turth}"
         if key not in datacontent:
             continue
         label, is_provinsi = _bps_clean_wilayah_label(v.get("label"))
@@ -6297,7 +6313,7 @@ def bps_subjek_data(var_id: int, th: int):
                      "is_provinsi": is_provinsi, "nilai": datacontent[key]})
     if not rows:
         raise HTTPException(502, "Tidak ada wilayah yang cocok dgn data BPS -- "
-                             "format kunci datacontent tidak sesuai dugaan.")
+                             "kombinasi turvar/turth mungkin tidak sesuai.")
     rows.sort(key=lambda r: r["wilayah"] or "")
 
     return {

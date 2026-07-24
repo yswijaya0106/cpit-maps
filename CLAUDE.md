@@ -87,9 +87,14 @@ Deps: `requirements.txt`, venv at `.venv/` (already gitignored).
   `google.maps.Data` overlays) → `map-tools.js` (ArcGIS-style identify/
   select/measure tools + overlay legend) → `route-list.js` (result list +
   analysis panel) → `analysis.js` (admin region / road classification
-  panels) → `usulan-inpres.js` (Inpres match + browse/detail) → `chat.js`
-  (chat panel, grounded in the currently viewed route) → `export.js` →
-  `main.js` (reset, top-level event binding). All files share the same global
+  panels) → `usulan-inpres.js` (Inpres match + browse/detail) →
+  `dalam-angka.js` (topbar "Dalam Angka" BPS publication search/preview
+  panel; independent of Google Maps, same pattern as data-viewer.js) →
+  `chat.js` (chat panel, grounded in the currently viewed route) →
+  `export.js` → `main.js` (reset, top-level event binding, and the
+  mobile "..." topbar dropdown — `.topbar-more`, `display:contents` on
+  desktop so it's visually a no-op there, collapses secondary nav buttons
+  into a dropdown under 900px). All files share the same global
   scope — add a new script tag in index.html (in the right position relative
   to its dependencies) rather than reintroducing a single monolithic file.
 - [static/css/style.css](static/css/style.css)
@@ -164,29 +169,44 @@ Deps: `requirements.txt`, venv at `.venv/` (already gitignored).
   See `.claude/skills/ijd-scoring-parameter/` before touching this.
   `GET /api/usulan-inpres/ijd-score/preview` / `.../export/xlsx`
   (`_ijd_score_bulk_rows`) rank usulan nationally and per-provinsi via
-  `_ijd_ranking_sort_key()`: **complete-data usulan (`bobot_tersedia==100`)
-  always sort above partial ones**, score descending within each group —
-  without this, a usulan missing a whole parameter (e.g. C, because that
-  kabupaten's Dalam Angka book isn't imported yet) can normalize to a
-  higher score than a fully-scored usulan and wrongly rank #1. `provinsi`
+  `_ijd_ranking_sort_key()`. **Ranking basis changed 22 Jul 2026 (explicit
+  user request): sorts by NPR score descending** (the alternative/
+  experimental model below, `_compute_npr`), **not** `skor_ternormalisasi_100`
+  A-E teknokratis anymore — before that, it briefly used a "complete-data
+  usulan first" rule on the teknokratis score (see
+  `docs/verifikasi_ijd_ciparay_cikumpay.md`), which is now superseded; don't
+  reintroduce it without checking `_ijd_ranking_sort_key()`'s current
+  docstring first. The teknokratis score is still fully computed and shown
+  (see columns below), just no longer the sort key. `provinsi`
   is a repeatable query param (`?provinsi=A&provinsi=B`, multi-select in the
   UI) normalized/cache-keyed by `_normalisasi_provinsi_multi()` — empty is
   nasional, one or more names filter to those provinces (`WHERE provinsi IN
   %s`). The export also carries a `Kelengkapan Data Skor Teknokratis` column
-  (which parameters, if any, are missing), a `Temuan Data Quality — Outlier
+  (which A-E parameters, if any, are missing — **still teknokratis-based**,
+  unrelated to the NPR ranking change above), a `Temuan Data Quality — Outlier
   Produksi Kecamatan` column (`IJD_OUTLIER_PRODUKSI_AMBANG`: flags
   `bps_kecamatan_potensi_tematik` production values that are implausibly
   large — a known, still-unfixed `extract_dalam_angka.py` parser bug, see
-  `docs/verifikasi_npr_ciparay_cikumpay.md` §3), and a `PENILAIAN PRIORITASI
+  `docs/verifikasi_npr_ciparay_cikumpay.md` §3), a `PENILAIAN PRIORITASI
   USULAN NASIONAL` + `RANKING NASIONAL` column pair (the `skor-prioritas-
   nasional` formula below, batched via `spn_by_id`/`spn_rank_by_score`
   rather than queried per row — same reasoning as the teknokratis ctx
-  batching above).
+  batching above), and — added 22 Jul 2026 alongside the ranking-basis
+  change, so the old basis stays legible — a `Skor Teknokratis A-E
+  (Ternormalisasi 0-100)` column plus `Skor NPR (Eksperimental...)` /
+  `Kategori NPR (Eksperimental)` columns (NPR total only; the full 27-column
+  SI/SC breakdown stays exclusive to `/npr/export/xlsx` below). Only the
+  checked (`[v]`) checklist lines are kept in the Aspek A/Aspek B export
+  columns — unmatched criteria are dropped, not listed as `[ ]`.
   `GET /api/usulan-inpres/ijd-score/dashboard` — KPI/top-10/komposisi
   summary reusing `_ijd_score_bulk_rows`, behind the navbar "Dashboard Skor
-  IJD" button; scores by `skor_tertimbang` sum of available components, not
-  `skor_ternormalisasi_100`, deliberately (renormalizing would let a
-  sparse-but-lucky usulan outrank a fully-scored one nationally).
+  IJD" button. `avg_total`/komposisi/`cakupan_komponen` still use
+  `skor_tertimbang` sum of available teknokratis components (deliberately
+  not `skor_ternormalisasi_100` — renormalizing would let a sparse-but-lucky
+  usulan outrank a fully-scored one). **`top10` was switched to NPR-score
+  ranking 22 Jul 2026** to stay consistent with the export's ranking-basis
+  change above — it's the one exception in this endpoint that isn't
+  teknokratis-based.
 - `GET /api/usulan-inpres/{id}/skor-prioritas-nasional` /
   `GET /api/prioritas-nasional` — national priority score (70% teknokratis +
   10% PU + 10% Bappenas + 10% Kemenko per the 14072026 document) and the
@@ -261,6 +281,23 @@ Deps: `requirements.txt`, venv at `.venv/` (already gitignored).
 - `GET /api/data/tables` / `GET /api/data/{table}` — read-only paged table
   viewer behind the topbar "Data" button. Only tables whitelisted in
   `DATA_TABLES` in app.py are exposed — add new tables there.
+- `GET /api/dalam-angka/list` / `.../preview` / `.../pdf` — topbar "Dalam
+  Angka" panel (`static/js/dalam-angka.js`): search/browse every synced
+  "\<Wilayah\> Dalam Angka \<tahun\>" BPS publication (`dalam_angka_publikasi`
+  table, filled by `scripts/sync_dalam_angka_bps_api.py`, **not** whitelisted
+  in `DATA_TABLES` — it has its own dedicated panel instead of the generic
+  Data viewer). `/list` returns cached `url_publikasi` as-is (fast for
+  hundreds of wilayah); `/preview` regenerates one fresh link on demand via
+  `_dalam_angka_fresh_url()` since BPS's `download.php` token can expire.
+  **`GET /api/dalam-angka/pdf` proxies the actual PDF bytes through the
+  backend** rather than having the "Pratinjau" `<iframe>` embed the raw BPS
+  URL directly — `webapi.bps.go.id` sits behind an Imperva/F5-style
+  anti-bot WAF (`TS...` session cookies) that inconsistently blocks
+  cross-origin iframe fetches but reliably allows requests carrying a normal
+  browser `User-Agent` (`_BPS_DOWNLOAD_UA`, confirmed by direct testing
+  24 Jul 2026: default-UA request → `403`, browser-UA request → `200`).
+  The "Tab Baru" button still links directly to BPS (a top-level navigation
+  behaves like a normal browser request, so it doesn't hit this issue).
 - `POST /api/penduduk-kecamatan/import` / `GET .../export/xlsx` — BPS
   population-per-kecamatan master (also loadable via the CLI script).
 - `POST /api/chat` — chat assistant. Providers are tried in order
@@ -434,6 +471,22 @@ upsert, so they're safe to re-run:
   tables (`schema_statistik_indonesia.sql`: `si_panjang_jalan_provinsi`,
   `si_kendaraan_provinsi`, `si_lahan_sawah_provinsi`) — feeds Pagu
   Provinsi A1 and A3.
+- `sync_dalam_angka_bps_api.py` — syncs `dalam_angka_publikasi` (link
+  catalog, not the PDFs themselves) from BPS Web API (`webapi.bps.go.id`,
+  needs `BPS_API_KEY` in `.env`, free registration) for every
+  provinsi/kabupaten — replaces hosting the ~9.6GB `dalam_angka/` PDF corpus
+  on the server. Cached `url_publikasi` tokens can expire; the app re-fetches
+  a fresh one on demand (`/api/dalam-angka/preview`), this script just seeds/
+  refreshes the catalog. Rerun periodically to catch newly-published years.
+- `sync_kepadatan_kabupaten_bps_api.py` — kabupaten-level population density
+  from BPS Web API's per-provinsi dynamic tables (`bps_api_kepadatan_kabupaten`,
+  schema in `schema_bps_api_kepadatan_kabupaten.sql`) — an independent
+  **cross-check** source for IJD C.A1, not a replacement for
+  `kecamatan_data_turunan` (finer-grained, kecamatan-level). Coverage/
+  freshness varies per province (each BPS provincial office manages its own
+  dynamic-table `var_id`, some as recent as 2024, others 2016-2021, some
+  missing entirely) — **not currently wired into any scoring or UI
+  endpoint**, reference data only as of 24 Jul 2026.
 - `smoke_check.py` — not a test suite (see `docs/ARCHITECTURE.md`
   §"Verification without a test suite"); a reusable before/after
   structural diff (`--save`/`--check`) over a fixed list of read-only

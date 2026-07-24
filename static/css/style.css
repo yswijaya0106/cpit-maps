@@ -56,6 +56,9 @@ html, body {
 
 .topbar-search {
   flex: 0 1 420px;
+  min-width: 0; /* tanpa ini flex item tidak bisa menyusut di bawah lebar
+                   intrinsik input di dalamnya -- penyebab search bar
+                   meluap/kepotong di topbar sempit (mobile) */
   display: flex;
   align-items: center;
   gap: 8px;
@@ -66,6 +69,13 @@ html, body {
   color: var(--text-dim);
 }
 .topbar-search i { font-size: 13px; }
+
+/* Wadah tombol nav sekunder (basemap/overlay/Data/Lokus Bappenas/Dalam
+   Angka/Laporan Prioritas) -- desktop: display:contents supaya isinya
+   tetap jadi flex-item .topbar langsung spt sebelum di-refactor (tidak
+   ada perubahan visual desktop). Mobile: lihat @media di bawah. */
+.topbar-more { display: contents; }
+.topbar-more-toggle { flex: 0 0 auto; }
 
 .topbar-basemap {
   display: flex; align-items: center; gap: 8px;
@@ -255,6 +265,39 @@ table.laporan-prioritas-table th.laporan-group-b {
 }
 .datatable-tab:hover { color: var(--text); }
 .datatable-tab.active { color: var(--primary); border-bottom-color: var(--primary); }
+
+/* Tab bar "Publikasi (PDF)" / "Data per Subjek" di dialog Dalam Angka --
+   sama pola flex-column wrapper spt #laporanPrioritasChecklistView. */
+#dalamAngkaPublikasiView, #dalamAngkaSubjekView {
+  display: flex; flex-direction: column; flex: 1; min-height: 0;
+}
+#dalamAngkaPublikasiView[hidden], #dalamAngkaSubjekView[hidden] { display: none; }
+
+.bps-subjek-picker {
+  display: flex; flex-wrap: wrap; gap: 12px; padding: 14px 20px;
+  border-bottom: 1px solid var(--border); background: var(--panel); flex: 0 0 auto;
+}
+.bps-subjek-field {
+  display: flex; flex-direction: column; gap: 4px; font-size: 12px;
+  color: var(--text-dim); flex: 1 1 200px; min-width: 160px;
+}
+.bps-subjek-field-tahun { flex: 0 1 110px; min-width: 90px; }
+.bps-subjek-field select {
+  background: var(--bg); color: var(--text); border: 1px solid var(--border);
+  border-radius: 6px; padding: 7px 10px; font-size: 13px;
+}
+.bps-subjek-field select:disabled { opacity: 0.55; cursor: not-allowed; }
+
+.bps-subjek-meta {
+  padding: 10px 20px 0; color: var(--text-dim); font-size: 13px;
+}
+.bps-subjek-table-wrap { padding: 12px 20px 20px; }
+table.bps-subjek-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+table.bps-subjek-table th, table.bps-subjek-table td {
+  padding: 7px 12px; border-bottom: 1px solid var(--border); text-align: left;
+}
+table.bps-subjek-table td.bps-subjek-nilai { text-align: right; font-variant-numeric: tabular-nums; }
+table.bps-subjek-table th { color: var(--text-dim); font-weight: 600; }
 
 /* Distribusi skor: histogram batang tunggal per rentang 2 poin, 1 hue
    (magnitude tunggal, bukan perbandingan kategori -> tak perlu legenda). */
@@ -1110,6 +1153,34 @@ html::-webkit-scrollbar, body::-webkit-scrollbar, .sidebar::-webkit-scrollbar, .
   }
   .sidebar.open { transform: translateX(0); }
   .layout { position: relative; }
+
+  /* Badge status ("Siap") -- rendah prioritas, dibuang duluan di layar
+     sempit spy tombol "..." & search bar dapat ruang. */
+  .topbar-status { display: none; }
+
+  /* Tombol nav sekunder pindah dari flex-item .topbar langsung (desktop)
+     jadi dropdown yg di-toggle tombol "..." -- tanpa ini semuanya
+     berjejer non-wrap di .topbar & mepetin/meluapin search bar (lihat
+     baris .topbar-more display:contents di atas). */
+  .topbar-more {
+    display: none;
+    position: fixed; top: 58px; right: 12px; z-index: 60;
+    flex-direction: column; gap: 8px;
+    width: min(82vw, 300px); max-height: calc(100vh - 74px); overflow-y: auto;
+    background: var(--panel); border: 1px solid var(--border); border-radius: 12px;
+    box-shadow: var(--shadow); padding: 10px;
+  }
+  .topbar-more.open { display: flex; }
+  .topbar-more .topbar-basemap,
+  .topbar-more .topbar-datatable,
+  .topbar-more .topbar-maplayer,
+  .topbar-more #btnDataTable {
+    width: 100%;
+  }
+  .topbar-more .topbar-basemap,
+  .topbar-more #btnDataTable {
+    justify-content: flex-start;
+  }
 }
 
 @media (max-width: 480px) {

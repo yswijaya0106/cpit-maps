@@ -25,63 +25,73 @@
         <i class="bi bi-search"></i>
         <input type="text" id="inputMapSearch" placeholder="Cari alamat / tempat di peta..." autocomplete="off" />
       </div>
-      <button type="button" class="topbar-basemap" id="btnBasemapToggle"
-        title="Ganti basemap Google Maps / OpenStreetMap">
-        <i class="bi bi-map"></i>
-        <span id="basemapLabel">Google Maps</span>
+      <!-- Tombol "..." HANYA tampil mobile (.icon-btn dasarnya display:none,
+           lihat @media max-width:900px) -- toggle .topbar-more jadi dropdown
+           spy tombol nav sekunder di bawah ini tidak meluap/mepetin search
+           bar di layar sempit. Desktop: .topbar-more = display:contents,
+           jadi isinya tetap flex-item .topbar langsung spt sebelumnya. */
+      <button type="button" class="icon-btn topbar-more-toggle" id="btnTopbarMore" aria-label="Menu lainnya">
+        <i class="bi bi-three-dots-vertical"></i>
       </button>
-      <div class="topbar-maplayer" id="mapLayerControl" hidden>
-        <i class="bi bi-layers-fill"></i>
-        <button type="button" class="maplayer-toggle" id="mapLayerToggle">
-          <span id="mapLayerLabel">Overlay Peta</span>
-          <i class="bi bi-chevron-down"></i>
+      <div class="topbar-more" id="topbarMore">
+        <button type="button" class="topbar-basemap" id="btnBasemapToggle"
+          title="Ganti basemap Google Maps / OpenStreetMap">
+          <i class="bi bi-map"></i>
+          <span id="basemapLabel">Google Maps</span>
         </button>
-        <div class="maplayer-panel" id="mapLayerPanel" hidden>
-          <div class="maplayer-panel-header">
-            <span>Overlay Peta</span>
-            <button type="button" class="maplayer-close" id="mapLayerClose" aria-label="Tutup panel overlay"><i
-                class="bi bi-x-lg"></i></button>
+        <div class="topbar-maplayer" id="mapLayerControl" hidden>
+          <i class="bi bi-layers-fill"></i>
+          <button type="button" class="maplayer-toggle" id="mapLayerToggle">
+            <span id="mapLayerLabel">Overlay Peta</span>
+            <i class="bi bi-chevron-down"></i>
+          </button>
+          <div class="maplayer-panel" id="mapLayerPanel" hidden>
+            <div class="maplayer-panel-header">
+              <span>Overlay Peta</span>
+              <button type="button" class="maplayer-close" id="mapLayerClose" aria-label="Tutup panel overlay"><i
+                  class="bi bi-x-lg"></i></button>
+            </div>
+            <div class="maplayer-combo" id="mapLayerProvinsiField">
+              <button type="button" class="maplayer-combo-toggle" id="mapLayerProvinsiToggle">
+                <span id="mapLayerProvinsiLabel">Pilih provinsi...</span>
+                <i class="bi bi-chevron-down"></i>
+              </button>
+              <div class="maplayer-combo-panel" id="mapLayerProvinsiPanel" hidden></div>
+            </div>
+            <div class="maplayer-combo" id="mapLayerKabupatenField">
+              <button type="button" class="maplayer-combo-toggle" id="mapLayerKabupatenToggle">
+                <span id="mapLayerKabupatenLabel">Pilih kabupaten...</span>
+                <i class="bi bi-chevron-down"></i>
+              </button>
+              <div class="maplayer-combo-panel" id="mapLayerKabupatenPanel" hidden></div>
+            </div>
+            <div class="maplayer-list" id="mapLayerList"></div>
           </div>
-          <div class="maplayer-combo" id="mapLayerProvinsiField">
-            <button type="button" class="maplayer-combo-toggle" id="mapLayerProvinsiToggle">
-              <span id="mapLayerProvinsiLabel">Pilih provinsi...</span>
-              <i class="bi bi-chevron-down"></i>
-            </button>
-            <div class="maplayer-combo-panel" id="mapLayerProvinsiPanel" hidden></div>
-          </div>
-          <div class="maplayer-combo" id="mapLayerKabupatenField">
-            <button type="button" class="maplayer-combo-toggle" id="mapLayerKabupatenToggle">
-              <span id="mapLayerKabupatenLabel">Pilih kabupaten...</span>
-              <i class="bi bi-chevron-down"></i>
-            </button>
-            <div class="maplayer-combo-panel" id="mapLayerKabupatenPanel" hidden></div>
-          </div>
-          <div class="maplayer-list" id="mapLayerList"></div>
         </div>
-      </div>
-      <div class="topbar-datatable" id="dataTableControl">
-        <button type="button" class="topbar-basemap" id="btnDataTable" title="Lihat isi tabel database">
-          <i class="bi bi-table"></i>
-          <span>Data</span>
-          <i class="bi bi-chevron-down"></i>
+        <div class="topbar-datatable" id="dataTableControl">
+          <button type="button" class="topbar-basemap" id="btnDataTable" title="Lihat isi tabel database">
+            <i class="bi bi-table"></i>
+            <span>Data</span>
+            <i class="bi bi-chevron-down"></i>
+          </button>
+          <div class="datatable-menu" id="dataTableMenu" hidden></div>
+        </div>
+        <button type="button" class="topbar-basemap" id="btnLokusBappenas"
+          title="Lokus Aspek A Bappenas: pilih kriteria, preview datagrid, import xlsx">
+          <i class="bi bi-geo"></i>
+          <span>Lokus Bappenas</span>
         </button>
-        <div class="datatable-menu" id="dataTableMenu" hidden></div>
+        <button type="button" class="topbar-basemap" id="btnDalamAngka"
+          title="Dalam Angka: cari dan pratinjau PDF BPS Dalam Angka seluruh provinsi/kabupaten/kota">
+          <i class="bi bi-file-earmark-pdf"></i>
+          <span>Dalam Angka</span>
+        </button>
+        <button type="button" class="topbar-basemap" id="btnLaporanPrioritas"
+          title="Laporan Daerah Prioritas: checklist Aspek A/B agregat per kabupaten/kota, per provinsi">
+          <i class="bi bi-clipboard-check"></i>
+          <span>Laporan Prioritas</span>
+        </button>
       </div>
-      <button type="button" class="topbar-basemap" id="btnLokusBappenas"
-        title="Lokus Aspek A Bappenas: pilih kriteria, preview datagrid, import xlsx">
-        <i class="bi bi-geo"></i>
-        <span>Lokus Bappenas</span>
-      </button>
-      <button type="button" class="topbar-basemap" id="btnDalamAngka"
-        title="Dalam Angka: cari dan pratinjau PDF BPS Dalam Angka seluruh provinsi/kabupaten/kota">
-        <i class="bi bi-file-earmark-pdf"></i>
-        <span>Dalam Angka</span>
-      </button>
-      <button type="button" class="topbar-basemap" id="btnLaporanPrioritas"
-        title="Laporan Daerah Prioritas: checklist Aspek A/B agregat per kabupaten/kota, per provinsi">
-        <i class="bi bi-clipboard-check"></i>
-        <span>Laporan Prioritas</span>
-      </button>
       <div class="topbar-status" id="topbarStatus">Siap</div>
     </header>
 
@@ -158,7 +168,7 @@
             <span class="datatable-meta" id="dalamAngkaMeta"></span>
           </div>
           <div class="datatable-head-actions">
-            <div class="ijd-provinsi-search">
+            <div class="ijd-provinsi-search" id="dalamAngkaSearchField">
               <i class="bi bi-search"></i>
               <input type="text" id="dalamAngkaSearch" placeholder="Cari nama provinsi/kabupaten/kota..." />
             </div>
@@ -166,7 +176,40 @@
                 class="bi bi-x-lg"></i></button>
           </div>
         </div>
-        <div class="datatable-scroll" id="dalamAngkaList"></div>
+        <div class="datatable-tabs">
+          <button type="button" class="datatable-tab active" id="dalamAngkaTabPublikasi">
+            <i class="bi bi-file-earmark-pdf"></i> Publikasi (PDF)
+          </button>
+          <button type="button" class="datatable-tab" id="dalamAngkaTabSubjek">
+            <i class="bi bi-bar-chart-line"></i> Data per Subjek
+          </button>
+        </div>
+        <div id="dalamAngkaPublikasiView">
+          <div class="datatable-scroll" id="dalamAngkaList"></div>
+        </div>
+        <div id="dalamAngkaSubjekView" hidden>
+          <div class="bps-subjek-picker">
+            <label class="bps-subjek-field">
+              <span>Kategori</span>
+              <select id="bpsSubjekSubcat"><option value="">Memuat...</option></select>
+            </label>
+            <label class="bps-subjek-field">
+              <span>Subjek</span>
+              <select id="bpsSubjekSubject" disabled><option value="">— pilih kategori dulu —</option></select>
+            </label>
+            <label class="bps-subjek-field">
+              <span>Variabel</span>
+              <select id="bpsSubjekVar" disabled><option value="">— pilih subjek dulu —</option></select>
+            </label>
+            <label class="bps-subjek-field bps-subjek-field-tahun">
+              <span>Tahun</span>
+              <select id="bpsSubjekTahun" disabled><option value="">—</option></select>
+            </label>
+          </div>
+          <div class="datatable-scroll" id="bpsSubjekResult">
+            <div class="adv-loading">Pilih kategori, subjek, variabel, dan tahun untuk melihat data.</div>
+          </div>
+        </div>
       </div>
     </div>
 

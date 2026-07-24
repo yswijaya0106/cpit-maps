@@ -43,6 +43,33 @@ function bindUI() {
     document.getElementById("sidebar").classList.toggle("open");
   });
 
+  // Dropdown "..." mobile (topbar-more) -- nav sekunder (basemap/overlay/
+  // Data/Lokus Bappenas/Dalam Angka/Laporan Prioritas), lihat style.css
+  // @media max-width:900px.
+  document.getElementById("btnTopbarMore").addEventListener("click", (e) => {
+    e.stopPropagation();
+    document.getElementById("topbarMore").classList.toggle("open");
+  });
+  // Tutup otomatis HANYA utk tombol yg langsung buka overlay/modal
+  // penuh sendiri (btnBasemapToggle cuma toggle state instan) -- BUKAN
+  // btnDataTable / maplayer-toggle, yg buka dropdown/panel BERSARANG di
+  // dalam topbar-more sendiri; kalau ikut ditutup, panel bersarangnya
+  // ikut hilang sebelum sempat kelihatan.
+  ["btnBasemapToggle", "btnLokusBappenas", "btnDalamAngka", "btnLaporanPrioritas"].forEach((id) => {
+    document.getElementById(id).addEventListener("click", () => {
+      document.getElementById("topbarMore").classList.remove("open");
+    });
+  });
+  document.addEventListener("click", (e) => {
+    const more = document.getElementById("topbarMore");
+    if (more.classList.contains("open") && !more.contains(e.target) && e.target.id !== "btnTopbarMore") {
+      more.classList.remove("open");
+    }
+  });
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") document.getElementById("topbarMore").classList.remove("open");
+  });
+
   bindModeGrid();
   bindManualCoord();
   bindExportButtons();

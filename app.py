@@ -6243,12 +6243,15 @@ def bps_subjek_data(var_id: int, th: int):
     38 provinsi -- granularitas ditentukan definisi variabel itu sendiri oleh
     BPS, bukan dipilih di sini). HANYA variabel tanpa sub-kategori (turvar) --
     utk yang ada turvar, datacontent berisi kombinasi vervar x turvar dan
-    urutannya tidak lagi 1:1 dgn vervar saja, jadi ditolak eksplisit alih-alih
-    ditebak. vervar di-zip berurutan dgn nilai datacontent (BUKAN parsing
-    format key gabungannya, yg tidak didokumentasikan resmi) -- pola sama
-    dgn scripts/sync_kepadatan_kabupaten_bps_api.py, cocok krn di sini juga
-    cuma 1 var + 1 th (tanpa turvar/turtahun), tidak ada dimensi tambahan yg
-    bisa bikin urutan vervar-vs-datacontent menyimpang."""
+    kuncinya tidak lagi 1:1 dgn vervar saja, jadi ditolak eksplisit alih-alih
+    ditebak. Kunci datacontent (utk kasus 1 var + 1 th, tanpa turvar/turtahun)
+    dikonfirmasi manual = f"{vervar_val}{var_id}0{th_id}0" (contoh var=128
+    th_id=125, vervar 1100/Aceh -> key "110012801250"); dipakai lookup
+    langsung per-vervar alih-alih order-zip krn vervar suka menyelipkan baris
+    agregat "INDONESIA" tanpa entri datacontent-nya sendiri (jumlah vervar
+    39 vs datacontent 38 utk var 128, dikonfirmasi manual 24 Jul 2026 --
+    order-zip akan salah geser dari titik itu, lookup-per-key aman krn baris
+    yg tak match otomatis terlewat)."""
     if not os.getenv("BPS_API_KEY"):
         raise HTTPException(503, "BPS_API_KEY belum dikonfigurasi di .env")
 
@@ -6262,15 +6265,21 @@ def bps_subjek_data(var_id: int, th: int):
         raise HTTPException(502, "Gagal mengambil data dari BPS Web API.")
 
     vervar = data.get("vervar") or []
-    values = list((data.get("datacontent") or {}).values())
-    if not vervar or len(vervar) != len(values):
-        raise HTTPException(502, "Jumlah wilayah dan nilai tidak sejajar -- "
-                             "format data tidak sesuai dugaan.")
+    datacontent = data.get("datacontent") or {}
+    if not vervar or not datacontent:
+        raise HTTPException(502, "Data BPS kosong utk variabel/tahun ini.")
 
     var_meta = (data.get("var") or [{}])[0]
     tahun_meta = (data.get("tahun") or [{}])[0]
-    rows = [{"kode_wilayah": v.get("val"), "wilayah": v.get("label"), "nilai": val}
-            for v, val in zip(vervar, values)]
+    rows = []
+    for v in vervar:
+        key = f"{v.get('val')}{var_id}0{th}0"
+        if key not in datacontent:
+            continue
+        rows.append({"kode_wilayah": v.get("val"), "wilayah": v.get("label"), "nilai": datacontent[key]})
+    if not rows:
+        raise HTTPException(502, "Tidak ada wilayah yang cocok dgn data BPS -- "
+                             "format kunci datacontent tidak sesuai dugaan.")
     rows.sort(key=lambda r: r["wilayah"] or "")
 
     return {

@@ -3200,6 +3200,43 @@ def _npr_build_peternakan():
         return {int(r["kode_kab"]): float(r["v"]) for r in cur.fetchall()}
 
 
+def _npr_build_padi_jagung_provinsi():
+    """Fallback PROVINSI utk NPR PADI_JAGUNG (bps_kecamatan_potensi_tematik
+    tidak py baris utk kabupaten usulan) -- si_padi_jagung_provinsi, dari
+    BPS "Statistik Indonesia 2026" Tabel 5.1.2 (Padi) + 5.1.4 (Jagung),
+    diisi scripts/extract_statistik_indonesia.py. Kode 0 ("Indonesia" total)
+    dibuang -- bukan wilayah asli."""
+    with db_cursor() as cur:
+        cur.execute(
+            "SELECT kode_provinsi, total_ton FROM si_padi_jagung_provinsi "
+            "WHERE total_ton IS NOT NULL AND kode_provinsi > 0"
+        )
+        return {int(r["kode_provinsi"]): float(r["total_ton"]) for r in cur.fetchall()}
+
+
+def _npr_build_perikanan_provinsi():
+    """Fallback PROVINSI utk NPR PERIKANAN -- si_perikanan_tangkap_provinsi
+    (Statistik Indonesia 2026 Tabel 5.6.1, "Tangkap Darat & Laut" -- sama
+    cakupan dgn label parameter ini)."""
+    with db_cursor() as cur:
+        cur.execute(
+            "SELECT kode_provinsi, volume_ton FROM si_perikanan_tangkap_provinsi "
+            "WHERE volume_ton IS NOT NULL AND kode_provinsi > 0"
+        )
+        return {int(r["kode_provinsi"]): float(r["volume_ton"]) for r in cur.fetchall()}
+
+
+# Fallback PROVINSI dipakai _npr_skor_intensitas() saat builder kabupaten
+# tidak punya nilai utk kode_kab usulan -- lihat docs/MEMORY.md soal kenapa
+# fallback ini TIDAK ikut dicampur ke dict builder kabupaten (min-max
+# nasionalnya beda skala, provinsi vs kabupaten). PETERNAKAN sengaja tidak
+# ada entri di sini (belum diekstrak, lihat schema_si_produksi_provinsi.sql).
+_NPR_SI_PROVINSI_FALLBACK = {
+    "PADI_JAGUNG": _npr_build_padi_jagung_provinsi,
+    "PERIKANAN": _npr_build_perikanan_provinsi,
+}
+
+
 def _npr_build_ip():
     with db_cursor() as cur:
         cur.execute(
@@ -3265,12 +3302,27 @@ def _npr_skor_intensitas(row: dict, kode_kab: int) -> dict:
     for kode, label, bobot, basis, builder, satuan in _NPR_SI_DEF:
         target = kode_kec if basis == "kecamatan" else kode_kab
         nilai_raw, skor = (_npr_kelas_dinamis(kode, target, builder) if target else (None, None))
+        proksi_provinsi = False
+        if skor is None and kode in _NPR_SI_PROVINSI_FALLBACK and kode_kab:
+            # Fallback PROVINSI (Statistik Indonesia 2026) saat kabupaten
+            # usulan tidak punya baris di bps_kecamatan_potensi_tematik --
+            # cache_key & min-max TERPISAH dari basis kabupaten di atas
+            # (skala provinsi jauh lebih besar, tidak boleh dicampur ke
+            # rentang min-max nasional kabupaten, lihat docs/MEMORY.md).
+            nilai_raw, skor = _npr_kelas_dinamis(
+                f"{kode}_PROV", kode_kab // 100, _NPR_SI_PROVINSI_FALLBACK[kode])
+            proksi_provinsi = skor is not None
         if skor is not None:
+            keterangan = (f"{label} {basis} ini: {nilai_raw:,.1f} {satuan} "
+                          "(kelas nasional dinamis, 4 kelas: 100/75/50/25).").replace(",", ".")
+            if proksi_provinsi:
+                keterangan = (f"{label} PROKSI PROVINSI (kabupaten ini tidak punya data): "
+                              f"{nilai_raw:,.1f} {satuan} (kelas nasional provinsi, "
+                              "4 kelas: 100/75/50/25).").replace(",", ".")
             komponen.append({
                 "kode": kode, "label": label, "bobot_maks": bobot, "tersedia": True,
                 "nilai": skor, "kontribusi": round(skor / 100 * bobot, 2),
-                "keterangan": (f"{label} {basis} ini: {nilai_raw:,.1f} {satuan} "
-                                "(kelas nasional dinamis, 4 kelas: 100/75/50/25).").replace(",", "."),
+                "keterangan": keterangan,
             })
             skor_tertimbang += skor / 100 * bobot
             bobot_tersedia += bobot
@@ -6100,6 +6152,132 @@ def dalam_angka_pdf(kode_wilayah: int, jenis_wilayah: str, tahun: int):
     except requests.RequestException as e:
         raise HTTPException(502, f"Gagal mengambil PDF dari BPS: {e}")
     return StreamingResponse(r.iter_content(chunk_size=65536), media_type="application/pdf")
+
+
+# Tab "Data per Subjek" di panel Dalam Angka -- jelajah data tabel dinamis
+# BPS Web API per kategori/subjek/variabel (terpisah dari katalog publikasi
+# PDF di atas). Restart server bersihkan cache -- pola sama dgn
+# _map_layer_geojson_cache/_npr_kelas_cache. UA browser dipakai konsisten
+# di semua panggilan (bukan cuma download.php) -- dikonfirmasi manual 24 Jul
+# 2026 endpoint model=list JUGA bisa kena "Perimeter WAF Block" tanpa UA,
+# meski _dalam_angka_fresh_url() di atas (model=publication) kebetulan lolos
+# tanpa UA -- tidak diandalkan utk endpoint baru ini.
+_bps_subjek_cache: dict = {}
+
+
+def _bps_api_get(model: str, **params) -> Optional[dict]:
+    key = os.getenv("BPS_API_KEY")
+    if not key:
+        return None
+    params = {"model": model, "key": key, **params}
+    try:
+        r = requests.get(_BPS_API_BASE, params=params,
+                          headers={"User-Agent": _BPS_DOWNLOAD_UA}, timeout=20)
+        r.raise_for_status()
+        data = r.json()
+    except (requests.RequestException, ValueError):
+        return None
+    if data.get("status") != "OK":
+        return None
+    return data
+
+
+def _bps_api_list_all(model: str, **params) -> list:
+    """Kumpulkan semua halaman model=list (subcat/subject/var/th) jadi satu
+    list flat -- endpoint ini page-nya kecil (puluhan item), aman diagregasi
+    sekali panggil daripada bikin frontend urus paging BPS sendiri."""
+    out: list = []
+    page = 1
+    while True:
+        data = _bps_api_get(model, page=page, **params)
+        if not data:
+            break
+        payload = data.get("data", [])
+        if len(payload) < 2:
+            break
+        meta, items = payload[0], payload[1]
+        out.extend(items)
+        if page >= meta.get("pages", 1):
+            break
+        page += 1
+    return out
+
+
+def _bps_subjek_cached(cache_key: tuple, builder) -> list:
+    if cache_key not in _bps_subjek_cache:
+        _bps_subjek_cache[cache_key] = builder()
+    return _bps_subjek_cache[cache_key]
+
+
+@app.get("/api/bps-subjek/subcat")
+def bps_subjek_subcat():
+    """Kategori subjek BPS (Sosial-Kependudukan, Ekonomi-Perdagangan, dst) --
+    level teratas navigasi tab "Data per Subjek"."""
+    if not os.getenv("BPS_API_KEY"):
+        raise HTTPException(503, "BPS_API_KEY belum dikonfigurasi di .env")
+    return _bps_subjek_cached(("subcat",),
+                               lambda: _bps_api_list_all("subcat", lang="ind", domain="0000"))
+
+
+@app.get("/api/bps-subjek/subject")
+def bps_subjek_subject(subcat: int):
+    return _bps_subjek_cached(("subject", subcat),
+                               lambda: _bps_api_list_all("subject", lang="ind", domain="0000", subcat=subcat))
+
+
+@app.get("/api/bps-subjek/var")
+def bps_subjek_var(subject: int):
+    return _bps_subjek_cached(("var", subject),
+                               lambda: _bps_api_list_all("var", lang="ind", domain="0000", subject=subject))
+
+
+@app.get("/api/bps-subjek/{var_id}/tahun")
+def bps_subjek_tahun(var_id: int):
+    return _bps_subjek_cached(("th", var_id),
+                               lambda: _bps_api_list_all("th", domain="0000", var=var_id))
+
+
+@app.get("/api/bps-subjek/{var_id}/data")
+def bps_subjek_data(var_id: int, th: int):
+    """Nilai 1 variabel BPS utk 1 tahun, seluruh wilayah yg tersedia (biasanya
+    38 provinsi -- granularitas ditentukan definisi variabel itu sendiri oleh
+    BPS, bukan dipilih di sini). HANYA variabel tanpa sub-kategori (turvar) --
+    utk yang ada turvar, datacontent berisi kombinasi vervar x turvar dan
+    urutannya tidak lagi 1:1 dgn vervar saja, jadi ditolak eksplisit alih-alih
+    ditebak. vervar di-zip berurutan dgn nilai datacontent (BUKAN parsing
+    format key gabungannya, yg tidak didokumentasikan resmi) -- pola sama
+    dgn scripts/sync_kepadatan_kabupaten_bps_api.py, cocok krn di sini juga
+    cuma 1 var + 1 th (tanpa turvar/turtahun), tidak ada dimensi tambahan yg
+    bisa bikin urutan vervar-vs-datacontent menyimpang."""
+    if not os.getenv("BPS_API_KEY"):
+        raise HTTPException(503, "BPS_API_KEY belum dikonfigurasi di .env")
+
+    turvar_check = _bps_api_get("turvar", domain="0000", var=var_id)
+    if turvar_check and turvar_check.get("data-availability") == "available":
+        raise HTTPException(400, "Variabel ini punya sub-kategori (turvar) -- "
+                             "belum didukung di tampilan ini.")
+
+    data = _bps_api_get("data", domain="0000", var=var_id, th=th)
+    if not data:
+        raise HTTPException(502, "Gagal mengambil data dari BPS Web API.")
+
+    vervar = data.get("vervar") or []
+    values = list((data.get("datacontent") or {}).values())
+    if not vervar or len(vervar) != len(values):
+        raise HTTPException(502, "Jumlah wilayah dan nilai tidak sejajar -- "
+                             "format data tidak sesuai dugaan.")
+
+    var_meta = (data.get("var") or [{}])[0]
+    tahun_meta = (data.get("tahun") or [{}])[0]
+    rows = [{"kode_wilayah": v.get("val"), "wilayah": v.get("label"), "nilai": val}
+            for v, val in zip(vervar, values)]
+    rows.sort(key=lambda r: r["wilayah"] or "")
+
+    return {
+        "var": var_meta.get("label"), "unit": var_meta.get("unit"),
+        "tahun": tahun_meta.get("label"), "last_update": data.get("last_update"),
+        "rows": rows,
+    }
 
 
 @app.get("/api/usulan-inpres/{usulan_id}/export/shp")

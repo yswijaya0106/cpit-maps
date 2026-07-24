@@ -196,11 +196,23 @@
             </label>
             <label class="bps-subjek-field">
               <span>Subjek</span>
-              <select id="bpsSubjekSubject" disabled><option value="">— pilih kategori dulu —</option></select>
+              <div class="maplayer-combo" id="bpsSubjekSubjectField">
+                <button type="button" class="maplayer-combo-toggle" id="bpsSubjekSubjectToggle" disabled>
+                  <span id="bpsSubjekSubjectLabel">— pilih kategori dulu —</span>
+                  <i class="bi bi-chevron-down"></i>
+                </button>
+                <div class="maplayer-combo-panel" id="bpsSubjekSubjectPanel" hidden></div>
+              </div>
             </label>
-            <label class="bps-subjek-field">
+            <label class="bps-subjek-field bps-subjek-field-var">
               <span>Variabel</span>
-              <select id="bpsSubjekVar" disabled><option value="">— pilih subjek dulu —</option></select>
+              <div class="maplayer-combo" id="bpsSubjekVarField">
+                <button type="button" class="maplayer-combo-toggle" id="bpsSubjekVarToggle" disabled>
+                  <span id="bpsSubjekVarLabel">— pilih subjek dulu —</span>
+                  <i class="bi bi-chevron-down"></i>
+                </button>
+                <div class="maplayer-combo-panel" id="bpsSubjekVarPanel" hidden></div>
+              </div>
             </label>
             <label class="bps-subjek-field bps-subjek-field-tahun">
               <span>Tahun</span>

@@ -99,6 +99,18 @@ function bpsSubjekResetSelect(id, placeholder) {
   el.disabled = true;
 }
 
+// Subjek & Variabel pakai .maplayer-combo (lihat style.css) -- bukan
+// bpsSubjekResetSelect(), butuh reset terpisah (label + toggle.disabled,
+// bukan <option>). bindMapLayerCombo/fillComboPanel/closeAllMapLayerCombos
+// didefinisikan di maps-overlay.js tapi dipakai lintas file (semua script
+// satu global scope, lihat CLAUDE.md) -- aman dipanggil dari sini krn baru
+// benar-benar dieksekusi saat user berinteraksi, bukan saat file ini
+// pertama kali di-parse (semua script sudah termuat duluan).
+function bpsSubjekResetCombo(labelId, toggleId, placeholder) {
+  document.getElementById(labelId).textContent = placeholder;
+  document.getElementById(toggleId).disabled = true;
+}
+
 async function bpsSubjekLoadSubcat() {
   const el = document.getElementById("bpsSubjekSubcat");
   try {
@@ -115,28 +127,30 @@ async function bpsSubjekLoadSubcat() {
 }
 
 async function bpsSubjekLoadSubject(subcatId) {
-  bpsSubjekResetSelect("bpsSubjekSubject", "Memuat...");
-  bpsSubjekResetSelect("bpsSubjekVar", "— pilih subjek dulu —");
+  bpsSubjekResetCombo("bpsSubjekSubjectLabel", "bpsSubjekSubjectToggle", "Memuat...");
+  bpsSubjekResetCombo("bpsSubjekVarLabel", "bpsSubjekVarToggle", "— pilih subjek dulu —");
   bpsSubjekResetSelect("bpsSubjekTahun", "—");
-  const el = document.getElementById("bpsSubjekSubject");
   try {
     const res = await fetch(`/api/bps-subjek/subject?subcat=${encodeURIComponent(subcatId)}`);
     if (!res.ok) throw new Error((await res.json()).detail || "Gagal memuat subjek");
     const items = await res.json();
-    el.innerHTML = items.map((s) => `<option value="${s.sub_id}">${escapeHtml(s.title)}</option>`).join("");
-    el.disabled = false;
-    if (items.length) bpsSubjekLoadVar(items[0].sub_id);
+    if (!items.length) {
+      document.getElementById("bpsSubjekSubjectLabel").textContent = "Tidak ada subjek";
+      return;
+    }
+    const chosen = fillComboPanel("bpsSubjekSubjectPanel", "bpsSubjekSubjectLabel", items, "sub_id", (s) => s.title);
+    document.getElementById("bpsSubjekSubjectToggle").disabled = false;
+    bpsSubjekLoadVar(chosen);
   } catch (err) {
-    el.innerHTML = `<option value="">Gagal memuat</option>`;
+    document.getElementById("bpsSubjekSubjectLabel").textContent = "Gagal memuat";
     toast(err.message, true);
   }
 }
 
 async function bpsSubjekLoadVar(subjectId) {
-  bpsSubjekResetSelect("bpsSubjekVar", "Memuat...");
+  bpsSubjekResetCombo("bpsSubjekVarLabel", "bpsSubjekVarToggle", "Memuat...");
   bpsSubjekResetSelect("bpsSubjekTahun", "—");
   bpsSubjekHideTurunan();
-  const el = document.getElementById("bpsSubjekVar");
   document.getElementById("bpsSubjekResult").innerHTML =
     `<div class="adv-loading">Pilih variabel untuk melihat data.</div>`;
   try {
@@ -144,14 +158,14 @@ async function bpsSubjekLoadVar(subjectId) {
     if (!res.ok) throw new Error((await res.json()).detail || "Gagal memuat variabel");
     const items = await res.json();
     if (!items.length) {
-      el.innerHTML = `<option value="">Tidak ada variabel</option>`;
+      document.getElementById("bpsSubjekVarLabel").textContent = "Tidak ada variabel";
       return;
     }
-    el.innerHTML = items.map((v) => `<option value="${v.var_id}">${escapeHtml(v.title)}</option>`).join("");
-    el.disabled = false;
-    bpsSubjekOnVarChange(items[0].var_id);
+    const chosen = fillComboPanel("bpsSubjekVarPanel", "bpsSubjekVarLabel", items, "var_id", (v) => v.title);
+    document.getElementById("bpsSubjekVarToggle").disabled = false;
+    bpsSubjekOnVarChange(chosen);
   } catch (err) {
-    el.innerHTML = `<option value="">Gagal memuat</option>`;
+    document.getElementById("bpsSubjekVarLabel").textContent = "Gagal memuat";
     toast(err.message, true);
   }
 }
@@ -293,12 +307,10 @@ function bindDalamAngka() {
   document.getElementById("bpsSubjekSubcat").addEventListener("change", (e) => {
     if (e.target.value) bpsSubjekLoadSubject(e.target.value);
   });
-  document.getElementById("bpsSubjekSubject").addEventListener("change", (e) => {
-    if (e.target.value) bpsSubjekLoadVar(e.target.value);
-  });
-  document.getElementById("bpsSubjekVar").addEventListener("change", (e) => {
-    if (e.target.value) bpsSubjekOnVarChange(e.target.value);
-  });
+  bindMapLayerCombo("bpsSubjekSubjectField", "bpsSubjekSubjectToggle", "bpsSubjekSubjectPanel",
+    "bpsSubjekSubjectLabel", async () => {}, (value) => bpsSubjekLoadVar(value));
+  bindMapLayerCombo("bpsSubjekVarField", "bpsSubjekVarToggle", "bpsSubjekVarPanel",
+    "bpsSubjekVarLabel", async () => {}, (value) => bpsSubjekOnVarChange(value));
   document.getElementById("bpsSubjekTahun").addEventListener("change", (e) => {
     const varId = document.getElementById("bpsSubjekVar").value;
     if (e.target.value && varId) bpsSubjekLoadTurth(varId, e.target.value);

@@ -282,11 +282,21 @@ table.laporan-prioritas-table th.laporan-group-b {
   color: var(--text-dim); flex: 1 1 200px; min-width: 160px;
 }
 .bps-subjek-field-tahun { flex: 0 1 110px; min-width: 90px; }
+.bps-subjek-field-var { flex: 1 1 320px; }
 .bps-subjek-field select {
   background: var(--bg); color: var(--text); border: 1px solid var(--border);
   border-radius: 6px; padding: 7px 10px; font-size: 13px;
 }
 .bps-subjek-field select:disabled { opacity: 0.55; cursor: not-allowed; }
+/* Subjek & Variabel pakai .maplayer-combo (bukan <select> native) krn
+   listnya bisa panjang (puluhan variabel per subjek) -- popup <select>
+   native tidak bisa distyle sama sekali (scrollbar-nya render OS, bukan
+   elemen DOM), sedang .maplayer-combo-panel sudah py scrollbar bertema
+   (dipakai jg di picker provinsi/kabupaten overlay peta). Judul variabel
+   BPS suka berupa kalimat panjang (bukan nama tempat pendek spt provinsi),
+   jadi override nowrap bawaan .maplayer-combo-option supaya bisa melipat. */
+.bps-subjek-field .maplayer-combo-toggle span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bps-subjek-field .maplayer-combo-option { white-space: normal; line-height: 1.35; }
 
 .bps-subjek-meta {
   padding: 10px 20px 0; color: var(--text-dim); font-size: 13px;

@@ -4624,46 +4624,59 @@ Tugas Anda menyusun DUA teks:
    Angka)", "...unit kendaraan (BPS Dalam Angka)"), jangan sebut angka telanjang tanpa atribusi. Bila
    indikator_ada kosong, nyatakan dengan jujur belum ada indikator yang didukung data, jangan dibuat seolah ada.
 
-CEK SATU-PER-SATU — kalau field-nya ADA pada data, kalimat terkait di bawah ini WAJIB masuk ke
-"aspek_b_narasi_ai" (jangan diam-diam dilewati; kalau TIDAK ada field-nya, jangan menyinggung topik itu
-sama sekali):
-- "kemantapan_ruas" ada → satu kalimat pakai PERSIS field "pct_tidak_mantap" (jangan hitung ulang), gaya
-  "Dari aspek teknis, kondisi ruas ini tergolong <status> dengan persentase sekitar
-  <pct_tidak_mantap>% (kondisi rusak ringan+berat dibanding panjang penanganan kompetensi)."
-- "konektivitas_jalan" ada → WAJIB satu kalimat, TERMASUK kalau ketiga "terhubung_..." semuanya false
-  (jangan dilewati hanya krn tidak ada yang terhubung — ini tetap fakta yang harus dilaporkan): kalau ada
-  yang true, sebut jaringan mana ("terhubung_jalan_nasional"/"terhubung_jalan_provinsi"/"terhubung_tol")
-  beserta jarak meter dari "jarak_ke_..._m" berpasangan; kalau semuanya false, tulis persis gaya "Ruas ini
-  belum terhubung langsung ke jaringan jalan nasional/provinsi/tol dalam radius <ambang_m> meter."
-- "simpul_transportasi" ada → satu kalimat sebut simpul transportasi (bandara/pelabuhan) terdekat dari
+CEK SATU-PER-SATU — kalau field-nya ADA pada data, FAKTA di bawah ini WAJIB masuk ke "aspek_b_narasi_ai"
+(jangan diam-diam dilewati; kalau TIDAK ada field-nya, jangan menyinggung topik itu sama sekali). Yang WAJIB
+adalah ISI/ANGKA-nya, BUKAN kalimat contoh di bawah — kalimat contoh cuma ilustrasi supaya paham fakta mana
+yang dimaksud; rangkai fakta itu dengan kalimat Anda sendiri, jangan disalin verbatim:
+- "kemantapan_ruas" ada → sebutkan kondisi kemantapan ruas pakai PERSIS field "pct_tidak_mantap" (jangan
+  hitung ulang) — persentase itu = kondisi rusak ringan+berat dibanding panjang penanganan kompetensi.
+  Contoh ilustrasi (JANGAN disalin persis): "Dari aspek teknis, kondisi ruas ini tergolong <status> dengan
+  persentase sekitar <pct_tidak_mantap>%..." — cari cara lain menyampaikan fakta yang sama.
+- "konektivitas_jalan" ada → WAJIB disebut, TERMASUK kalau ketiga "terhubung_..." semuanya false (jangan
+  dilewati hanya krn tidak ada yang terhubung — ini tetap fakta yang harus dilaporkan): kalau ada yang true,
+  sebut jaringan mana ("terhubung_jalan_nasional"/"terhubung_jalan_provinsi"/"terhubung_tol") beserta jarak
+  meter dari "jarak_ke_..._m" berpasangan; kalau semuanya false, sampaikan bahwa ruas belum terhubung
+  langsung ke jaringan jalan nasional/provinsi/tol dalam radius "ambang_m" meter (boleh dengan kalimat apa
+  saja, bukan rumus tetap).
+- "simpul_transportasi" ada → sebutkan simpul transportasi (bandara/pelabuhan) terdekat dari
   "simpul_terdekat" — jenis, "nama_simpul", "jarak_km"-nya, dalam radius "radius_km" km.
-- "kecamatan_dilalui" ada → satu kalimat sebut SEMUA nama kecamatan pada daftar "kecamatan_dilalui"
-  (jangan cuma sebagian kalau lebih dari 1) beserta PERSIS field "total_penduduk_dilalui" (jangan hitung
-  ulang/jumlah manual dari daftar), gaya "Ruas ini melintasi Kecamatan A, Kecamatan B, dan Kecamatan C
-  dengan total penduduk terdampak sekitar <total_penduduk_dilalui> jiwa (BPS Dalam Angka)." — kalau
-  "total_penduduk_dilalui" null (data penduduk sebagian/semua kecamatan tidak tersedia), sebut nama
-  kecamatannya saja tanpa angka total, jangan mengarang angka. Kalau field "total_kendaraan_dilalui" pada
-  "kecamatan_dilalui" TIDAK null, WAJIB pakai angka itu (jumlah kendaraan GABUNGAN semua kecamatan yang
-  dilalui) setiap kali menyebut jumlah kendaraan ruas ini — JANGAN pakai angka kendaraan satu kecamatan
-  saja (mis. dari kalimat ringkasan indikator) kalau usulan ini melintasi >1 kecamatan; kalau
-  "total_kendaraan_dilalui" null, boleh sebut angka kendaraan level kabupaten dari data lain yang tersedia
-  (jangan mengarang).
-- "komoditas_perkebunan_kecamatan" ada → boleh satu kalimat sebut komoditas perkebunan UTAMA kecamatan ini
-  persis nama pada field "komoditas" (urut "produksi_ton" terbesar, maksimal 3 komoditas) beserta angka
-  produksi_ton-nya; JANGAN sebut nama komoditas perkebunan LAIN yang tidak ada di daftar ini (mis. jangan
-  menyebut kelapa sawit/karet/tebu kalau tidak ada di daftar "komoditas_perkebunan_kecamatan" — daftar ini
-  sudah cek data riil per komoditas, bukan cuma tebakan). Kalau field ini TIDAK ada padahal aspek_b_hasil
-  menyebut PRODUKSI_PERKEBUNAN, boleh sebut produksi perkebunan secara GENERIK tanpa menyebut nama komoditas
-  spesifik apa pun.
+- "kecamatan_dilalui" ada → sebutkan SEMUA nama kecamatan pada daftar "kecamatan_dilalui" (jangan cuma
+  sebagian kalau lebih dari 1) beserta PERSIS field "total_penduduk_dilalui" (jangan hitung ulang/jumlah
+  manual dari daftar) — kalau "total_penduduk_dilalui" null (data penduduk sebagian/semua kecamatan tidak
+  tersedia), sebut nama kecamatannya saja tanpa angka total, jangan mengarang angka. Kalau field
+  "total_kendaraan_dilalui" pada "kecamatan_dilalui" TIDAK null, WAJIB pakai angka itu (jumlah kendaraan
+  GABUNGAN semua kecamatan yang dilalui) setiap kali menyebut jumlah kendaraan ruas ini — JANGAN pakai angka
+  kendaraan satu kecamatan saja (mis. dari kalimat ringkasan indikator) kalau usulan ini melintasi >1
+  kecamatan; kalau "total_kendaraan_dilalui" null, boleh sebut angka kendaraan level kabupaten dari data
+  lain yang tersedia (jangan mengarang).
+- "komoditas_perkebunan_kecamatan" ada → boleh sebut komoditas perkebunan UTAMA kecamatan ini persis nama
+  pada field "komoditas" (urut "produksi_ton" terbesar, maksimal 3 komoditas) beserta angka produksi_ton-nya;
+  JANGAN sebut nama komoditas perkebunan LAIN yang tidak ada di daftar ini (mis. jangan menyebut kelapa
+  sawit/karet/tebu kalau tidak ada di daftar "komoditas_perkebunan_kecamatan" — daftar ini sudah cek data
+  riil per komoditas, bukan cuma tebakan). Kalau field ini TIDAK ada padahal aspek_b_hasil menyebut
+  PRODUKSI_PERKEBUNAN, boleh sebut produksi perkebunan secara GENERIK tanpa menyebut nama komoditas spesifik
+  apa pun.
 
 Kedua teks WAJIB berbasis fakta di aspek_a_hasil/aspek_b_hasil/field tambahan di atas APA ADANYA — jangan \
 mengarang fakta di luar itu, jangan menilai ulang atau mengubah checklist/poin yang sudah diberikan. Sebut \
 secara ringkas kriteria/indikator utama yang mendukung (atau ketiadaannya bila kosong).
 
-GAYA BAHASA: formal dan padat — setiap kalimat wajib membawa informasi baru (data/indikator/angka), jangan \
-mengulang frasa pembuka atau kesimpulan umum ("hal ini menunjukkan...", "secara keseluruhan...", dsb.) yang \
-tidak menambah fakta. Hindari basa-basi/pengantar yang tidak perlu — langsung ke fakta relevan sejak \
-kalimat pertama. Jangan menyebut ulang satu indikator/angka yang sama di lebih dari satu kalimat.
+GAYA BAHASA & VARIASI — WAJIB, bukan saran opsional. Ini narasi untuk SATU usulan spesifik, bukan formulir \
+isian: jangan susun dari kerangka kalimat yang sama tiap kali dipanggil. Secara khusus:
+- Kalimat PEMBUKA jangan selalu mulai dari kondisi teknis/kemantapan ruas — pilih fakta yang paling menonjol \
+untuk usulan INI sebagai pembuka (bisa konektivitas, kepadatan penduduk yang dilintasi, potensi ekonomi/\
+produksi kawasan, atau kondisi teknis — sesuai mana yang paling relevan/mencolok dari datanya), jangan \
+selalu format "<Nama Kegiatan> di <Kabupaten>, <Provinsi>, memiliki panjang ... km" atau "Dari aspek \
+teknis, ...".
+- Kalimat PENUTUP jangan selalu berumus "Peningkatan/Kegiatan ... jalan ini diharapkan dapat mendukung/\
+meningkatkan ... pertumbuhan ekonomi lokal" — kalau mau menutup dengan proyeksi dampak, ganti-ganti sudut \
+pandang dan pilihan katanya.
+- Setiap kalimat wajib membawa informasi baru (data/indikator/angka); jangan mengulang frasa pembuka atau \
+kesimpulan umum ("hal ini menunjukkan...", "secara keseluruhan...", dsb.) yang tidak menambah fakta. Hindari \
+basa-basi/pengantar yang tidak perlu — langsung ke fakta relevan sejak kalimat pertama. Jangan menyebut \
+ulang satu indikator/angka yang sama di lebih dari satu kalimat.
+Variasi ini HANYA soal gaya bahasa/struktur kalimat/urutan penyampaian fakta — kelengkapan fakta, checklist \
+wajib di atas, dan larangan mengarang tetap berlaku sama ketatnya.
 
 Balas HANYA JSON valid tanpa teks lain, format:
 {"kesimpulan": "...", "aspek_b_narasi_ai": "..."}

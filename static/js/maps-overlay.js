@@ -63,14 +63,18 @@ async function initMapLayersControl() {
 
    "provinsi" dari /api/maps/provinces sebenarnya campuran: 34 provinsi RBI asli
    (isinya semata layer jalan kabupaten/kota) + beberapa bucket nasional
-   khusus (JALAN NASIONAL/PROVINSI/TOL, BATAS KECAMATAN, BANDARA, PELABUHAN*,
-   KONEKTIVITAS SIMPUL TRANSPORTASI). Aturan kategori di bawah cuma perlu
-   mendaftar bucket KHUSUS itu -- 34 provinsi RBI otomatis jatuh ke kategori
-   catch-all terakhir ("Jalan") karena memang isinya cuma itu, tanpa perlu
-   hardcode nama 34 provinsi di sini. */
+   khusus (JALAN NASIONAL/PROVINSI/TOL, BATAS KECAMATAN/KABUPATEN/PROVINSI,
+   BANDARA, PELABUHAN*, KONEKTIVITAS SIMPUL TRANSPORTASI). Aturan kategori di
+   bawah cuma perlu mendaftar bucket KHUSUS itu -- 34 provinsi RBI otomatis
+   jatuh ke kategori catch-all terakhir ("Jalan") karena memang isinya cuma
+   itu, tanpa perlu hardcode nama 34 provinsi di sini. SETIAP bucket batas
+   administrasi baru (lihat scripts/import_batas_administrasi_*.py) WAJIB
+   didaftarkan di sini juga -- backend tidak tahu apa-apa soal kategori tree
+   ini, jadi bucket yang lupa didaftarkan diam-diam jatuh ke "Jalan" (bug
+   yang terjadi persis di BATAS KABUPATEN/PROVINSI, ditemukan 27 Jul 2026). */
 const MAP_LAYER_CATEGORIES = [
   { id: "batas-admin", label: "Batas Administrasi", icon: "bi-bounding-box",
-    match: (p) => p === "BATAS KECAMATAN" },
+    match: (p) => ["BATAS KECAMATAN", "BATAS KABUPATEN", "BATAS PROVINSI"].includes(p) },
   { id: "simpul", label: "Simpul Transportasi", icon: "bi-airplane",
     match: (p) => ["BANDARA", "PELABUHAN", "PELABUHAN LAUT", "PELABUHAN PENYEBRANGAN",
       "KONEKTIVITAS SIMPUL TRANSPORTASI"].includes(p) },

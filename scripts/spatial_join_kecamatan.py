@@ -45,6 +45,17 @@ def norm(s):
     return " ".join(t for t in re.split(r"[^A-Z0-9]+", str(s).upper()) if t)
 
 
+def norm_compact(s):
+    """Kunci pencocokan longgar tanpa spasi -- SHP Dukcapil dan master BPS
+    penduduk_kecamatan tidak selalu setuju soal spasi dalam nama kecamatan
+    (mis. 'GUNUNGKENCANA' vs 'GUNUNG KENCANA', 'BALONGBENDO' vs 'BALONG
+    BENDO' -- ±216 nama nasional kena pola ini, ditemukan 26 Jul 2026 lewat
+    validasi usulan Sampay-Gunung Kencana yang kehilangan kecamatan tujuannya
+    di usulan_kecamatan_dilalui). norm() saja tidak menangkap ini karena cuma
+    menyeragamkan huruf besar/tanda baca, bukan spasi."""
+    return norm(s).replace(" ", "")
+
+
 def sample_points(geom, n=12):
     """Titik contoh tersebar merata di sepanjang LineString/MultiLineString."""
     lines = [geom] if geom.geom_type == "LineString" else list(geom.geoms)
@@ -91,9 +102,13 @@ def main():
 
     by_kab_nama = {}   # (kode_kab, norm_nama) -> kode_kecamatan
     by_nama = defaultdict(set)  # norm_nama -> {kode_kecamatan}
+    by_kab_compact = {}   # (kode_kab, norm_compact) -> kode_kecamatan -- fallback varian spasi
+    by_compact = defaultdict(set)  # norm_compact -> {kode_kecamatan}
     for m in master:
         by_kab_nama[(m["kode_kabupaten"], norm(m["kecamatan"]))] = m["kode_kecamatan"]
         by_nama[norm(m["kecamatan"])].add(m["kode_kecamatan"])
+        by_kab_compact[(m["kode_kabupaten"], norm_compact(m["kecamatan"]))] = m["kode_kecamatan"]
+        by_compact[norm_compact(m["kecamatan"])].add(m["kode_kecamatan"])
 
     print(f"Antrian spatial-join: {len(usulan)} usulan bergeometri")
     updates, alasan = [], Counter()
@@ -117,6 +132,11 @@ def main():
             kode_kec = by_kab_nama.get((kode_kab, n))
             if kode_kec is None and len(by_nama.get(n, ())) == 1:
                 kode_kec = next(iter(by_nama[n]))
+            if kode_kec is None:
+                nc = norm_compact(nama)
+                kode_kec = by_kab_compact.get((kode_kab, nc))
+                if kode_kec is None and len(by_compact.get(nc, ())) == 1:
+                    kode_kec = next(iter(by_compact[nc]))
             if kode_kec is not None:
                 break
         if kode_kec is None:

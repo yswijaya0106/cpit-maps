@@ -36,20 +36,26 @@ from pyproj import Transformer
 from shapely.strtree import STRtree
 
 from app import _batas_kec_shp, _geojson_line_to_shapely, db_cursor  # noqa: E402
-from spatial_join_kecamatan import norm, sample_points  # noqa: E402 -- reuse, bukan tulis ulang
+from spatial_join_kecamatan import norm, norm_compact, sample_points  # noqa: E402 -- reuse, bukan tulis ulang
 
+# Skema ini masih MySQL apa adanya sejak sebelum migrasi ke PostgreSQL (lihat
+# docs/migrasi_mysql_ke_postgresql.md) -- terlewat waktu itu krn tabelnya
+# sudah kepindah lewat dump data, bukan lewat re-run script ini. Ditemukan
+# 26 Jul 2026 lewat validasi usulan Sampay-Gunung Kencana (script ini butuh
+# di-rerun utk fix bug norm_compact di bawah, dan langsung gagal di CREATE
+# TABLE MySQL-syntax begitu dijalankan lagi).
 RADIUS_SCHEMA = """
 CREATE TABLE IF NOT EXISTS usulan_kecamatan_dilalui (
-  id              INT AUTO_INCREMENT PRIMARY KEY,
-  usulan_id       INT NOT NULL,
-  kode_kecamatan  INT UNSIGNED NOT NULL,
-  kode_kabupaten  MEDIUMINT UNSIGNED NOT NULL,
-  n_titik_sampel  SMALLINT UNSIGNED NOT NULL,
-  n_titik_total   SMALLINT UNSIGNED NOT NULL,
-  UNIQUE KEY uq_usulan_kec (usulan_id, kode_kecamatan),
-  KEY idx_kode_kecamatan (kode_kecamatan),
-  KEY idx_usulan_id (usulan_id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+  id              SERIAL PRIMARY KEY,
+  usulan_id       INTEGER NOT NULL,
+  kode_kecamatan  INTEGER NOT NULL,
+  kode_kabupaten  INTEGER NOT NULL,
+  n_titik_sampel  SMALLINT NOT NULL,
+  n_titik_total   SMALLINT NOT NULL,
+  UNIQUE (usulan_id, kode_kecamatan)
+);
+CREATE INDEX IF NOT EXISTS idx_ukd_kode_kecamatan ON usulan_kecamatan_dilalui (kode_kecamatan);
+CREATE INDEX IF NOT EXISTS idx_ukd_usulan_id ON usulan_kecamatan_dilalui (usulan_id)
 """
 
 # ~1 titik tiap 1,5 km rute (dihitung dari panjang METRIK, bukan derajat --
@@ -110,9 +116,13 @@ def main():
 
     by_kab_nama = {}   # (kode_kab, norm_nama) -> kode_kecamatan
     by_nama = defaultdict(set)  # norm_nama -> {kode_kecamatan}
+    by_kab_compact = {}   # (kode_kab, norm_compact) -> kode_kecamatan -- fallback varian spasi
+    by_compact = defaultdict(set)  # norm_compact -> {kode_kecamatan}
     for m in master:
         by_kab_nama[(m["kode_kabupaten"], norm(m["kecamatan"]))] = m["kode_kecamatan"]
         by_nama[norm(m["kecamatan"])].add(m["kode_kecamatan"])
+        by_kab_compact[(m["kode_kabupaten"], norm_compact(m["kecamatan"]))] = m["kode_kecamatan"]
+        by_compact[norm_compact(m["kecamatan"])].add(m["kode_kecamatan"])
 
     print(f"Antrian overlay multi-kecamatan: {len(usulan)} usulan bergeometri")
     rows_out = []
@@ -169,6 +179,11 @@ def main():
             kode_kec = by_kab_nama.get((kode_kab_usulan, n))
             if kode_kec is None and len(by_nama.get(n, ())) == 1:
                 kode_kec = next(iter(by_nama[n]))
+            if kode_kec is None:
+                nc = norm_compact(nama)
+                kode_kec = by_kab_compact.get((kode_kab_usulan, nc))
+                if kode_kec is None and len(by_compact.get(nc, ())) == 1:
+                    kode_kec = next(iter(by_compact[nc]))
             if kode_kec is None:
                 n_ambigu_total += 1
                 continue

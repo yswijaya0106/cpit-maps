@@ -662,16 +662,16 @@ DATA_TABLE_GEO = {
     "penduduk_kecamatan": ("kode_provinsi", "kode_kabupaten"),
     "kecamatan_data_turunan": ("(kode_kabupaten / 100)", "kode_kabupaten"),
     "wilayah_mapping": ("kode_provinsi", "kode_kabupaten"),
-    "bps_kecamatan_demografi": ("CAST(LEFT(kode_kab, 2) AS UNSIGNED)", "CAST(kode_kab AS UNSIGNED)"),
-    "bps_kabupaten_padi": ("CAST(LEFT(kode_kab, 2) AS UNSIGNED)", "CAST(kode_kab AS UNSIGNED)"),
-    "bps_kabupaten_kendaraan": ("CAST(LEFT(kode_kab, 2) AS UNSIGNED)", "CAST(kode_kab AS UNSIGNED)"),
-    "bps_kabupaten_jalan": ("CAST(LEFT(kode_kab, 2) AS UNSIGNED)", "CAST(kode_kab AS UNSIGNED)"),
-    "bps_kabupaten_indeks_penanaman": ("CAST(LEFT(kode_kab, 2) AS UNSIGNED)", "CAST(kode_kab AS UNSIGNED)"),
-    "bps_kecamatan_potensi_tematik": ("CAST(LEFT(kode_kab, 2) AS UNSIGNED)", "CAST(kode_kab AS UNSIGNED)"),
+    "bps_kecamatan_demografi": ("CAST(LEFT(kode_kab, 2) AS INTEGER)", "CAST(kode_kab AS INTEGER)"),
+    "bps_kabupaten_padi": ("CAST(LEFT(kode_kab, 2) AS INTEGER)", "CAST(kode_kab AS INTEGER)"),
+    "bps_kabupaten_kendaraan": ("CAST(LEFT(kode_kab, 2) AS INTEGER)", "CAST(kode_kab AS INTEGER)"),
+    "bps_kabupaten_jalan": ("CAST(LEFT(kode_kab, 2) AS INTEGER)", "CAST(kode_kab AS INTEGER)"),
+    "bps_kabupaten_indeks_penanaman": ("CAST(LEFT(kode_kab, 2) AS INTEGER)", "CAST(kode_kab AS INTEGER)"),
+    "bps_kecamatan_potensi_tematik": ("CAST(LEFT(kode_kab, 2) AS INTEGER)", "CAST(kode_kab AS INTEGER)"),
     "bappenas_lokus_a": ("kode_provinsi", "kode_kabupaten"),
     "kawasan_tematik": ("kode_provinsi", "kode_kabupaten"),
     "kemantapan_ijd_2026": ("kode_provinsi", "kode_wilayah"),
-    "bappenas_koridor": ("CAST(LEFT(kode_kab, 2) AS UNSIGNED)", "CAST(kode_kab AS UNSIGNED)"),
+    "bappenas_koridor": ("CAST(LEFT(kode_kab, 2) AS INTEGER)", "CAST(kode_kab AS INTEGER)"),
     # tabel level provinsi (Statistik Indonesia 2026) -- tidak ada dimensi
     # kabupaten, filter kabupaten sengaja dipetakan ke kolom yg sama supaya
     # aman kalau ter-pilih (tidak match apa pun, bukan error).

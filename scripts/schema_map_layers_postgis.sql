@@ -39,7 +39,8 @@ CREATE TABLE IF NOT EXISTS map_layers (
 CREATE INDEX IF NOT EXISTS idx_map_layers_pkl ON map_layers (provinsi, kabupaten, layer);
 CREATE INDEX IF NOT EXISTS idx_map_layers_geom ON map_layers USING GIST (geom);
 
--- Layer BATAS KECAMATAN (attrs->>'KECAMATAN') dicari lewat nama, bukan PKL:
-CREATE INDEX IF NOT EXISTS idx_map_layers_kecamatan_nama
-  ON map_layers ((attrs->>'KECAMATAN'))
-  WHERE provinsi = 'BATAS KECAMATAN';
+-- Layer BATAS KECAMATAN (provinsi='BATAS KECAMATAN', diisi
+-- scripts/import_batas_administrasi_kecamatan.py dari Maps/BATAS_ADMINISTRASI.gdb)
+-- menyimpan provinsi/kabupaten ASLI langsung di kolom kabupaten/layer --
+-- sudah tercakup idx_map_layers_pkl di atas, tidak perlu index nama terpisah
+-- lagi (versi lama yang dicari lewat attrs->>'KECAMATAN' sudah tidak dipakai).

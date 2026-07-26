@@ -12,9 +12,9 @@ before debugging something that feels like it should just work.
 python app.py
 ```
 
-`.env` needs `GOOGLE_MAPS_API_KEY` at minimum; `MYSQL_*` for anything
-touching usulan/IJD/CPIT data (most of the recent work). See CLAUDE.md's
-Run section for the full list and what breaks without each key.
+`.env` needs `GOOGLE_MAPS_API_KEY` at minimum; `PG_*` (PostgreSQL) for
+anything touching usulan/IJD/CPIT data (most of the recent work). See
+CLAUDE.md's Run section for the full list and what breaks without each key.
 
 ## Adding a new import/build script
 
@@ -24,7 +24,7 @@ clean example) rather than starting from scratch:
 1. `schema_<name>.sql` — `CREATE TABLE IF NOT EXISTS`, comment header
    explaining the source file/sheet and what gap/parameter it feeds.
 2. `import_<name>.py` — `connect()` → `run_schema()` → parse → upsert via
-   `ON DUPLICATE KEY UPDATE` → print a summary (rows processed, rows
+   `ON CONFLICT ... DO UPDATE` → print a summary (rows processed, rows
    skipped by reason). Must be safe to re-run on the same input.
 3. If the source needs Indonesian place-name matching, reuse the four-step
    cascade described in `docs/MEMORY.md`, don't write a new fuzzy matcher.

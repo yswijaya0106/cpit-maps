@@ -56,11 +56,24 @@ Requires `.env` (copy from `.env.example`):
 
 Deps: `requirements.txt`, venv at `.venv/` (already gitignored).
 
-## Architecture (single-file backend + PostgreSQL, no ORM)
+## Architecture (near-single-file backend + PostgreSQL, no ORM)
 
-- [app.py](app.py) — entire backend. FastAPI app, all routes,
-  all GIS logic, IJD scoring, chat providers. No other backend modules exist;
-  don't go looking for a `routers/` or `services/` dir.
+- [app.py](app.py) — the backend. FastAPI app, all routes, all GIS logic,
+  IJD scoring. Still the file to start reading in — don't go looking for a
+  `routers/` or `services/` dir. A few pieces have been extracted into their
+  own modules (see below) but nothing resembling a framework of packages;
+  when in doubt, the code you're looking for is in app.py.
+- [chat_providers.py](chat_providers.py) — chat assistant LLM-provider logic
+  (Groq/Grok/OpenAI/Claude/Gemini calls, `_call_chat` fallback chain, the
+  read-only DB tool functions). Extracted out of app.py; the `POST /api/chat`
+  route itself stays in app.py and just calls
+  `chat_providers._call_chat(...)`. Imports from app.py (usulan_inpres CRUD
+  helpers) are done lazily inside functions, not at module top-level, to
+  avoid a circular import — app.py imports `chat_providers` at top-level.
+- [db.py](db.py) — the `db_cursor()` contextmanager (see below).
+- [map_layer_labels.py](map_layer_labels.py) — `MAP_LAYER_LABELS` /
+  `_map_layer_label`, shared between app.py and
+  `scripts/import_maps_to_postgis.py`.
 - Database: PostgreSQL via `psycopg` (v3), raw parameterized SQL through the
   `db_cursor()` contextmanager in [db.py](db.py) — `%s` placeholders (same
   as the old MySQL driver, unchanged). Schemas live in PostgreSQL itself
@@ -337,24 +350,46 @@ Deps: `requirements.txt`, venv at `.venv/` (already gitignored).
   pre-migration; prefer flattening a new source to the plain
   provinsi/kabupaten shape over adding a special case (see `docs/MEMORY.md`
   §"Maps/ overlay").
-  `Maps/BATAS KECAMATAN/` (national Dukcapil 2019 kecamatan-boundary SHP,
-  90MB, attribute = kecamatan name ONLY, imported as a single
-  `map_layers` layer, 6810 polygons) is special-cased as a virtual
-  hierarchy in these same endpoints: the "kabupaten" dropdown lists
-  provinces, layers are kabupaten (id `BATASKEC__<prov>__<kab>`), features
-  carry KODE_KECAMATAN matched by name against `penduduk_kecamatan`
-  (exact → space-collapsed → numeral-equalized SATU↔I↔1; ~96% polygon
-  coverage; homonym multipolygons are trimmed to parts adjacent to their
-  kabupaten — `_batas_kec_layer_geojson` fetches candidate polygons from
-  PostGIS via `ST_AsBinary`/`shapely.wkb.loads`, deliberately NOT
-  `ST_AsGeoJSON`/`shapely.geometry.shape()`: MultiPolygon construction from a
-  plain GeoJSON dict segfaults-into-TypeError on this shapely/numpy
-  combination, same underlying issue `_geojson_line_to_shapely` works around
-  for MultiLineString via WKT). Kecamatan crossed by the currently displayed
-  usulan route are recolored client-side (`updateKecamatanLintasan` in
-  maps-overlay.js), and the identify popup joins the feature to DB tables via
-  `GET /api/kecamatan/{kode}/data?tabel=` (whitelist
-  `KECAMATAN_JOIN_TABLES`).
+  The "BATAS KECAMATAN" overlay (provinsi bucket fixed to that literal
+  string, `BATAS_KEC_DIRNAME` in app.py) is sourced from
+  `Maps/BATAS_ADMINISTRASI.gdb` (BIG file geodatabase, layer
+  `ADMINISTRASI_KECAMATAN_AR`, 7283 definitive kecamatan polygons — replaced
+  the old Dukcapil Dec 2019 SHP 26 Jul 2026), imported by
+  `scripts/import_batas_administrasi_kecamatan.py`. Unlike every other
+  `map_layers` source, this one has real per-polygon province/kabupaten
+  attributes (`WADMPR`/`WADMKK`), so the import script writes them straight
+  into the `kabupaten`/`layer` DB columns (kabupaten=real provinsi name,
+  layer=real kabupaten/kota name) instead of stuffing them into `attrs` —
+  the generic `maps_provinces`/`maps_kabupaten`/`maps_layers`/`maps_layer`
+  endpoints then serve the provinsi→kabupaten→kecamatan-polygon hierarchy
+  with **zero special-casing**, unlike the old SHP (no province/kabupaten
+  columns at all, forced a virtual-hierarchy hack with name-matching against
+  `penduduk_kecamatan` and a homonym-disambiguation heuristic — both gone
+  now that the source carries ground truth). `KODE_KECAMATAN` (used by the
+  identify popup's DB join) is still matched by name against
+  `penduduk_kecamatan` at import time — the source's own `KDCPUM` column is
+  a *Kemendagri* code, not BPS (verified 0% direct overlap with
+  `kode_kecamatan`), so name-matching (now scoped per real kabupaten, ~96.6%
+  hit rate, better than the old ~89-96%) is still required, just no longer
+  ambiguous across regions. Geometry is `.simplify()`d at import time (not
+  read time): the per-kabupaten feature counts here never cross the
+  `maps_layer()` "simplify if >3000 features" threshold, but this source is
+  far more vertex-dense than the old SHP, so it needs simplification
+  regardless to stay light client-side. `_batas_kec_index()`/
+  `_batas_kec_layer_geojson()` still exist in app.py (now just plain
+  DB-column queries, no Python-side geometry surgery) purely for
+  `scripts/import_indeks_penanaman_raster.py`'s reuse — not called by the
+  maps endpoints anymore. `_batas_kec_shp()` (the *old* Dukcapil SHP, read
+  straight off disk) is untouched and still feeds
+  `spatial_join_kecamatan*.py`/`spatial_join_simpul_transportasi.py` (which
+  set `usulan_inpres.kode_kecamatan`/`usulan_kecamatan_dilalui`, feeding IJD
+  scoring) — that pipeline is deliberately a separate decision from the map
+  overlay swap above and hasn't been repointed at the new gdb source.
+  Kecamatan crossed by the currently displayed usulan route are recolored
+  client-side (`updateKecamatanLintasan` in maps-overlay.js, now keyed off
+  the `"BATAS KECAMATAN::"` layer-key prefix rather than a `BATASKEC__` raw
+  layer name), and the identify popup joins the feature to DB tables via
+  `GET /api/kecamatan/{kode}/data?tabel=` (whitelist `KECAMATAN_JOIN_TABLES`).
 
 ## Data pipeline (scripts/)
 
@@ -423,6 +458,19 @@ upsert, so they're safe to re-run:
   SELATAN/Kabupaten Barru/JALANLINE.shp`) is genuinely corrupt (bad `.shx`
   record length) and is skipped permanently, logged as `GAGAL` — not
   fixable from the read side.
+- `import_batas_administrasi_kecamatan.py` — replaces the whole "BATAS
+  KECAMATAN" `map_layers` bucket (DELETE + reinsert, not incremental) from
+  `Maps/BATAS_ADMINISTRASI.gdb` (layer `ADMINISTRASI_KECAMATAN_AR`, BIG file
+  geodatabase — needs `engine="pyogrio"` in `gpd.read_file`, the default
+  `fiona` engine hits the same shapely/numpy MultiPolygon-from-dict bug
+  described under `_batas_kec_layer_geojson` above). Separate from
+  `import_maps_to_postgis.py` because the source is a `.gdb` (not a `.shp`
+  under `Maps/<provinsi>/<kabupaten>/`) and needs name-matching against
+  `penduduk_kecamatan` for `KODE_KECAMATAN` (see the app.py architecture
+  note above for why). Does **not** touch `Maps/BATAS KECAMATAN/` (the old
+  SHP) or re-run `spatial_join_kecamatan*.py` — rerun those separately and
+  deliberately if the goal is also updating `usulan_inpres.kode_kecamatan`
+  itself, not just the map overlay.
 - `import_kemantapan_ijd2026.py` — road-soundness per kab/kota
   (`kemantapan_ijd_2026`), the source of IJD pagu component G8.A2; also
   writes the official "Tidak mantap (%)" figure into

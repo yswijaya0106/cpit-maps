@@ -1,7 +1,10 @@
-/* The Next - SiJalan — overlay peta referensi (layer SHP dari folder Maps/<provinsi>/<kabupaten>/)
-   Daftar provinsi/kabupaten/layer dibaca langsung dari isi folder Maps/ setiap
-   dropdown dibuka (bukan sekali saat load halaman) — supaya file yang
-   ditambah/dipindah di folder tersebut otomatis muncul tanpa reload. */
+/* The Next - SiJalan — overlay peta referensi (layer SHP dari folder Maps/<provinsi>/<kabupaten>/,
+   sekarang disajikan lewat PostGIS map_layers/map_layer_meta, lihat app.py).
+   Panel-nya pohon ArcGIS-style: kategori (Jalan/Batas Administrasi/Simpul
+   Transportasi) -> provinsi -> kabupaten/kota -> layer (checkbox), tiap
+   tingkat di-expand LAZY (fetch baru saat node dibuka, bukan sekaligus di
+   awal) — supaya layer yang ditambah/diimpor ulang otomatis muncul tanpa
+   reload halaman, panel cuma perlu dibuka ulang. */
 
 const MAP_LAYER_PALETTE = [
   "#4f7cff", "#22d3a5", "#ffb648", "#ff5c7c", "#a78bfa", "#38bdf8", "#f472b6", "#facc15",
@@ -49,32 +52,205 @@ function mapLayerDisplayLabel(layerKey) {
 
 async function initMapLayersControl() {
   const control = document.getElementById("mapLayerControl");
-  const hasData = await refreshMapLayerProvinces();
+  const hasData = await loadMapLayerTree();
   if (!hasData) return; // folder Maps/ kosong, sembunyikan kontrol
-
-  await refreshMapLayerKabupaten();
-  await refreshMapLayerList();
-
   control.hidden = false;
   bindMapLayerToggle();
-  bindMapLayerCombo("mapLayerProvinsiField", "mapLayerProvinsiToggle", "mapLayerProvinsiPanel", "mapLayerProvinsiLabel", async () => {
-    await refreshMapLayerProvinces();
-  }, async (provinsi) => {
-    // Ganti provinsi/kabupaten yang sedang di-browse HANYA mengganti daftar
-    // layer yang ditampilkan buat dipilih — layer yang sudah aktif dari
-    // provinsi/kabupaten lain TETAP tampil di peta (multi-select lintas
-    // provinsi/kabupaten, bukan cuma satu konteks pada satu waktu).
-    state.mapLayers.selectedProvinsi = provinsi;
-    state.mapLayers.selectedKabupaten = null;
-    await refreshMapLayerKabupaten();
-    await refreshMapLayerList();
+}
+
+/* ---------- kategori & tree (ArcGIS-style: kategori -> provinsi -> [kabupaten
+   ->] layer, expand lazy per tingkat) ----------
+
+   "provinsi" dari /api/maps/provinces sebenarnya campuran: 34 provinsi RBI asli
+   (isinya semata layer jalan kabupaten/kota) + beberapa bucket nasional
+   khusus (JALAN NASIONAL/PROVINSI/TOL, BATAS KECAMATAN, BANDARA, PELABUHAN*,
+   KONEKTIVITAS SIMPUL TRANSPORTASI). Aturan kategori di bawah cuma perlu
+   mendaftar bucket KHUSUS itu -- 34 provinsi RBI otomatis jatuh ke kategori
+   catch-all terakhir ("Jalan") karena memang isinya cuma itu, tanpa perlu
+   hardcode nama 34 provinsi di sini. */
+const MAP_LAYER_CATEGORIES = [
+  { id: "batas-admin", label: "Batas Administrasi", icon: "bi-bounding-box",
+    match: (p) => p === "BATAS KECAMATAN" },
+  { id: "simpul", label: "Simpul Transportasi", icon: "bi-airplane",
+    match: (p) => ["BANDARA", "PELABUHAN", "PELABUHAN LAUT", "PELABUHAN PENYEBRANGAN",
+      "KONEKTIVITAS SIMPUL TRANSPORTASI"].includes(p) },
+  { id: "jalan", label: "Jalan", icon: "bi-signpost-2", match: () => true }, // catch-all, HARUS terakhir
+];
+
+function categoryForProvinsi(provinsi) {
+  return MAP_LAYER_CATEGORIES.find((c) => c.match(provinsi));
+}
+
+function titleCaseWilayah(s) {
+  return String(s).toLowerCase().replace(/(^|\s)\S/g, (c) => c.toUpperCase());
+}
+
+async function loadMapLayerTree() {
+  const tree = document.getElementById("mapLayerTree");
+  let provinces = [];
+  try {
+    const res = await fetch("/api/maps/provinces");
+    if (!res.ok) throw new Error(await res.text());
+    provinces = await res.json();
+  } catch (err) {
+    console.error(err);
+    tree.innerHTML = `<div class="maplayer-loading">Gagal memuat daftar layer</div>`;
+    return false;
+  }
+  if (!provinces.length) return false;
+
+  const grouped = new Map(); // cat.id -> { cat, rows: [] }
+  provinces.forEach((p) => {
+    const cat = categoryForProvinsi(p.provinsi);
+    if (!grouped.has(cat.id)) grouped.set(cat.id, { cat, rows: [] });
+    grouped.get(cat.id).rows.push(p);
   });
-  bindMapLayerCombo("mapLayerKabupatenField", "mapLayerKabupatenToggle", "mapLayerKabupatenPanel", "mapLayerKabupatenLabel", async () => {
-    await refreshMapLayerKabupaten();
-  }, async (kabupaten) => {
-    state.mapLayers.selectedKabupaten = kabupaten;
-    await refreshMapLayerList();
+
+  tree.innerHTML = "";
+  MAP_LAYER_CATEGORIES.forEach((cat) => {
+    const group = grouped.get(cat.id);
+    if (!group || !group.rows.length) return;
+    tree.appendChild(renderTreeNode({
+      icon: cat.icon,
+      label: cat.label,
+      count: group.rows.length,
+      countSuffix: "provinsi",
+      loadChildren: () => renderProvinsiChildren(group.rows),
+    }));
   });
+  return true;
+}
+
+function renderProvinsiChildren(rows) {
+  const frag = document.createDocumentFragment();
+  rows
+    .slice()
+    .sort((a, b) => a.provinsi.localeCompare(b.provinsi))
+    .forEach((p) => {
+      frag.appendChild(renderTreeNode({
+        label: titleCaseWilayah(p.provinsi),
+        count: p.kabupaten_count,
+        countSuffix: "kab/kota",
+        loadChildren: () => loadKabupatenChildren(p.provinsi),
+      }));
+    });
+  return frag;
+}
+
+async function loadKabupatenChildren(provinsi) {
+  let rows = [];
+  try {
+    const res = await fetch(`/api/maps/kabupaten?provinsi=${encodeURIComponent(provinsi)}`);
+    if (!res.ok) throw new Error(await res.text());
+    rows = await res.json();
+  } catch (err) {
+    console.error(err);
+    return mapLayerTreeError("Gagal memuat daftar kabupaten/kota");
+  }
+  if (!rows.length) return mapLayerTreeError("Belum ada data");
+
+  // Bucket nasional flat (mis. JALAN NASIONAL/JALAN TOL): satu baris dengan
+  // kabupaten="" berarti tidak ada level kabupaten sama sekali -- lompat
+  // langsung ke daftar layer, sama spt fallback maps_kabupaten() di app.py.
+  if (rows.length === 1 && rows[0].kabupaten === "") {
+    return loadLayerChildren(provinsi, "");
+  }
+
+  const frag = document.createDocumentFragment();
+  rows
+    .slice()
+    .sort((a, b) => (a.label || a.kabupaten).localeCompare(b.label || b.kabupaten))
+    .forEach((r) => {
+      frag.appendChild(renderTreeNode({
+        label: r.label || r.kabupaten,
+        count: r.layer_count,
+        countSuffix: "layer",
+        loadChildren: () => loadLayerChildren(provinsi, r.kabupaten),
+      }));
+    });
+  return frag;
+}
+
+async function loadLayerChildren(provinsi, kabupaten) {
+  let layers = [];
+  try {
+    const res = await fetch(`/api/maps/layers?provinsi=${encodeURIComponent(provinsi)}&kabupaten=${encodeURIComponent(kabupaten)}`);
+    if (!res.ok) throw new Error(await res.text());
+    layers = await res.json();
+  } catch (err) {
+    console.error(err);
+    return mapLayerTreeError("Gagal memuat daftar layer");
+  }
+  if (!layers.length) return mapLayerTreeError("Belum ada layer (.shp) untuk kabupaten ini");
+
+  const frag = document.createDocumentFragment();
+  layers.forEach((l) => {
+    state.mapLayers.labels[l.layer] = l.label;
+    const key = mapLayerKey(provinsi, kabupaten, l.layer);
+    const isActive = !!state.mapLayers.active[key];
+    const opacity = state.mapLayers.opacity[key] ?? 1;
+    const row = document.createElement("label");
+    row.className = "maplayer-item";
+    row.innerHTML = `
+      <input type="checkbox" ${isActive ? "checked" : ""} data-provinsi="${escapeHtml(provinsi)}" data-kabupaten="${escapeHtml(kabupaten)}" data-layer="${escapeHtml(l.layer)}" />
+      <span class="maplayer-swatch" style="background:${isActive ? mapLayerColor(l.layer) : mapLayerPreviewColor(l.layer)}"></span>
+      <span class="maplayer-item-label">${escapeHtml(l.label)}</span>
+      <span class="maplayer-item-size">${l.size_mb != null ? `${l.size_mb} MB` : ""}</span>
+      <input type="range" class="maplayer-opacity" min="0" max="1" step="0.05" value="${opacity}" data-provinsi="${escapeHtml(provinsi)}" data-kabupaten="${escapeHtml(kabupaten)}" data-layer="${escapeHtml(l.layer)}" title="Transparansi layer" ${isActive ? "" : "hidden"} />
+    `;
+    frag.appendChild(row);
+  });
+  return frag;
+}
+
+function mapLayerTreeError(msg) {
+  const div = document.createElement("div");
+  div.className = "maplayer-loading";
+  div.textContent = msg;
+  return div;
+}
+
+/* Node tree generik dgn expand/collapse lazy: loadChildren() cuma dipanggil
+   sekali (saat pertama dibuka), hasilnya menempel di DOM jadi buka/tutup
+   berikutnya tinggal toggle hidden -- sama dgn semangat combo lama (data
+   di-fetch saat dropdown dibuka, bukan semua sekaligus di awal). */
+function renderTreeNode({ icon, label, count, countSuffix, loadChildren }) {
+  const node = document.createElement("div");
+  node.className = "maplayer-tree-node";
+
+  const row = document.createElement("div");
+  row.className = "maplayer-tree-row";
+  row.innerHTML = `
+    <i class="bi bi-chevron-right maplayer-tree-caret"></i>
+    ${icon ? `<i class="bi ${icon} maplayer-tree-icon"></i>` : ""}
+    <span class="maplayer-tree-label">${escapeHtml(label)}</span>
+    ${count != null ? `<span class="maplayer-tree-count">${count}${countSuffix ? " " + countSuffix : ""}</span>` : ""}
+  `;
+
+  const children = document.createElement("div");
+  children.className = "maplayer-tree-children";
+  children.hidden = true;
+
+  let loaded = false;
+  row.addEventListener("click", async () => {
+    const willOpen = children.hidden;
+    if (willOpen && !loaded) {
+      children.hidden = false;
+      node.classList.add("open");
+      children.innerHTML = `<div class="maplayer-loading">Memuat...</div>`;
+      const result = await loadChildren();
+      children.innerHTML = "";
+      children.appendChild(result);
+      loaded = true;
+      return;
+    }
+    children.hidden = !willOpen;
+    node.classList.toggle("open", willOpen);
+  });
+
+  node.appendChild(row);
+  node.appendChild(children);
+  return node;
 }
 
 /* ---------- combo dropdown mechanics ---------- */
@@ -133,125 +309,17 @@ function fillComboPanel(panelId, labelId, rows, valueKey, textFn, selectedValue)
   return chosen;
 }
 
-/* ---------- data loading (re-scans Maps/ folder every call) ---------- */
-
-async function refreshMapLayerProvinces() {
-  let provinces = [];
-  try {
-    const res = await fetch("/api/maps/provinces");
-    if (!res.ok) throw new Error(await res.text());
-    provinces = await res.json();
-  } catch (err) {
-    console.error(err);
-    return false;
-  }
-  if (!provinces.length) return false;
-
-  // Kalau belum ada provinsi terpilih, utamakan yang sudah ada data
-  // kabupatennya alih-alih provinsi kosong pertama secara alfabet.
-  const defaultProvinsi = state.mapLayers.selectedProvinsi
-    || provinces.find((p) => p.kabupaten_count > 0)?.provinsi
-    || provinces[0].provinsi;
-
-  const chosen = fillComboPanel(
-    "mapLayerProvinsiPanel", "mapLayerProvinsiLabel", provinces, "provinsi",
-    (p) => `${p.provinsi} (${p.kabupaten_count})`, defaultProvinsi
-  );
-  state.mapLayers.selectedProvinsi = chosen;
-  return true;
-}
-
-async function refreshMapLayerKabupaten() {
-  const provinsi = state.mapLayers.selectedProvinsi;
-  let rows = [];
-  try {
-    const res = await fetch(`/api/maps/kabupaten?provinsi=${encodeURIComponent(provinsi)}`);
-    if (!res.ok) throw new Error(await res.text());
-    rows = await res.json();
-  } catch (err) {
-    console.error(err);
-    document.getElementById("mapLayerList").innerHTML = `<div class="maplayer-loading">Gagal memuat daftar kabupaten</div>`;
-    return;
-  }
-
-  if (!rows.length) {
-    document.getElementById("mapLayerKabupatenPanel").innerHTML = "";
-    document.getElementById("mapLayerKabupatenLabel").textContent = "Belum ada data";
-    document.getElementById("mapLayerList").innerHTML = `<div class="maplayer-loading">Belum ada data kabupaten untuk provinsi ini</div>`;
-    state.mapLayers.selectedKabupaten = null;
-    return;
-  }
-
-  const defaultKabupaten = state.mapLayers.selectedKabupaten
-    || rows.find((r) => r.layer_count > 0)?.kabupaten
-    || rows[0].kabupaten;
-
-  const chosen = fillComboPanel(
-    "mapLayerKabupatenPanel", "mapLayerKabupatenLabel", rows, "kabupaten",
-    (r) => `${r.label || r.kabupaten} (${r.layer_count} layer)`, defaultKabupaten
-  );
-  state.mapLayers.selectedKabupaten = chosen;
-}
-
-let _mapLayerListRequestId = 0;
-
-async function refreshMapLayerList() {
-  const listEl = document.getElementById("mapLayerList");
-  const provinsi = state.mapLayers.selectedProvinsi;
-  const kabupaten = state.mapLayers.selectedKabupaten;
-  if (!provinsi || kabupaten == null) return;
-
-  // Setiap panggilan mendapat id sendiri: kalau user ganti provinsi/kabupaten
-  // lagi sebelum fetch sebelumnya selesai, respons yang basi ini dibuang
-  // alih-alih menimpa daftar layer yang sudah sesuai pilihan terbaru.
-  const requestId = ++_mapLayerListRequestId;
-  listEl.innerHTML = `<div class="maplayer-loading">Memuat daftar layer...</div>`;
-
-  try {
-    const res = await fetch(`/api/maps/layers?provinsi=${encodeURIComponent(provinsi)}&kabupaten=${encodeURIComponent(kabupaten)}`);
-    if (!res.ok) throw new Error(await res.text());
-    const layers = await res.json();
-    if (requestId !== _mapLayerListRequestId) return;
-    if (!layers.length) {
-      listEl.innerHTML = `<div class="maplayer-loading">Belum ada layer (.shp) di folder kabupaten ini</div>`;
-      return;
-    }
-    listEl.innerHTML = "";
-    layers.forEach((l) => {
-      state.mapLayers.labels[l.layer] = l.label;
-      const key = mapLayerKey(provinsi, kabupaten, l.layer);
-      const row = document.createElement("label");
-      row.className = "maplayer-item";
-      const isActive = !!state.mapLayers.active[key];
-      const opacity = state.mapLayers.opacity[key] ?? 1;
-      row.innerHTML = `
-        <input type="checkbox" ${isActive ? "checked" : ""} data-provinsi="${escapeHtml(provinsi)}" data-kabupaten="${escapeHtml(kabupaten)}" data-layer="${escapeHtml(l.layer)}" />
-        <span class="maplayer-swatch" style="background:${isActive ? mapLayerColor(l.layer) : mapLayerPreviewColor(l.layer)}"></span>
-        <span class="maplayer-item-label">${escapeHtml(l.label)}</span>
-        <span class="maplayer-item-size">${l.size_mb != null ? `${l.size_mb} MB` : ""}</span>
-        <input type="range" class="maplayer-opacity" min="0" max="1" step="0.05" value="${opacity}" data-provinsi="${escapeHtml(provinsi)}" data-kabupaten="${escapeHtml(kabupaten)}" data-layer="${escapeHtml(l.layer)}" title="Transparansi layer" ${isActive ? "" : "hidden"} />
-      `;
-      listEl.appendChild(row);
-    });
-  } catch (err) {
-    console.error(err);
-    if (requestId !== _mapLayerListRequestId) return;
-    listEl.innerHTML = `<div class="maplayer-loading">Gagal memuat daftar layer</div>`;
-  }
-}
-
 /* ---------- top-level toggle + layer show/hide ---------- */
 
 function bindMapLayerToggle() {
   const control = document.getElementById("mapLayerControl");
   const toggle = document.getElementById("mapLayerToggle");
   const panel = document.getElementById("mapLayerPanel");
-  const listEl = document.getElementById("mapLayerList");
+  const treeEl = document.getElementById("mapLayerTree");
 
   const closePanel = () => {
     panel.hidden = true;
     control.classList.remove("open");
-    closeAllMapLayerCombos();
   };
 
   toggle.addEventListener("click", async (e) => {
@@ -261,9 +329,9 @@ function bindMapLayerToggle() {
       closePanel();
       return;
     }
-    await refreshMapLayerProvinces();
-    await refreshMapLayerKabupaten();
-    await refreshMapLayerList();
+    // Rescan Maps/ tiap dibuka (sama spt combo lama) -- pohon dibangun ulang
+    // dari kosong, jadi expand/collapse sebelumnya tidak dipertahankan.
+    await loadMapLayerTree();
     panel.hidden = false;
     control.classList.add("open");
   });
@@ -277,7 +345,7 @@ function bindMapLayerToggle() {
     if (!panel.hidden && !control.contains(e.target)) closePanel();
   });
 
-  listEl.addEventListener("change", async (e) => {
+  treeEl.addEventListener("change", async (e) => {
     const cb = e.target.closest('input[type="checkbox"]');
     if (!cb) return;
     const { provinsi, kabupaten, layer } = cb.dataset;
@@ -293,7 +361,7 @@ function bindMapLayerToggle() {
     if (range) range.hidden = !cb.checked;
   });
 
-  listEl.addEventListener("input", (e) => {
+  treeEl.addEventListener("input", (e) => {
     const range = e.target.closest(".maplayer-opacity");
     if (!range) return;
     const { provinsi, kabupaten, layer } = range.dataset;
@@ -358,7 +426,7 @@ async function showMapLayer(provinsi, kabupaten, layer) {
     state.mapLayers.active[key] = data;
     state.mapLayers.meta[key] = { provinsi, kabupaten, layer };
     applyLayerStyle(key);
-    if (layer.startsWith("BATASKEC__")) updateKecamatanLintasan();
+    if (provinsi === "BATAS KECAMATAN") updateKecamatanLintasan();
     updateMapLegend();
 
     // Data ini biasanya di luar jendela peta yang sedang tampil (peta default
@@ -421,12 +489,13 @@ function _featureOuterRings(feature) {
 
 /* Tandai fitur layer BATAS KECAMATAN yang dilintasi rute usulan yang sedang
    tampil (properti DILINTASI_RUTE, dibaca applyLayerStyle & popup identify).
-   Dipanggil setiap rute usulan digambar/dihapus dan setiap layer BATASKEC
-   diaktifkan. */
+   Dipanggil setiap rute usulan digambar/dihapus dan setiap layer di bawah
+   provinsi bucket "BATAS KECAMATAN" diaktifkan (key = "BATAS KECAMATAN::<provinsi
+   asli>::<kabupaten/kota asli>", lihat mapLayerKey). */
 function updateKecamatanLintasan() {
   const pts = _routeSamplePoints();
   Object.entries(state.mapLayers.active).forEach(([key, data]) => {
-    if (!mapLayerRawName(key).startsWith("BATASKEC__")) return;
+    if (!key.startsWith("BATAS KECAMATAN::")) return;
     data.forEach((feature) => {
       let kena = false;
       if (pts.length) {

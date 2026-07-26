@@ -579,6 +579,52 @@ td.checklist-cell .ijd-badge { margin-right: 4px; }
 .maplayer-item-size { flex: 0 0 auto; color: var(--text-dim); font-size: 11px; }
 .maplayer-opacity { flex: 0 0 60px; width: 60px; accent-color: var(--primary); cursor: pointer; }
 
+/* Panel overlay peta versi tree (ArcGIS-style: kategori -> provinsi ->
+   kabupaten/kota -> layer, tiap tingkat expand lazy) -- lebih lebar/tinggi
+   drpd .maplayer-panel dasar (dulu cuma 2 combo + 1 list datar) karena
+   nestingnya lebih dalam. */
+.maplayer-panel-tree { width: 340px; max-height: 480px; }
+.maplayer-tree {
+  display: flex; flex-direction: column; gap: 1px; overflow-y: auto; flex: 1 1 auto;
+  scrollbar-width: thin; scrollbar-color: var(--primary) transparent; /* Firefox */
+}
+.maplayer-tree::-webkit-scrollbar { width: 8px; }
+.maplayer-tree::-webkit-scrollbar-track { background: rgba(255,255,255,.03); border-radius: 10px; margin: 2px; }
+.maplayer-tree::-webkit-scrollbar-thumb {
+  background: linear-gradient(180deg, var(--primary), var(--accent));
+  border-radius: 10px; border: 2px solid #232d52; background-clip: padding-box;
+}
+.maplayer-tree::-webkit-scrollbar-thumb:hover {
+  background: linear-gradient(180deg, var(--primary-dark), var(--accent));
+  background-clip: padding-box;
+}
+.maplayer-tree-node { display: flex; flex-direction: column; }
+.maplayer-tree-row {
+  display: flex; align-items: center; gap: 7px; padding: 7px 6px; border-radius: 7px;
+  font-size: 12.5px; color: var(--text); cursor: pointer; user-select: none;
+}
+.maplayer-tree-row:hover { background: rgba(79, 124, 255, 0.16); }
+.maplayer-tree-caret {
+  font-size: 9px; color: var(--text-dim); flex: 0 0 auto; width: 9px;
+  transition: transform .15s;
+}
+.maplayer-tree-node.open > .maplayer-tree-row .maplayer-tree-caret { transform: rotate(90deg); }
+.maplayer-tree-icon { font-size: 12px; color: var(--accent); flex: 0 0 auto; }
+.maplayer-tree-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.maplayer-tree-count {
+  flex: 0 0 auto; font-size: 10.5px; color: var(--text-dim);
+  background: rgba(255,255,255,.06); border-radius: 999px; padding: 1px 7px;
+}
+/* Indentasi bertingkat: tiap .maplayer-tree-children bersarang menambah
+   padding-left sendiri, jadi kedalaman otomatis mengikuti nesting DOM tanpa
+   perlu hitung level manual di JS. Garis tuntun kiri spt tree ArcGIS/VS Code. */
+.maplayer-tree-children {
+  display: flex; flex-direction: column; gap: 1px;
+  padding-left: 12px; margin-left: 5px; border-left: 1px solid var(--border);
+}
+.maplayer-tree-children[hidden] { display: none; }
+.maplayer-tree-children .maplayer-item { padding: 6px 6px 6px 3px; }
+
 /* Toggle tema gelap/terang -- floating di atas peta, di bawah kontrol native
    Google Map/Satellite (top-left), hanya tampil saat basemap = Google Maps
    (lihat applyBasemapProvider di map-bootstrap.js) karena tema cuma berlaku

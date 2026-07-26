@@ -26,9 +26,8 @@ from pydantic import BaseModel
 import geopandas as gpd
 import pandas as pd
 from pyproj import Geod
-import shapely.wkb
 import shapely.wkt
-from shapely.geometry import LineString, Point, mapping
+from shapely.geometry import LineString, Point
 from shapely.strtree import STRtree
 
 load_dotenv()
@@ -5538,15 +5537,30 @@ MAPS_DIR = BASE_DIR / "Maps"
 _map_layer_geojson_cache: dict = {}
 
 
-# --- Layer khusus: Maps/BATAS KECAMATAN (SHP batas kecamatan nasional
-# Dukcapil Des 2019, 6.810 poligon, 90MB). Atributnya HANYA nama kecamatan —
-# tanpa kolom provinsi/kabupaten — jadi hierarki pilih provinsi -> kabupaten
-# -> kecamatan dibangun dengan mencocokkan nama ke master penduduk_kecamatan
-# (±89% nama match unik; homonim nasional & beda pemekaran 2019/2025 ditandai).
-# Folder ini di-treat sebagai hierarki virtual di endpoint maps yang sudah
-# ada: dropdown "kabupaten" berisi provinsi Indonesia, daftar layer berisi
-# kabupaten (centang = tampilkan seluruh poligon kecamatannya; tiap poligon
-# membawa properti nama untuk identify/select).
+# --- Layer khusus: Maps/BATAS_ADMINISTRASI.gdb (layer ADMINISTRASI_KECAMATAN_AR
+# BIG, 7.283 poligon kecamatan definitif). Diimpor via
+# scripts/import_batas_administrasi_kecamatan.py, MENGGANTIKAN sumber lama
+# (SHP batas kecamatan nasional Dukcapil Des 2019, Maps/BATAS KECAMATAN/,
+# 6.810 poligon TANPA kolom provinsi/kabupaten — dulu perlu dicocokkan lewat
+# nama ke penduduk_kecamatan plus heuristik ketetanggaan utk kecamatan
+# homonim lintas daerah, lihat riwayat git kalau perlu referensi). Sumber
+# gdb ini sudah punya kolom provinsi/kabupaten/kecamatan ASLI per poligon,
+# jadi disimpan LANGSUNG sbg kolom kabupaten (=provinsi asli) dan layer
+# (=kabupaten/kota asli) di map_layers/map_layer_meta — bukan flat+attrs lagi
+# — sehingga endpoint /api/maps/* yang GENERIK (maps_provinces/kabupaten/
+# layers/layer di bawah) sudah otomatis melayani hierarki provinsi Indonesia
+# -> kabupaten/kota -> poligon kecamatan tanpa pencocokan nama runtime sama
+# sekali; tidak ada lagi cabang khusus BATAS_KEC_DIRNAME di endpoint2 itu.
+# Provinsi bucket teratas dipatok konstan "BATAS KECAMATAN" supaya topbar
+# picker tidak berubah bentuk (satu "provinsi" di picker = seluruh Indonesia,
+# lalu "kabupaten" di picker = 34 provinsi asli, lalu "layer" = kabupaten/kota).
+#
+# _batas_kec_shp() (SHP Dukcapil lama, dibaca langsung dari disk) TETAP ada
+# apa adanya — dipakai scripts/spatial_join_kecamatan*.py utk mengisi
+# usulan_inpres.kode_kecamatan/usulan_kecamatan_dilalui, jalur yang independen
+# dari map_layers/PostGIS dan sengaja TIDAK ikut diganti di sini (beda risiko:
+# itu memberi makan skor IJD nasional, ganti sumbernya perlu proses verifikasi
+# terpisah, bukan cuma tukar layer overlay peta).
 BATAS_KEC_DIRNAME = "BATAS KECAMATAN"
 _batas_kec_index_cache: Optional[dict] = None
 
@@ -5558,193 +5572,64 @@ def _batas_kec_shp() -> Optional[Path]:
     return next(iter(sorted(d.glob("*.shp"))), None)
 
 
-def _norm_nama_wilayah(s) -> str:
-    return " ".join(t for t in re.split(r"[^A-Z0-9]+", str(s).upper()) if t)
-
-
 def _batas_kec_index() -> dict:
-    """{provinsi: {kabupaten: [{kecamatan, kode_kecamatan, shp_nama|None,
-    homonim}]}} — dibangun sekali per proses (restart untuk file baru)."""
+    """{provinsi: {kabupaten_kota: [{kecamatan, kode_kecamatan}]}} — dibaca
+    langsung dari kolom kabupaten/layer di map_layers (bukan lagi fuzzy-match
+    nama runtime, lihat catatan di atas). Dipakai HANYA oleh
+    scripts/import_indeks_penanaman_raster.py sekarang (endpoint maps_*
+    di bawah sudah generik). Cache sekali per proses — restart server utk
+    lihat hasil impor ulang."""
     global _batas_kec_index_cache
     if _batas_kec_index_cache is not None:
         return _batas_kec_index_cache
-
     with db_cursor() as cur:
         cur.execute(
-            "SELECT DISTINCT attrs->>'KECAMATAN' AS kecamatan FROM map_layers WHERE provinsi=%s",
+            "SELECT kabupaten AS provinsi, layer AS kabupaten_kota, "
+            "attrs->>'KECAMATAN' AS kecamatan, (attrs->>'KODE_KECAMATAN')::int AS kode_kecamatan "
+            "FROM map_layers WHERE provinsi=%s",
             (BATAS_KEC_DIRNAME,),
         )
-        nama_kecamatan = [r["kecamatan"] for r in cur.fetchall() if r["kecamatan"]]
-    if not nama_kecamatan:
-        raise HTTPException(404, "Layer batas kecamatan belum diimpor ke PostGIS (map_layers)")
-    # Penyeteraan bilangan pada nama kecamatan: SHP memakai romawi ("ILIR
-    # BARAT I"), master memakai kata ("ILIR BARAT SATU") / angka arab; plus
-    # varian Minang ANAM=ENAM.
-    _ANGKA = {
-        "SATU": "I", "DUA": "II", "TIGA": "III", "EMPAT": "IV", "LIMA": "V",
-        "ENAM": "VI", "ANAM": "VI", "TUJUH": "VII", "DELAPAN": "VIII",
-        "SEMBILAN": "IX", "SEPULUH": "X", "1": "I", "2": "II", "3": "III",
-        "4": "IV", "5": "V", "6": "VI", "7": "VII", "8": "VIII", "9": "IX",
-        "10": "X",
-    }
-
-    def _kunci_longgar(norm_nama: str) -> str:
-        return "".join(_ANGKA.get(t, t) for t in norm_nama.split())
-
-    shp_nama = {}     # norm -> nama asli di shp
-    shp_compact = {}  # tanpa spasi -> {nama asli} (GUNUNG KENCANA vs GUNUNGKENCANA)
-    shp_angka = {}    # tanpa spasi + bilangan diseragamkan -> {nama asli} (ILIR BARAT SATU vs I)
-    for v in nama_kecamatan:
-        n = _norm_nama_wilayah(v)
-        shp_nama.setdefault(n, str(v))
-        shp_compact.setdefault(n.replace(" ", ""), set()).add(str(v))
-        shp_angka.setdefault(_kunci_longgar(n), set()).add(str(v))
-
-    def _cari_shp_nama(norm_nama: str):
-        """Cari nama poligon: persis dulu, lalu dua kunci longgar berurutan
-        (tanpa-spasi, lalu bilangan diseragamkan) bila hasilnya tunggal."""
-        hit = shp_nama.get(norm_nama)
-        if hit:
-            return hit
-        for idx, key in ((shp_compact, norm_nama.replace(" ", "")),
-                         (shp_angka, _kunci_longgar(norm_nama))):
-            loose = idx.get(key, set())
-            if len(loose) == 1:
-                return next(iter(loose))
-        return None
-
-    with db_cursor() as cur:
-        cur.execute(
-            "SELECT provinsi, kabupaten_kota, kode_kabupaten, kecamatan, kode_kecamatan "
-            "FROM penduduk_kecamatan ORDER BY provinsi, kabupaten_kota, kecamatan"
-        )
-        master = cur.fetchall()
-
-    from collections import Counter as _Counter
-    nama_count = _Counter(_norm_nama_wilayah(m["kecamatan"]) for m in master)
-
+        rows = cur.fetchall()
+    if not rows:
+        raise HTTPException(404, "Layer batas kecamatan belum diimpor ke PostGIS (map_layers) "
+                                  "— jalankan scripts/import_batas_administrasi_kecamatan.py")
     index: dict = {}
-    entries_flat = []
-    for m in master:
-        n = _norm_nama_wilayah(m["kecamatan"])
-        # nama master polos ("SERANG" bisa kabupaten ATAU kota) — beri prefiks
-        # dari konvensi kode BPS supaya keduanya tidak menyatu jadi satu entri
-        jenis = "KOTA" if m["kode_kabupaten"] % 100 >= 71 else "KAB."
-        kab_label = f"{jenis} {m['kabupaten_kota']}"
-        entry = {
-            "kecamatan": m["kecamatan"],
-            "kode_kecamatan": m["kode_kecamatan"],
-            "shp_nama": _cari_shp_nama(n),
-            "homonim": nama_count[n] > 1,
-        }
-        index.setdefault(m["provinsi"], {}).setdefault(kab_label, []).append(entry)
-        entries_flat.append(entry)
-
-    # Pass terakhir — fuzzy KONSERVATIF untuk beda ejaan/typo (CIGEMBLONG vs
-    # Cigemlong, TERISI vs Trisi, PALABUHANRATU vs Pelabuhanratu): hanya
-    # menjodohkan nama master yang belum match dengan poligon "yatim" (tidak
-    # diklaim pass manapun), dan hanya bila keduanya saling kandidat terbaik
-    # (mutual best, rasio >= 0.85) supaya tidak ada tebakan ganda.
-    import difflib
-    terpakai = {e["shp_nama"] for e in entries_flat if e["shp_nama"]}
-    orphan = {}  # kunci longgar -> nama asli shp
-    for n_shp, asli in shp_nama.items():
-        if asli not in terpakai:
-            orphan.setdefault(_kunci_longgar(n_shp), asli)
-    belum = {}   # kunci longgar master -> [entry]
-    for e in entries_flat:
-        if not e["shp_nama"]:
-            belum.setdefault(_kunci_longgar(_norm_nama_wilayah(e["kecamatan"])), []).append(e)
-
-    orphan_keys, belum_keys = list(orphan), list(belum)
-    for b in belum_keys:
-        best = difflib.get_close_matches(b, orphan_keys, n=1, cutoff=0.85)
-        if not best:
-            continue
-        o = best[0]
-        balik = difflib.get_close_matches(o, belum_keys, n=1, cutoff=0.85)
-        if balik and balik[0] == b and o in orphan:
-            for e in belum[b]:
-                e["shp_nama"] = orphan.pop(o)
-
+    for r in rows:
+        index.setdefault(r["provinsi"], {}).setdefault(r["kabupaten_kota"], []).append(
+            {"kecamatan": r["kecamatan"], "kode_kecamatan": r["kode_kecamatan"]}
+        )
     _batas_kec_index_cache = index
     return index
 
 
 def _batas_kec_layer_geojson(prov: str, kab: str) -> dict:
+    """FeatureCollection poligon kecamatan definitif satu kabupaten/kota.
+    Dipakai HANYA oleh scripts/import_indeks_penanaman_raster.py (endpoint
+    maps_layer() di bawah sudah generik lewat map_layers/map_layer_meta
+    langsung). Query SQL biasa via ST_AsGeoJSON — BUKAN lagi WKB+shapely
+    dengan heuristik pemilihan bagian poligon homonim spt versi lama: sumber
+    gdb ini sudah punya kolom provinsi/kabupaten per poligon jadi tidak ada
+    lagi homonim lintas daerah yang perlu dipilah."""
     index = _batas_kec_index()
-    entries = index.get(prov, {}).get(kab)
-    if entries is None:
-        raise HTTPException(404, "Provinsi/kabupaten tidak dikenal di master wilayah")
-
-    by_shp_nama = {e["shp_nama"]: e for e in entries if e["shp_nama"]}
-    tanpa_poligon = [e["kecamatan"] for e in entries if not e["shp_nama"]]
-    if not by_shp_nama:
-        raise HTTPException(404, "Tidak ada poligon kecamatan yang cocok nama untuk kabupaten ini")
-
+    if prov not in index or kab not in index[prov]:
+        raise HTTPException(404, "Provinsi/kabupaten tidak dikenal di layer batas kecamatan")
     with db_cursor() as cur:
-        # ST_AsBinary + shapely.wkb.loads, BUKAN ST_AsGeoJSON + shapely
-        # shape(dict): shape() pada MultiPolygon di kombinasi shapely/numpy
-        # sini gagal (TypeError create_collection tidak didukung utk
-        # coordinates berupa list Python) — bug yang sama persis dgn yang
-        # dihindari _geojson_line_to_shapely lewat WKT; di sini via WKB.
         cur.execute(
-            "SELECT attrs->>'KECAMATAN' AS kecamatan, ST_AsBinary(geom) AS geom "
-            "FROM map_layers WHERE provinsi=%s AND attrs->>'KECAMATAN' = ANY(%s)",
-            (BATAS_KEC_DIRNAME, list(by_shp_nama)),
+            """SELECT jsonb_build_object(
+                    'type', 'FeatureCollection',
+                    'features', COALESCE(jsonb_agg(jsonb_build_object(
+                        'type', 'Feature',
+                        'geometry', ST_AsGeoJSON(geom)::jsonb,
+                        'properties', attrs
+                    )), '[]'::jsonb)
+                ) AS fc
+               FROM map_layers WHERE provinsi=%s AND kabupaten=%s AND layer=%s""",
+            (BATAS_KEC_DIRNAME, prov, kab),
         )
-        poligon = [(r["kecamatan"], shapely.wkb.loads(bytes(r["geom"]))) for r in cur.fetchall()]
-
-    # Poligon kecamatan HOMONIM di SHP sumber tergabung jadi satu MultiPolygon
-    # lintas daerah (file tanpa kolom wilayah). Kecamatan dalam satu kabupaten
-    # saling berbatasan, jadi bagian yang benar dipilih lewat ketetanggaan:
-    # bagian yang berjarak > ±1 km dari semua poligon non-homonim kabupaten
-    # ini dibuang; bila tak ada yang dekat, ambil bagian terdekat saja.
-    # (Sengaja tanpa unary_union/MultiPolygon(list) — kombinasi shapely/numpy
-    # di sini gagal membuat koleksi dari list Python, lihat
-    # _geojson_line_to_shapely.)
-    anchor_geoms = [geom for nama, geom in poligon
-                    if (e := by_shp_nama.get(nama)) and not e["homonim"]]
-
-    features = []
-    for nama, geom in poligon:
-        e = by_shp_nama.get(nama)
-        geom_json, catatan = mapping(geom), None
-        if e and e["homonim"]:
-            if anchor_geoms and geom.geom_type == "MultiPolygon":
-                parts = [p for p in geom.geoms
-                         if any(p.distance(a) < 0.01 for a in anchor_geoms)]
-                if not parts:
-                    parts = [min(geom.geoms,
-                                 key=lambda p: min(p.distance(a) for a in anchor_geoms))]
-                if len(parts) == 1:
-                    geom_json = mapping(parts[0])
-                else:
-                    geom_json = {"type": "MultiPolygon",
-                                 "coordinates": [mapping(p)["coordinates"] for p in parts]}
-                catatan = ("Nama kecamatan homonim nasional — bagian poligon yang jauh dari "
-                           "kabupaten ini disembunyikan (heuristik ketetanggaan; SHP Dukcapil "
-                           "2019 tanpa kolom wilayah).")
-            else:
-                catatan = ("Nama kecamatan homonim nasional — poligon bisa mencakup kecamatan "
-                           "senama di daerah lain (SHP Dukcapil 2019 tanpa kolom wilayah).")
-        features.append({
-            "type": "Feature",
-            "geometry": geom_json,
-            "properties": {
-                "KECAMATAN": nama,
-                "KABUPATEN_KOTA": kab,
-                "PROVINSI": prov,
-                "KODE_KECAMATAN": e["kode_kecamatan"] if e else None,
-                "CATATAN": catatan,
-            },
-        })
-    return {
-        "label": f"Batas Kecamatan — {kab} ({prov})",
-        "type": "FeatureCollection",
-        "features": features,
-        "kecamatan_tanpa_poligon": tanpa_poligon,
-    }
+        geojson = cur.fetchone()["fc"]
+    geojson["label"] = f"Batas Kecamatan — {kab} ({prov})"
+    geojson["kecamatan_tanpa_poligon"] = []
+    return geojson
 
 
 # Join atribut poligon kecamatan (identify di overlay BATAS KECAMATAN) ke
@@ -5818,25 +5703,11 @@ def maps_provinces():
             "FROM map_layer_meta GROUP BY provinsi ORDER BY provinsi"
         )
         rows = cur.fetchall()
-    out = []
-    for r in rows:
-        count = r["kabupaten_count"]
-        if r["provinsi"] == BATAS_KEC_DIRNAME:
-            # hierarki virtual: "kabupaten_count" sebenarnya = jumlah provinsi
-            # Indonesia dari master, bukan 1 baris map_layer_meta di atas
-            # (satu SHP nasional flat, lihat _batas_kec_index()).
-            count = len(_batas_kec_index())
-        out.append({"provinsi": r["provinsi"], "kabupaten_count": count})
-    return out
+    return [{"provinsi": r["provinsi"], "kabupaten_count": r["kabupaten_count"]} for r in rows]
 
 
 @app.get("/api/maps/kabupaten")
 def maps_kabupaten(provinsi: str):
-    if provinsi == BATAS_KEC_DIRNAME:
-        # hierarki virtual: "kabupaten" = provinsi Indonesia dari master
-        index = _batas_kec_index()
-        return [{"kabupaten": p, "label": p, "layer_count": len(kabs)}
-                for p, kabs in sorted(index.items())]
     with db_cursor() as cur:
         cur.execute(
             "SELECT kabupaten, COUNT(*) AS layer_count FROM map_layer_meta "
@@ -5856,21 +5727,6 @@ def maps_kabupaten(provinsi: str):
 
 @app.get("/api/maps/layers")
 def maps_layers(provinsi: str, kabupaten: str = ""):
-    if provinsi == BATAS_KEC_DIRNAME:
-        # hierarki virtual: layer = kabupaten/kota berisi poligon kecamatannya
-        index = _batas_kec_index()
-        kabs = index.get(kabupaten)
-        if kabs is None:
-            raise HTTPException(404, "Provinsi tidak dikenal di master wilayah")
-        out = []
-        for kab, entries in sorted(kabs.items()):
-            ada = sum(1 for e in entries if e["shp_nama"])
-            out.append({
-                "layer": f"BATASKEC__{kabupaten}__{kab}",
-                "label": f"{kab} ({ada}/{len(entries)} kecamatan)",
-                "size_mb": None,
-            })
-        return out
     with db_cursor() as cur:
         cur.execute(
             "SELECT layer, label, size_mb FROM map_layer_meta "
@@ -5899,15 +5755,6 @@ def maps_layer(provinsi: str, layer: str, kabupaten: str = ""):
     key = (provinsi, kabupaten, layer)
     if key in _map_layer_geojson_cache:
         return JSONResponse(content=_map_layer_geojson_cache[key], headers=_MAP_LAYER_CACHE_HEADERS)
-
-    if provinsi == BATAS_KEC_DIRNAME and layer.startswith("BATASKEC__"):
-        try:
-            _, prov, kab = layer.split("__", 2)
-        except ValueError:
-            raise HTTPException(400, "Layer batas kecamatan tidak valid")
-        geojson = _batas_kec_layer_geojson(prov, kab)
-        _map_layer_geojson_cache[key] = geojson
-        return JSONResponse(content=geojson, headers=_MAP_LAYER_CACHE_HEADERS)
 
     with db_cursor() as cur:
         cur.execute(

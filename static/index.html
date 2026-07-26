@@ -46,27 +46,16 @@
             <span id="mapLayerLabel">Overlay Peta</span>
             <i class="bi bi-chevron-down"></i>
           </button>
-          <div class="maplayer-panel" id="mapLayerPanel" hidden>
+          <div class="maplayer-panel maplayer-panel-tree" id="mapLayerPanel" hidden>
             <div class="maplayer-panel-header">
               <span>Overlay Peta</span>
               <button type="button" class="maplayer-close" id="mapLayerClose" aria-label="Tutup panel overlay"><i
                   class="bi bi-x-lg"></i></button>
             </div>
-            <div class="maplayer-combo" id="mapLayerProvinsiField">
-              <button type="button" class="maplayer-combo-toggle" id="mapLayerProvinsiToggle">
-                <span id="mapLayerProvinsiLabel">Pilih provinsi...</span>
-                <i class="bi bi-chevron-down"></i>
-              </button>
-              <div class="maplayer-combo-panel" id="mapLayerProvinsiPanel" hidden></div>
-            </div>
-            <div class="maplayer-combo" id="mapLayerKabupatenField">
-              <button type="button" class="maplayer-combo-toggle" id="mapLayerKabupatenToggle">
-                <span id="mapLayerKabupatenLabel">Pilih kabupaten...</span>
-                <i class="bi bi-chevron-down"></i>
-              </button>
-              <div class="maplayer-combo-panel" id="mapLayerKabupatenPanel" hidden></div>
-            </div>
-            <div class="maplayer-list" id="mapLayerList"></div>
+            <!-- Tree ArcGIS-style: kategori (Jalan/Batas Administrasi/Simpul
+                 Transportasi) -> provinsi -> kabupaten/kota -> layer (checkbox),
+                 tiap tingkat di-expand lazy oleh maps-overlay.js. -->
+            <div class="maplayer-tree" id="mapLayerTree"></div>
           </div>
         </div>
         <div class="topbar-datatable" id="dataTableControl">

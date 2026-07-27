@@ -311,6 +311,32 @@ Deps: `requirements.txt`, venv at `.venv/` (already gitignored).
   24 Jul 2026: default-UA request → `403`, browser-UA request → `200`).
   The "Tab Baru" button still links directly to BPS (a top-level navigation
   behaves like a normal browser request, so it doesn't hit this issue).
+- `GET /api/bps-subjek/{subcat,subject,var,{var_id}/tahun,{var_id}/turvar,
+  {var_id}/turth,{var_id}/data}` — "Data per Subjek" tab inside the same
+  Dalam Angka panel (still `dalam-angka.js`, not a separate frontend file):
+  live drill-down through BPS's own subjek→subject→variabel→tahun hierarchy
+  via the Web API dynamic-table model (`_bps_api_get`/`_bps_api_list_all` in
+  app.py), independent of the `dalam_angka_publikasi` PDF catalog above.
+  Requires `BPS_API_KEY` (503 without it). List responses (`subcat`/
+  `subject`/`var`/`tahun`/`turvar`/`turth`) are cached forever in-memory per
+  cache key (`_bps_subjek_cache`, restart to refresh); only the final
+  `.../data` values call is uncached, since it's parameterized by the
+  user's tahun/turvar/turth picks. `vervar.label` from BPS sometimes wraps
+  province-level rows in `<b>` when one variable mixes provinsi and
+  kab/kota granularity in the same table — `_bps_clean_wilayah_label`
+  strips the tag and turns it into an `is_provinsi` flag rather than
+  showing literal `<b>` text (frontend already HTML-escapes labels, so raw
+  tags would otherwise render as visible markup, not bold).
+- `GET /api/data/geo/provinces` / `GET /api/data/geo/kabupaten` — provinsi/
+  kabupaten master (from `penduduk_kecamatan`, full national coverage) that
+  drives the region-filter dropdowns in the generic "Data" table viewer
+  (`DATA_TABLE_GEO`), separate from the IJD-specific
+  `/api/usulan-inpres/provinsi` / `.../kabupaten` used by the usulan browse
+  panel.
+- `GET /api/usulan-inpres/{id}/dalam-angka` — resolves an usulan's
+  kabupaten/kota to its BPS "Dalam Angka" publication link, so the usulan
+  detail panel can offer a direct jump into the Dalam Angka viewer instead
+  of the user having to search by region name themselves.
 - `POST /api/penduduk-kecamatan/import` / `GET .../export/xlsx` — BPS
   population-per-kecamatan master (also loadable via the CLI script).
 - `POST /api/chat` — chat assistant, logic lives in `chat_providers.py`

@@ -13,6 +13,7 @@ endpoint /api/chat, jadi modul ini tidak boleh mengimpor app.py di top-level.
 """
 import json
 import os
+import re
 from typing import List, Optional
 
 import anthropic
@@ -20,6 +21,8 @@ import requests
 from fastapi import HTTPException
 from fastapi.encoders import jsonable_encoder
 from pyproj import Geod
+
+from db import db_cursor  # aman diimpor top-level -- db.py tidak bergantung pada app.py/modul ini
 
 _GEOD = Geod(ellps="WGS84")
 
@@ -47,6 +50,12 @@ Gunakan data ini untuk menjawab. Bila pengguna bertanya tentang usulan Inpres di
 detail_usulan_inpres untuk mengambil data terbaru dari database — jangan mengarang data. Bila pengguna bertanya \
 soal geometri KML riil suatu usulan (panjang aktual, jumlah segmen, apakah cocok dengan data atribut \
 panjang_ruas_km), gunakan fungsi analisa_geometri_kml_usulan. \
+Untuk pertanyaan analitis/lintas tabel yang tidak tercakup fungsi-fungsi di atas (skor IJD, data BPS, \
+kawasan tematik, agregasi/perbandingan antar wilayah, dsb.), Anda punya akses BACA-SAJA ke SELURUH tabel \
+database lewat fungsi jalankan_query_sql (SELECT SQL bebas, hasil dibatasi 200 baris) — panggil \
+daftar_tabel_database dulu kalau belum yakin nama tabel/kolom yang tepat, jangan menebak nama kolom. \
+Hanya query baca yang bisa dijalankan (sistem menolak INSERT/UPDATE/DELETE/DDL apa pun bentuknya) — kalau \
+pengguna minta mengubah data, jelaskan itu tidak bisa dilakukan lewat chat ini. \
 Klasifikasi jalan OSM adalah perkiraan, bukan data resmi PUPR."""
 
 CHAT_SEARCH_AVAILABLE_NOTE = (
@@ -113,6 +122,46 @@ CHAT_TOOLS = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "daftar_tabel_database",
+            "description": (
+                "Melihat skema database: tanpa argumen, mengembalikan daftar SEMUA tabel yang ada. "
+                "Dengan argumen 'tabel', mengembalikan daftar kolom (nama + tipe data) tabel itu. "
+                "WAJIB dipanggil dulu (kalau belum tahu nama tabel/kolom yang tepat) sebelum "
+                "jalankan_query_sql, supaya query yang disusun memakai nama tabel/kolom yang benar-benar ada."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "tabel": {"type": "string", "description": "Nama tabel spesifik (opsional) untuk melihat daftar kolomnya"},
+                },
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "jalankan_query_sql",
+            "description": (
+                "Menjalankan SATU query SQL baca-saja (SELECT, boleh dgn CTE/WITH, JOIN, agregasi "
+                "GROUP BY/COUNT/SUM/AVG dst.) langsung ke database PostgreSQL — dipakai untuk pertanyaan "
+                "analitis lintas tabel yang tidak tercakup fungsi lain (mis. \"kabupaten mana yang skor "
+                "IJD rata-ratanya tertinggi\", \"berapa total penduduk kecamatan yang dilintasi usulan "
+                "provinsi X\"). Panggil daftar_tabel_database dulu kalau belum yakin nama tabel/kolomnya. "
+                "HANYA SELECT yang diizinkan (INSERT/UPDATE/DELETE/DDL akan ditolak sistem); hasil dibatasi "
+                "200 baris pertama — tambahkan LIMIT/agregasi di query kalau butuh ringkasan, bukan data mentah."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "sql": {"type": "string", "description": "Satu statement SQL SELECT (boleh diawali WITH)"},
+                },
+                "required": ["sql"],
+            },
+        },
+    },
 ]
 
 _USULAN_TOOL_FIELDS = (
@@ -174,10 +223,94 @@ def _tool_analisa_geometri_kml_usulan(id=None) -> dict:
     }
 
 
+# --- Akses SQL baca-saja lintas SEMUA tabel (permintaan user 27 Jul 2026,
+# menggantikan batasan lama "tidak ada SQL bebas dari model" -- lihat
+# docs/ARCHITECTURE.md kalau butuh riwayat keputusan sebelumnya). Dua lapis
+# pertahanan, BUKAN cuma satu:
+#   1. Validasi teks (_validasi_sql_readonly): tolak lebih dari satu
+#      statement, tolak apa pun yang bukan diawali SELECT/WITH, tolak kata
+#      kunci tulis/DDL eksplisit.
+#   2. BACKSTOP SESUNGGUHNYA -- "SET TRANSACTION READ ONLY" di level
+#      PostgreSQL sebelum query dijalankan: menolak SEMUA statement tulis di
+#      dalam transaksi itu APA PUN bentuknya, termasuk trik yang lolos dari
+#      pass (1) spt CTE data-modifying ("WITH x AS (DELETE FROM t RETURNING
+#      *) SELECT * FROM x" -- valid dimulai dgn WITH, tanpa kata kunci
+#      terlarang di awal karena DELETE ada di tengah tapi TETAP tertangkap
+#      regex _SQL_KEYWORD_TERLARANG; walau begitu READ ONLY transaction
+#      adalah jaring pengaman yang independen dari kelengkapan regex).
+_SQL_MAX_ROWS = 200
+_SQL_TIMEOUT_MS = 8000
+_SQL_KEYWORD_TERLARANG = re.compile(
+    r"\b(INSERT|UPDATE|DELETE|DROP|ALTER|TRUNCATE|CREATE|GRANT|REVOKE|COPY|CALL|VACUUM|REINDEX|MERGE|EXECUTE)\b",
+    re.IGNORECASE,
+)
+
+
+def _validasi_sql_readonly(sql: str) -> Optional[str]:
+    s = (sql or "").strip()
+    if not s:
+        return "Query kosong."
+    inti = s[:-1].strip() if s.endswith(";") else s
+    if ";" in inti:
+        return "Hanya satu statement SQL per panggilan (tidak boleh ada titik koma di tengah)."
+    if not re.match(r"(?is)^\s*(SELECT|WITH)\b", inti):
+        return "Hanya SELECT (atau WITH ... SELECT) yang diizinkan."
+    if _SQL_KEYWORD_TERLARANG.search(inti):
+        return "Kata kunci yang tidak diizinkan terdeteksi (hanya query baca yang boleh)."
+    return None
+
+
+def _tool_daftar_tabel_database(tabel=None) -> dict:
+    with db_cursor() as cur:
+        if tabel:
+            cur.execute(
+                "SELECT column_name, data_type FROM information_schema.columns "
+                "WHERE table_schema='public' AND table_name=%s ORDER BY ordinal_position",
+                (tabel,),
+            )
+            kolom = cur.fetchall()
+            if not kolom:
+                return {"error": f"Tabel '{tabel}' tidak ditemukan (cek ejaan lewat daftar_tabel_database tanpa argumen)"}
+            return {"tabel": tabel, "kolom": [{"nama": c["column_name"], "tipe": c["data_type"]} for c in kolom]}
+        cur.execute(
+            "SELECT table_name FROM information_schema.tables "
+            "WHERE table_schema='public' AND table_type='BASE TABLE' ORDER BY table_name"
+        )
+        return {"tabel": [r["table_name"] for r in cur.fetchall()]}
+
+
+def _tool_jalankan_query_sql(sql=None) -> dict:
+    error = _validasi_sql_readonly(sql or "")
+    if error:
+        return {"error": error}
+    inti = sql.strip().rstrip(";")
+    try:
+        with db_cursor() as cur:
+            cur.execute("SET TRANSACTION READ ONLY")
+            cur.execute(f"SET LOCAL statement_timeout = {_SQL_TIMEOUT_MS}")
+            cur.execute(inti)
+            if cur.description is None:
+                return {"error": "Query tidak mengembalikan baris (bukan SELECT?)"}
+            rows = cur.fetchmany(_SQL_MAX_ROWS + 1)
+    except Exception as e:
+        return {"error": f"Query gagal: {e}"}
+    terpotong = len(rows) > _SQL_MAX_ROWS
+    rows = rows[:_SQL_MAX_ROWS]
+    columns = list(rows[0].keys()) if rows else []
+    return {
+        "columns": columns,
+        "rows": [jsonable_encoder(dict(r)) for r in rows],
+        "jumlah_baris": len(rows),
+        "dipotong_sampai_200_baris": terpotong,
+    }
+
+
 CHAT_TOOL_DISPATCH = {
     "cari_usulan_inpres": _tool_cari_usulan_inpres,
     "detail_usulan_inpres": _tool_detail_usulan_inpres,
     "analisa_geometri_kml_usulan": _tool_analisa_geometri_kml_usulan,
+    "daftar_tabel_database": _tool_daftar_tabel_database,
+    "jalankan_query_sql": _tool_jalankan_query_sql,
 }
 
 

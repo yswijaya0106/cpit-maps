@@ -313,13 +313,30 @@ Deps: `requirements.txt`, venv at `.venv/` (already gitignored).
   behaves like a normal browser request, so it doesn't hit this issue).
 - `POST /api/penduduk-kecamatan/import` / `GET .../export/xlsx` — BPS
   population-per-kecamatan master (also loadable via the CLI script).
-- `POST /api/chat` — chat assistant. Providers are tried in order
+- `POST /api/chat` — chat assistant, logic lives in `chat_providers.py`
+  (route/dispatch stays in app.py). Providers are tried in order
   Groq → Grok → OpenAI → Claude → Gemini depending on which API keys exist.
-  The model gets a compact context of the currently viewed route plus three
-  read-only tools (`CHAT_TOOLS`: search/detail/KML-geometry of usulan) that
-  call existing parameterized-query helpers — **never give the model free-form
-  SQL**. OpenAI additionally gets `web_search_preview`; the system prompt
-  tells the model whether web search is available.
+  The model gets a compact context of the currently viewed route plus five
+  tools (`CHAT_TOOLS`): three fixed read-only helpers
+  (search/detail/KML-geometry of usulan, calling existing parameterized-query
+  functions) **plus** (added 27 Jul 2026, explicit user request superseding
+  the old "never give the model free-form SQL" stance) `daftar_tabel_database`
+  (schema introspection: list tables, or columns of one table) and
+  `jalankan_query_sql` (arbitrary single-statement `SELECT`/`WITH` across
+  every table in `public`, capped at 200 rows, 8s `statement_timeout`).
+  `jalankan_query_sql` is genuinely free-form SQL, not a query builder — the
+  safety model is two independent layers, not "trust the regex": (1) text
+  validation rejects multiple statements and any DDL/DML keyword anywhere in
+  the string (`_SQL_KEYWORD_TERLARANG`), but (2) the real backstop is
+  `SET TRANSACTION READ ONLY` issued before the query runs, which PostgreSQL
+  itself enforces against every write path — including a data-modifying CTE
+  smuggled inside a syntactically-SELECT statement (`WITH x AS (DELETE ...
+  RETURNING *) SELECT * FROM x`) that would slip past a keyword-only filter.
+  Verified directly: same statement run without the keyword-regex layer still
+  gets rejected by Postgres with `ReadOnlySqlTransaction`. Don't remove the
+  `SET TRANSACTION READ ONLY` call thinking the regex alone is sufficient.
+  OpenAI additionally gets `web_search_preview`; the system prompt tells the
+  model whether web search is available.
 - `GET /api/maps/provinces` / `GET /api/maps/kabupaten` / `GET /api/maps/layers`
   / `GET /api/maps/layer` — drive the topbar reference-map overlay. **As of
   24 Jul 2026 these query PostGIS (`map_layers`/`map_layer_meta` tables,

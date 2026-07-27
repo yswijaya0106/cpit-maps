@@ -1087,6 +1087,54 @@ def _ijd_score_kemantapan(row: dict, rules: dict, ctx: dict = None) -> dict:
     }
 
 
+def _ijd_score_kemantapan_v2(row: dict, rules: dict, ctx: dict = None) -> dict:
+    """Varian ALTERNATIF parameter B (Kondisi Kemantapan Eksisting Ruas),
+    BUKAN pengganti _ijd_score_kemantapan (yang resmi dipakai
+    _IJD_SCORERS) -- fungsi terpisah, tidak didaftarkan ke _IJD_SCORERS,
+    dibuat 27 Jul 2026 utk menguji formula persis yang tertulis di
+    docs/docs/27.7.26 KERANGKA PENGGUNAAN DATA UNTUK APLIKASI CPIT.xlsx
+    sheet "Penilaian Teknokratis" baris B ("(panjang baik + panjang
+    sedang) / panjang ruas total x 100").
+
+    Beda satu-satunya dari _ijd_score_kemantapan: penyebutnya
+    `panjang_ruas_km` (atribut ruas resmi dari SITIA), BUKAN
+    `kondisi_baik_km + kondisi_sedang_km + kondisi_ringan_km +
+    kondisi_berat_km` (jumlah 4 kolom kondisi apa adanya). Pola & alasan
+    penyebut ini SAMA PERSIS dgn `_kemantapan_ruas_fakta` (diputuskan 21
+    Jul 2026 atas permintaan user: panjang_ruas_km jauh lebih konsisten
+    drpd alternatif lain yang pernah dicoba, cuma ~2,9% baris yg >100%
+    mentah). Dicek 27 Jul 2026 di seluruh data nasional: 31/2.635 usulan
+    (1,2%) berpindah kelas MANTAP<->TIDAK_MANTAP dibanding
+    _ijd_score_kemantapan, dan 43/2.635 (1,6%) menghasilkan pct >100%
+    mentah (di-clamp ke 100 di sini, pola sama dgn _kemantapan_ruas_fakta)
+    -- lihat docs/analisa_kerangka_penggunaan_data_cpit_270726.md §6.
+
+    Dibiarkan terpisah (bukan menggantikan B resmi) krn baris contoh di
+    kerangka CPIT itu sendiri ambigu (lihat dokumen kajian) -- belum ada
+    konfirmasi pemilik kaidah bahwa penyebut ini seharusnya menggantikan
+    formula resmi saat ini."""
+    rule = rules.get("B")
+    if not rule:
+        return {"tersedia": False, "keterangan": "Kaidah kemantapan belum diset di database."}
+    if "pembangunan" in (row.get("jenis_penanganan") or "").lower():
+        sub = rule["subs"]["PEMBANGUNAN"]
+        return {"tersedia": True, "nilai": sub["nilai"], "keterangan": sub["label"]}
+
+    baik = row.get("kondisi_baik_km")
+    sedang = row.get("kondisi_sedang_km")
+    panjang_ruas = row.get("panjang_ruas_km")
+    if baik is None or sedang is None or not panjang_ruas or float(panjang_ruas) <= 0:
+        return {"tersedia": False, "keterangan": "Data kondisi ruas (baik/sedang) atau panjang_ruas_km belum diisi."}
+
+    pct_mantap = min(100.0, (float(baik) + float(sedang)) / float(panjang_ruas) * 100)
+    sub = rule["subs"]["TIDAK_MANTAP" if pct_mantap < 60 else "MANTAP"]
+    return {
+        "tersedia": True,
+        "nilai": sub["nilai"],
+        "keterangan": f"{sub['label']} (kemantapan eksisting {pct_mantap:.1f}%, formula alternatif kerangka CPIT 27.7.26 — penyebut panjang_ruas_km).",
+    }
+
+
 def _ijd_score_koridor(row: dict, rules: dict, ctx: dict = None) -> dict:
     rule = rules.get("D")
     if not rule:
@@ -1407,6 +1455,542 @@ def _ijd_score_kemanfaatan(row: dict, rules: dict, ctx: dict = None) -> dict:
     if not ada_sub:
         return {"tersedia": False, "keterangan": "; ".join(detail) + "."}
     return {"tersedia": True, "nilai": nilai, "keterangan": "; ".join(detail) + "."}
+
+
+def _c1_kuadran_penduduk_ctx() -> dict:
+    """Batch min/max jumlah_penduduk PER PROVINSI dari kecamatan_data_turunan,
+    dipakai _ijd_score_kemanfaatan_c1_v2 -- satu query utk semua provinsi
+    drpd query per usulan (pola sama dgn ctx _ijd_score_bulk_rows).
+    Dihitung ULANG setiap kali dipanggil (bukan konstanta tersimpan) --
+    lihat catatan stabilitas di docstring fungsi scorer-nya."""
+    with db_cursor() as cur:
+        cur.execute(
+            "SELECT kode_kabupaten / 100 AS kode_provinsi, "
+            "MIN(jumlah_penduduk) AS mn, MAX(jumlah_penduduk) AS mx "
+            "FROM kecamatan_data_turunan WHERE jumlah_penduduk IS NOT NULL "
+            "GROUP BY kode_kabupaten / 100"
+        )
+        return {r["kode_provinsi"]: (r["mn"], r["mx"]) for r in cur.fetchall()}
+
+
+def _ijd_score_kemanfaatan_c1_v2(row: dict, ctx: dict = None) -> dict:
+    """Varian ALTERNATIF sub-parameter C.A1 (Jumlah Penduduk), BUKAN
+    pengganti _ijd_score_kemanfaatan (yang resmi dipakai _IJD_SCORERS) --
+    fungsi terpisah, dibuat 27 Jul 2026 menguji metode "kuadran equal-
+    interval per provinsi" yang tertulis di docs/docs/27.7.26 KERANGKA
+    PENGGUNAAN DATA UNTUK APLIKASI CPIT.xlsx sheet "Penilaian
+    Teknokratis" baris C1 ("Equal Interval Range dibagi rata jadi 4 (25,
+    50, 75, 100)"), BUKAN 4 ambang kepadatan tetap Tabel 4 PDF
+    (>1000/500-1000/100-500/<100 jiwa/km2) yang dipakai
+    _ijd_score_kemanfaatan saat ini -- beda metrik juga: JUMLAH PENDUDUK
+    mentah per kecamatan (bukan KEPADATAN per km2).
+
+    Kuadran dihitung dari MIN-MAX jumlah_penduduk seluruh kecamatan DALAM
+    PROVINSI yang sama (bukan nasional) -- range dibagi 4 bagian sama
+    besar: kuadran 1 = [min, min+range/4] -> 25, kuadran 2 = (kuadran1,
+    min+range/2] -> 50, kuadran 3 = (kuadran2, min+3*range/4] -> 75,
+    kuadran 4 = (kuadran3, max] -> 100.
+
+    **Catatan stabilitas (temuan dari contoh kerja user, screenshot
+    27 Jul 2026)**: batas kuadran BUKAN konstanta -- selalu dihitung
+    ULANG dari min/max TERKINI (`_c1_kuadran_penduduk_ctx`, query live,
+    tidak di-cache lintas panggilan). Ini berarti skor kecamatan A bisa
+    BERUBAH semata krn kecamatan LAIN di provinsi yang sama mendapat data
+    penduduk baru yang mengubah min/max (mis. contoh user: menambah 1
+    baris populasi 1.200.000 saat max sebelumnya cuma 1.000.000 akan
+    menggeser SELURUH batas kuadran provinsi itu, bukan cuma kecamatan
+    baru itu sendiri) -- beda fundamental dari ambang tetap Tabel 4 PDF
+    yang stabil lintas waktu. Ini bukan bug implementasi, tapi
+    konsekuensi inheren metode "kuadran relatif" itu sendiri -- perlu
+    disadari sebelum dipakai utk skoring resmi (skor bisa "melayang"
+    tanpa perubahan data usulan itu sendiri).
+
+    None/tersedia=False kalau kecamatan usulan tidak diketahui atau
+    datanya kosong."""
+    kode_kec = row.get("kode_kecamatan")
+    if not kode_kec:
+        return {"tersedia": False, "keterangan": "Usulan belum dihubungkan ke kecamatan (kode_kecamatan kosong)."}
+
+    kode_prov = kode_kec // 100000
+    range_prov = (ctx or {}).get("c1_kuadran_by_provinsi", {}).get(kode_prov) if ctx else None
+    if range_prov is None and not (ctx and "c1_kuadran_by_provinsi" in ctx):
+        range_prov = _c1_kuadran_penduduk_ctx().get(kode_prov)
+    if not range_prov:
+        return {"tersedia": False, "keterangan": f"Rentang jumlah penduduk provinsi (kode {kode_prov}) belum tersedia."}
+
+    mn, mx = float(range_prov[0]), float(range_prov[1])
+    with db_cursor() as cur:
+        cur.execute(
+            "SELECT jumlah_penduduk FROM kecamatan_data_turunan WHERE kode_kecamatan = %s "
+            "ORDER BY tahun DESC LIMIT 1",
+            (kode_kec,),
+        )
+        r = cur.fetchone()
+    if not r or r["jumlah_penduduk"] is None:
+        return {"tersedia": False, "keterangan": "Jumlah penduduk kecamatan usulan ini belum tersedia."}
+
+    populasi = float(r["jumlah_penduduk"])
+    rentang = mx - mn
+    if rentang <= 0:
+        # Semua kecamatan provinsi ini py populasi sama (rentang 0) --
+        # tidak ada kuadran yang bermakna, taruh semua di kuadran 1.
+        nilai, kuadran = 25.0, 1
+    else:
+        posisi = (populasi - mn) / rentang
+        if posisi <= 0.25:
+            nilai, kuadran = 25.0, 1
+        elif posisi <= 0.5:
+            nilai, kuadran = 50.0, 2
+        elif posisi <= 0.75:
+            nilai, kuadran = 75.0, 3
+        else:
+            nilai, kuadran = 100.0, 4
+
+    return {
+        "tersedia": True,
+        "nilai": nilai,
+        "keterangan": (
+            f"Kuadran {kuadran}/4 (populasi kecamatan {populasi:,.0f} jiwa, "
+            f"rentang provinsi {mn:,.0f}-{mx:,.0f} jiwa) — formula alternatif "
+            "kerangka CPIT 27.7.26, bukan ambang kepadatan Tabel 4 resmi."
+        ),
+    }
+
+
+_OPLAH_IP_XLSX_PATH = BASE_DIR / "docs" / "docs" / "IP 2019-2024, OPLAH.xlsx"
+_c2_ip_oplah_cache: dict | None = None  # {kode_kab (int): ip_2024 (float)} -- diisi sekali, lihat _load_ip_oplah_2024
+
+
+def _norm_nama_kab_oplah(s) -> str:
+    if not s:
+        return ""
+    s = str(s).upper()
+    # \s+ (BUKAN \s*) -- \s* pernah salah memotong nama yg SECARA KEBETULAN
+    # diawali kata "Kota"/"Kab" tanpa spasi sbg bagian nama itu sendiri (mis.
+    # "Kotabaru" jadi "BARU"), ditemukan 27 Jul 2026 saat sinkronisasi OPLAH.
+    s = re.sub(r"^(KABUPATEN|KOTA|KAB\.?)\s+", "", s)
+    return re.sub(r"[^A-Z0-9]+", " ", s).strip()
+
+
+def _load_ip_oplah_2024() -> dict:
+    """Parsing docs/docs/IP 2019-2024, OPLAH.xlsx sheet "IP TOTAL" kolom L
+    (IP 2024, indeks 11 0-based) -> {kode_kab: ip_2024}, dicocokkan by nama
+    kabupaten/kota (file ini tidak punya kolom kode sendiri) terhadap
+    bps_kecamatan_demografi (SAMA persis metodologi & fungsi normalisasi
+    nama yang dipakai docs/perbandingan_ip_oplah_vs_bps_kabupaten_indeks_
+    penanaman.md, termasuk 14 kabupaten yang gagal cocok otomatis di sana
+    -- lihat dokumen itu utk daftarnya).
+
+    Dibuat 27 Jul 2026 utk _ijd_score_kemanfaatan_c2_ip_v2 (varian
+    ALTERNATIF, bukan pengganti C.A2b resmi yang masih pakai raster/
+    Kertas Kerja.xlsx). File OPLAH TIDAK diimpor ke tabel manapun
+    (dikonfirmasi docs/perbandingan_ip_oplah...md §1) -- fungsi ini
+    membaca xlsx langsung & cache di memori proses (bukan tabel DB),
+    krn sifatnya masih eksperimental/pembanding, belum ada keputusan
+    resmi menjadikannya sumber utama C.A2b (lihat catatan stabilitas di
+    _ijd_score_kemanfaatan_c1_v2 -- pola yang sama: fungsi baru terpisah
+    dulu, bukan langsung menggantikan yang resmi)."""
+    global _c2_ip_oplah_cache
+    if _c2_ip_oplah_cache is not None:
+        return _c2_ip_oplah_cache
+
+    wb = openpyxl.load_workbook(_OPLAH_IP_XLSX_PATH, read_only=True, data_only=True)
+    ws = wb["IP TOTAL"]
+    ip_by_nama: dict = {}
+    for row in ws.iter_rows(min_row=2, values_only=True):
+        if row[1]:  # baris provinsi (agregat) -- skip, cuma butuh baris kabupaten/kota
+            continue
+        if not row[2]:
+            continue
+        ip_by_nama[_norm_nama_kab_oplah(row[2])] = row[11]  # kolom L = IP 2024
+    wb.close()
+
+    with db_cursor() as cur:
+        cur.execute("SELECT DISTINCT kode_kab, nama_kab FROM bps_kecamatan_demografi")
+        name_by_kode = {r["kode_kab"]: r["nama_kab"] for r in cur.fetchall()}
+
+    result = {}
+    for kode_kab_str, nama in name_by_kode.items():
+        ip = ip_by_nama.get(_norm_nama_kab_oplah(nama))
+        if ip is not None:
+            result[int(kode_kab_str)] = float(ip)
+    _c2_ip_oplah_cache = result
+    return result
+
+
+def _ijd_score_kemanfaatan_c2_ip_v2(row: dict, ctx: dict = None) -> dict:
+    """Varian ALTERNATIF sub C.A2b (Indeks Penanaman), BUKAN pengganti
+    _ijd_score_kemanfaatan (resmi, _IJD_SCORERS) -- dibuat 27 Jul 2026
+    persis formula tertulis di docs/docs/27.7.26 KERANGKA PENGGUNAAN DATA
+    UNTUK APLIKASI CPIT.xlsx sheet "Penilaian Teknokratis" baris C2 Indeks
+    Penanaman: "= nilai IP di kab / nilai IP max se Indonesia * 100",
+    sumber data eksplisit diminta user: docs/docs/IP 2019-2024,
+    OPLAH.xlsx sheet "IP TOTAL" kolom L (IP 2024) -- lihat
+    _load_ip_oplah_2024.
+
+    Beda dari _ijd_score_kemanfaatan (C.A2b resmi, ambang Tabel 4 PDF
+    absolut >300/200-299/150-199/100-149/<100%, sumber raster Dit. SDA
+    lalu fallback Kertas Kerja.xlsx): di sini nilai IP kabupaten
+    dinormalisasi RELATIF ke IP MAKSIMUM NASIONAL (rasio 0-100%), lalu
+    rasio itu sendiri dibagi ke 4 kuadran sama besar (0-25/25-50/50-75/
+    75-100) -> skor 25/50/75/100 (pola "Equal Interval jadi 4" yang sama
+    disebut kerangka utk C1/C2/C3 semuanya). BEDA dari
+    _ijd_score_kemanfaatan_c1_v2: di sini kuadrannya FIXED 25/50/75/100
+    pada skala rasio 0-100 itu sendiri (bukan dihitung ulang dari
+    min-max mentah), krn rasio sudah dinormalisasi ke [0,100] oleh
+    pembagian thd IP maks -- jadi TIDAK kena masalah instabilitas
+    "geser kalau ada data baru" yang didokumentasikan di C1 (IP maks
+    baru cuma mengubah rasio kabupaten lain sedikit, tidak menggeser
+    definisi kuadran itu sendiri).
+
+    None/tersedia=False kalau kabupaten usulan tidak diketahui atau tidak
+    tercakup file OPLAH (lihat docs/perbandingan_ip_oplah_vs_bps_
+    kabupaten_indeks_penanaman.md §2 -- 14 kabupaten/kota gagal cocok
+    otomatis, kebanyakan DKI Jakarta & varian ejaan nama)."""
+    kode_kec = row.get("kode_kecamatan")
+    if kode_kec:
+        kode_kab = kode_kec // 1000
+    else:
+        with db_cursor() as cur:
+            cur.execute(
+                "SELECT kode_kabupaten FROM wilayah_mapping "
+                "WHERE provinsi_sitia = %s AND kabupaten_kota_sitia = %s",
+                (row.get("provinsi"), row.get("kabupaten_kota")),
+            )
+            r = cur.fetchone()
+        kode_kab = r["kode_kabupaten"] if r else None
+    if not kode_kab:
+        return {"tersedia": False, "keterangan": "Kabupaten usulan tidak diketahui (wilayah_mapping tidak match)."}
+
+    ip_by_kab = (ctx or {}).get("ip_oplah_by_kab") if ctx else None
+    if ip_by_kab is None:
+        ip_by_kab = _load_ip_oplah_2024()
+    ip_kab = ip_by_kab.get(kode_kab)
+    if ip_kab is None:
+        return {"tersedia": False, "keterangan": f"IP 2024 (OPLAH) kabupaten kode {kode_kab} tidak tercakup file."}
+    if not ip_by_kab:
+        return {"tersedia": False, "keterangan": "Data IP OPLAH nasional belum termuat."}
+
+    ip_maks_nasional = max(ip_by_kab.values())
+    rasio = ip_kab / ip_maks_nasional * 100 if ip_maks_nasional > 0 else 0.0
+    if rasio <= 25:
+        nilai, kuadran = 25.0, 1
+    elif rasio <= 50:
+        nilai, kuadran = 50.0, 2
+    elif rasio <= 75:
+        nilai, kuadran = 75.0, 3
+    else:
+        nilai, kuadran = 100.0, 4
+
+    return {
+        "tersedia": True,
+        "nilai": nilai,
+        "keterangan": (
+            f"Kuadran {kuadran}/4 (IP kab. {ip_kab:.1f}%, rasio thd IP maks nasional "
+            f"{ip_maks_nasional:.1f}% = {rasio:.1f}%) — formula alternatif kerangka "
+            "CPIT 27.7.26, sumber IP 2019-2024 OPLAH.xlsx, bukan ambang Tabel 4 resmi."
+        ),
+    }
+
+
+def _c2_kuadran_luas_lahan_ctx() -> dict:
+    """Batch MIN/MAX nasional lahan_baku_sawah_ha dari
+    bps_kabupaten_indeks_penanaman (tahun 2024, sudah disinkronkan dari
+    IP 2019-2024 OPLAH.xlsx utk 49 kabupaten + fallback Kertas Kerja.xlsx
+    utk sisanya -- lihat scripts/import_ip_oplah.py), dipakai
+    _ijd_score_kemanfaatan_c2_luas_lahan_v2. Dihitung ulang tiap dipanggil
+    (bukan konstanta), sama pola dgn _c1_kuadran_penduduk_ctx."""
+    with db_cursor() as cur:
+        cur.execute(
+            "SELECT MIN(lahan_baku_sawah_ha) AS mn, MAX(lahan_baku_sawah_ha) AS mx "
+            "FROM bps_kabupaten_indeks_penanaman WHERE tahun = 2024 "
+            "AND lahan_baku_sawah_ha IS NOT NULL"
+        )
+        r = cur.fetchone()
+        return (float(r["mn"]), float(r["mx"])) if r and r["mx"] is not None else None
+
+
+def _ijd_score_kemanfaatan_c2_luas_lahan_v2(row: dict, ctx: dict = None) -> dict:
+    """Varian ALTERNATIF sub C.A2 "Luas Lahan" (kerangka CPIT 27.7.26 sheet
+    "Penilaian Teknokratis" baris C2, bobot 20% dari 35% C2) -- BUKAN
+    pengganti resmi (parameter ini TIDAK ADA sama sekali di
+    _ijd_score_kemanfaatan/_IJD_SCORERS saat ini, sebelumnya ditandai
+    "TIDAK TERSEDIA" di docs/kajian_sumber_data_parameter_ijd.md).
+
+    BEDA cara baca kerangka dari sub "Indeks Penanaman" di baris atasnya:
+    baris Indeks Penanaman py formula eksplisit di kolom kanan ("= nilai
+    IP di kab / nilai IP max se Indonesia * 100"), sementara baris "Luas
+    Lahan" (dan "Produksi") CUMA bilang "dibagi 4 kuadran" TANPA embel-
+    embel "per provinsi" (beda dari C1 Jumlah Penduduk & C3 Kepemilikan
+    Kendaraan yang eksplisit "per provinsi" di catatannya) -- dibaca di
+    sini sbg kuadran skala NASIONAL langsung dari nilai lahan_baku_sawah_ha
+    mentah (bukan rasio-ke-maks dulu spt Indeks Penanaman), krn itu bacaan
+    paling harfiah dari "Equal Interval Range dibagi rata jadi 4" tanpa
+    kualifikasi tambahan. INI ASUMSI PEMBACAAN, belum dikonfirmasi pemilik
+    kaidah -- beri tahu kalau ternyata dimaksudkan per-provinsi spt C1/C3.
+
+    Sumber data: bps_kabupaten_indeks_penanaman.lahan_baku_sawah_ha
+    (sinkron dari IP 2019-2024 OPLAH.xlsx sheet "IP OPLAH" utk 49
+    kabupaten, fallback Kertas Kerja.xlsx utk sisanya -- lihat
+    scripts/import_ip_oplah.py). Rentang nasional per 27 Jul 2026: 0 -
+    126.088,43 ha (479 kabupaten berdata)."""
+    kode_kec = row.get("kode_kecamatan")
+    if kode_kec:
+        kode_kab = kode_kec // 1000
+    else:
+        with db_cursor() as cur:
+            cur.execute(
+                "SELECT kode_kabupaten FROM wilayah_mapping "
+                "WHERE provinsi_sitia = %s AND kabupaten_kota_sitia = %s",
+                (row.get("provinsi"), row.get("kabupaten_kota")),
+            )
+            r = cur.fetchone()
+        kode_kab = r["kode_kabupaten"] if r else None
+    if not kode_kab:
+        return {"tersedia": False, "keterangan": "Kabupaten usulan tidak diketahui (wilayah_mapping tidak match)."}
+
+    rentang = (ctx or {}).get("luas_lahan_kuadran_nasional") if ctx else None
+    if rentang is None and not (ctx and "luas_lahan_kuadran_nasional" in ctx):
+        rentang = _c2_kuadran_luas_lahan_ctx()
+    if not rentang:
+        return {"tersedia": False, "keterangan": "Rentang nasional lahan_baku_sawah_ha belum tersedia."}
+    mn, mx = rentang
+
+    with db_cursor() as cur:
+        cur.execute(
+            "SELECT lahan_baku_sawah_ha FROM bps_kabupaten_indeks_penanaman "
+            "WHERE kode_kab = %s AND tahun = 2024",
+            (f"{kode_kab:04d}",),
+        )
+        r = cur.fetchone()
+    if not r or r["lahan_baku_sawah_ha"] is None:
+        return {"tersedia": False, "keterangan": f"Luas baku sawah kabupaten kode {kode_kab} tidak tersedia."}
+
+    luas = float(r["lahan_baku_sawah_ha"])
+    rentang_nilai = mx - mn
+    if rentang_nilai <= 0:
+        nilai, kuadran = 25.0, 1
+    else:
+        posisi = (luas - mn) / rentang_nilai
+        if posisi <= 0.25:
+            nilai, kuadran = 25.0, 1
+        elif posisi <= 0.5:
+            nilai, kuadran = 50.0, 2
+        elif posisi <= 0.75:
+            nilai, kuadran = 75.0, 3
+        else:
+            nilai, kuadran = 100.0, 4
+
+    return {
+        "tersedia": True,
+        "nilai": nilai,
+        "keterangan": (
+            f"Kuadran {kuadran}/4 (luas baku sawah kab. {luas:,.0f} ha, rentang nasional "
+            f"{mn:,.0f}-{mx:,.0f} ha) — formula alternatif kerangka CPIT 27.7.26, "
+            "asumsi kuadran nasional (bukan per-provinsi), belum dikonfirmasi pemilik kaidah."
+        ),
+    }
+
+
+def _c2_kuadran_produksi_ctx() -> dict:
+    """Batch MIN/MAX nasional produksi_ton (padi, tahun TERBARU per
+    kabupaten -- bps_kabupaten_padi py data 2024 & 2025, ambil yang
+    terbaru per kode_kab spy tidak mencampur 2 tahun beda dlm 1 rentang),
+    dipakai _ijd_score_kemanfaatan_c2_produksi_v2. Dihitung ulang tiap
+    dipanggil, sama pola dgn ctx kuadran C1/C2 lainnya."""
+    with db_cursor() as cur:
+        cur.execute(
+            "SELECT DISTINCT ON (kode_kab) kode_kab, produksi_ton FROM bps_kabupaten_padi "
+            "WHERE produksi_ton IS NOT NULL ORDER BY kode_kab, tahun DESC"
+        )
+        nilai_per_kab = [float(r["produksi_ton"]) for r in cur.fetchall()]
+    if not nilai_per_kab:
+        return None
+    return (min(nilai_per_kab), max(nilai_per_kab))
+
+
+def _ijd_score_kemanfaatan_c2_produksi_v2(row: dict, ctx: dict = None) -> dict:
+    """Varian ALTERNATIF sub C.A2 "Produksi" (kerangka CPIT 27.7.26 sheet
+    "Penilaian Teknokratis" baris C2, bobot 12% dari 35% C2, CONTOH BOBOT
+    40 -> Persentase Bobot 4,8) -- BUKAN pengganti resmi.
+
+    PENTING beda dari C.A2 resmi (_ijd_score_kemanfaatan, sub
+    "Produktivitas Ton/Ha", ambang absolut Tabel 4 >6/5-6/4-4,9/3-3,9/<3
+    ton/HA -- ukuran per-hektar): kerangka ini LABELNYA "Produksi", bukan
+    "Produktivitas" -- dibaca di sini sbg VOLUME PRODUKSI TOTAL kabupaten
+    (ton, `bps_kabupaten_padi.produksi_ton`), BUKAN produktivitas per
+    hektar (`produktivitas_ku_ha`, kolom yang beda, sudah dipakai skorer
+    resmi). Dua metrik yang secara konsep berbeda (kabupaten luas dgn
+    produktivitas rendah bisa saja produksi totalnya tinggi krn luas
+    lahannya besar, dan sebaliknya) -- INI JUGA ASUMSI PEMBACAAN nama
+    kolom "Produksi" di kerangka, belum dikonfirmasi pemilik kaidah sama
+    seperti Luas Lahan (lihat _ijd_score_kemanfaatan_c2_luas_lahan_v2).
+
+    Kuadran NASIONAL (bukan per-provinsi, alasan sama dgn Luas Lahan --
+    tidak ada qualifier "per provinsi" di catatan kerangka utk baris ini,
+    beda dari C1/C3 yang eksplisit). Tahun dipakai: TERBARU per kabupaten
+    (bps_kabupaten_padi py 2024 & 2025 campur, ambil yang terbaru per
+    kode_kab spy konsisten dgn cara _ijd_score_kemanfaatan resmi baca
+    tabel yang sama)."""
+    kode_kec = row.get("kode_kecamatan")
+    if kode_kec:
+        kode_kab = kode_kec // 1000
+    else:
+        with db_cursor() as cur:
+            cur.execute(
+                "SELECT kode_kabupaten FROM wilayah_mapping "
+                "WHERE provinsi_sitia = %s AND kabupaten_kota_sitia = %s",
+                (row.get("provinsi"), row.get("kabupaten_kota")),
+            )
+            r = cur.fetchone()
+        kode_kab = r["kode_kabupaten"] if r else None
+    if not kode_kab:
+        return {"tersedia": False, "keterangan": "Kabupaten usulan tidak diketahui (wilayah_mapping tidak match)."}
+
+    rentang = (ctx or {}).get("produksi_kuadran_nasional") if ctx else None
+    if rentang is None and not (ctx and "produksi_kuadran_nasional" in ctx):
+        rentang = _c2_kuadran_produksi_ctx()
+    if not rentang:
+        return {"tersedia": False, "keterangan": "Rentang nasional produksi_ton belum tersedia."}
+    mn, mx = rentang
+
+    with db_cursor() as cur:
+        cur.execute(
+            "SELECT produksi_ton FROM bps_kabupaten_padi WHERE kode_kab = %s "
+            "ORDER BY tahun DESC LIMIT 1",
+            (f"{kode_kab:04d}",),
+        )
+        r = cur.fetchone()
+    if not r or r["produksi_ton"] is None:
+        return {"tersedia": False, "keterangan": f"Produksi padi kabupaten kode {kode_kab} tidak tersedia."}
+
+    produksi = float(r["produksi_ton"])
+    rentang_nilai = mx - mn
+    if rentang_nilai <= 0:
+        nilai, kuadran = 25.0, 1
+    else:
+        posisi = (produksi - mn) / rentang_nilai
+        if posisi <= 0.25:
+            nilai, kuadran = 25.0, 1
+        elif posisi <= 0.5:
+            nilai, kuadran = 50.0, 2
+        elif posisi <= 0.75:
+            nilai, kuadran = 75.0, 3
+        else:
+            nilai, kuadran = 100.0, 4
+
+    return {
+        "tersedia": True,
+        "nilai": nilai,
+        "keterangan": (
+            f"Kuadran {kuadran}/4 (produksi padi kab. {produksi:,.0f} ton, rentang nasional "
+            f"{mn:,.0f}-{mx:,.0f} ton) — formula alternatif kerangka CPIT 27.7.26, "
+            "asumsi kuadran nasional dari VOLUME produksi (bukan produktivitas/ha), "
+            "belum dikonfirmasi pemilik kaidah."
+        ),
+    }
+
+
+def _c3_kuadran_kendaraan_ctx() -> dict:
+    """Batch MIN/MAX PER PROVINSI rasio kepemilikan kendaraan/km jalan
+    (bps_kabupaten_kendaraan.jumlah ÷ bps_kabupaten_jalan.panjang_total_km,
+    SAMA metrik dgn C.A3 resmi _ijd_score_kemanfaatan -- cuma beda cara
+    skoring: kuadran per provinsi, bukan ambang absolut Tabel 4), dipakai
+    _ijd_score_kemanfaatan_c3_kendaraan_v2. "per provinsi" EKSPLISIT
+    disebut di catatan kerangka CPIT baris ini ("dibagi 4 kuadran tapi
+    per provinsi") -- dikonfirmasi user 27 Jul 2026, beda dari
+    Produksi/Luas Lahan (C2) yang nasional. Satu ratio per kabupaten
+    (tahun terbaru k.tahun, pola sama dgn query resmi), dikelompokkan
+    kode_kab/100 = kode_provinsi."""
+    with db_cursor() as cur:
+        cur.execute(
+            "SELECT DISTINCT ON (k.kode_kab) k.kode_kab, "
+            "k.jumlah / j.panjang_total_km AS per_km "
+            "FROM bps_kabupaten_kendaraan k JOIN bps_kabupaten_jalan j ON j.kode_kab = k.kode_kab "
+            "WHERE j.panjang_total_km > 0 AND k.jumlah IS NOT NULL "
+            "ORDER BY k.kode_kab, k.tahun DESC"
+        )
+        per_kab = {r["kode_kab"]: float(r["per_km"]) for r in cur.fetchall()}
+
+    by_provinsi: dict = {}
+    for kode_kab, per_km in per_kab.items():
+        kode_prov = int(kode_kab) // 100
+        by_provinsi.setdefault(kode_prov, []).append(per_km)
+    return {prov: (min(vals), max(vals)) for prov, vals in by_provinsi.items()}
+
+
+def _ijd_score_kemanfaatan_c3_kendaraan_v2(row: dict, ctx: dict = None) -> dict:
+    """Varian ALTERNATIF sub C.A3 "Kepemilikan Kendaraan" (kerangka CPIT
+    27.7.26 sheet "Penilaian Teknokratis" baris C3, bobot 30%, CONTOH
+    BOBOT 60 -> Persentase Bobot 9) -- BUKAN pengganti resmi
+    (_ijd_score_kemanfaatan A3 block, yang pakai ambang absolut Tabel 4
+    >1000/600-1000/300-600/100-300/<100 per km).
+
+    Metrik SAMA dgn resmi (kendaraan ÷ km jalan kabupaten, sumber BPS),
+    HANYA cara skoringnya beda: kuadran equal-interval PER PROVINSI
+    (dikonfirmasi eksplisit user 27 Jul 2026 dari catatan kerangka
+    "dibagi 4 kuadran tapi per provinsi" -- BEDA dari C2 Produksi/Luas
+    Lahan yang nasional, dan SAMA pola dgn C1 Jumlah Penduduk)."""
+    kode_kec = row.get("kode_kecamatan")
+    if kode_kec:
+        kode_kab = kode_kec // 1000
+    else:
+        with db_cursor() as cur:
+            cur.execute(
+                "SELECT kode_kabupaten FROM wilayah_mapping "
+                "WHERE provinsi_sitia = %s AND kabupaten_kota_sitia = %s",
+                (row.get("provinsi"), row.get("kabupaten_kota")),
+            )
+            r = cur.fetchone()
+        kode_kab = r["kode_kabupaten"] if r else None
+    if not kode_kab:
+        return {"tersedia": False, "keterangan": "Kabupaten usulan tidak diketahui (wilayah_mapping tidak match)."}
+
+    kode_prov = kode_kab // 100
+    range_by_prov = (ctx or {}).get("c3_kuadran_by_provinsi") if ctx else None
+    if range_by_prov is None and not (ctx and "c3_kuadran_by_provinsi" in ctx):
+        range_by_prov = _c3_kuadran_kendaraan_ctx()
+    range_prov = (range_by_prov or {}).get(kode_prov)
+    if not range_prov:
+        return {"tersedia": False, "keterangan": f"Rentang rasio kendaraan/km provinsi (kode {kode_prov}) belum tersedia."}
+    mn, mx = range_prov
+
+    with db_cursor() as cur:
+        cur.execute(
+            "SELECT k.jumlah / j.panjang_total_km AS per_km FROM bps_kabupaten_kendaraan k "
+            "JOIN bps_kabupaten_jalan j ON j.kode_kab = k.kode_kab "
+            "WHERE k.kode_kab = %s AND j.panjang_total_km > 0 AND k.jumlah IS NOT NULL "
+            "ORDER BY k.tahun DESC LIMIT 1",
+            (f"{kode_kab:04d}",),
+        )
+        r = cur.fetchone()
+    if not r or r["per_km"] is None:
+        return {"tersedia": False, "keterangan": f"Rasio kendaraan/km kabupaten kode {kode_kab} belum tersedia."}
+
+    rasio = float(r["per_km"])
+    rentang_nilai = mx - mn
+    if rentang_nilai <= 0:
+        nilai, kuadran = 25.0, 1
+    else:
+        posisi = (rasio - mn) / rentang_nilai
+        if posisi <= 0.25:
+            nilai, kuadran = 25.0, 1
+        elif posisi <= 0.5:
+            nilai, kuadran = 50.0, 2
+        elif posisi <= 0.75:
+            nilai, kuadran = 75.0, 3
+        else:
+            nilai, kuadran = 100.0, 4
+
+    return {
+        "tersedia": True,
+        "nilai": nilai,
+        "keterangan": (
+            f"Kuadran {kuadran}/4 (kepemilikan kendaraan kab. {rasio:,.1f}/km, rentang provinsi "
+            f"{mn:,.1f}-{mx:,.1f}/km) — formula alternatif kerangka CPIT 27.7.26, "
+            "kuadran PER PROVINSI (dikonfirmasi user)."
+        ),
+    }
 
 
 def _ijd_score_penuntasan(row: dict, rules: dict, ctx: dict = None) -> dict:

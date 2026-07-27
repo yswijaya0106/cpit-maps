@@ -18,11 +18,68 @@ function buildChatContext() {
   return context;
 }
 
+/* Markdown ringan buat balasan asisten (bold/italic/kode inline, daftar
+   bernomor/poin, paragraf) -- BUKAN parser markdown lengkap, cukup utk gaya
+   jawaban model (mis. "**Nilai:** 60", daftar skor bernomor spt di panel
+   skor IJD). escapeHtml() dijalankan LEBIH DULU, olah markup di ATAS hasil
+   yang sudah di-escape -- jadi HTML mentah apa pun di dalam teks (baik dari
+   user maupun jawaban model) tidak pernah dieksekusi sbg tag; tag <strong>/
+   <ul>/dst. yang ditambahkan di sini sepenuhnya kita yang buat, aman. */
+function renderMarkdownLite(text) {
+  const inline = (s) => s
+    .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
+    .replace(/(^|[^*])\*([^*\n]+)\*(?!\*)/g, "$1<em>$2</em>")
+    .replace(/`([^`]+?)`/g, "<code>$1</code>");
+
+  const lines = escapeHtml(text).split("\n");
+  const html = [];
+  // Model sering nulis "1. **X**:" lalu poin "- ..." di baris berikutnya
+  // (dipisah baris kosong) sbg RINCIAN nomor itu, bukan daftar baru --
+  // dilacak dua tingkat (topList/subList) supaya poin itu jadi <ul> BERSARANG
+  // di dalam <li> nomornya, bukan menutup <ol> dan membuat tiap nomor
+  // restart dari "1." lagi (bug yang ditemukan 27 Jul 2026 dari laporan user:
+  // panel skor IJD 5 komponen semua tampil "1.").
+  let topList = null;    // "ol" | "ul" | null
+  let topLiOpen = false; // <li> level atas sedang terbuka, blm ditutup
+  let subList = null;    // "ul" bersarang di dlm <li> level atas yg terbuka
+
+  const closeSub = () => { if (subList) { html.push(`</${subList}>`); subList = null; } };
+  const closeTopLi = () => { closeSub(); if (topLiOpen) { html.push("</li>"); topLiOpen = false; } };
+  const closeTop = () => { closeTopLi(); if (topList) { html.push(`</${topList}>`); topList = null; } };
+
+  for (const raw of lines) {
+    const line = raw.trim();
+    if (!line) continue; // baris kosong TIDAK menutup daftar -- lihat catatan di atas
+    const ol = line.match(/^\d+[.)]\s+(.*)/);
+    const ul = line.match(/^[-*]\s+(.*)/);
+
+    if (ol) {
+      closeTopLi();
+      if (topList !== "ol") { closeTop(); html.push("<ol>"); topList = "ol"; }
+      html.push(`<li>${inline(ol[1])}`);
+      topLiOpen = true;
+    } else if (ul && topList === "ol" && topLiOpen) {
+      // poin di bawah nomor yang masih terbuka -> sub-daftar bersarang
+      if (!subList) { html.push("<ul>"); subList = "ul"; }
+      html.push(`<li>${inline(ul[1])}</li>`);
+    } else if (ul) {
+      closeTopLi();
+      if (topList !== "ul") { closeTop(); html.push("<ul>"); topList = "ul"; }
+      html.push(`<li>${inline(ul[1])}</li>`);
+    } else {
+      closeTop();
+      html.push(`<p>${inline(line)}</p>`);
+    }
+  }
+  closeTop();
+  return html.join("");
+}
+
 function renderChatMessages() {
   const listEl = document.getElementById("chatMessages");
   if (!listEl) return;
   listEl.innerHTML = state.chat.messages
-    .map((m) => `<div class="chat-msg chat-msg-${m.role}">${escapeHtml(m.text)}</div>`)
+    .map((m) => `<div class="chat-msg chat-msg-${m.role}">${m.role === "assistant" ? renderMarkdownLite(m.text) : escapeHtml(m.text)}</div>`)
     .join("");
   if (state.chat.busy) {
     listEl.innerHTML += `<div class="chat-msg chat-msg-assistant chat-msg-loading">Mengetik...</div>`;

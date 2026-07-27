@@ -391,19 +391,32 @@ def extract_kendaraan_provinsi(doc, row_kab, row_kota):
     Mobil Barang/Sepeda Motor/Jumlah) -- ditemukan 23 Jul 2026 (audit narasi
     AI usulan NTT, lihat docs/verifikasi_kendaraan_ntt.md): tabel 9.1.2
     provinsi NTT 2026 cuma py 3 kolom (Mobil Penumpang/Bus/Mobil Barang,
-    TANPA Sepeda Motor/Jumlah). Kode LAMA menunggu tepat 5 token sebelum
-    commit satu baris (kab, tahun) -- utk tabel 3-kolom ini artinya token
-    dari baris tahun BERIKUTNYA (termasuk LABEL TAHUN itu sendiri) ikut
-    "ditelan" jadi nilai kolom ke-4/ke-5, mencemari kab & tahun sebelumnya.
-    Diperbaiki: commit baris pending SEKARANG JUGA begitu ketemu penanda
-    baris baru (label tahun baru / nama kab baru / akhir tabel), bukan
-    menunggu tepat 5 token -- panjang values per baris jadi APA ADANYA (3
-    atau 5), row-builder di bawah menghitung "jumlah" sendiri (sum) kalau
-    kolom Jumlah resminya memang tidak ada. Kalau varian ini 0 baris (label
-    tahun tak pernah cocok sama sekali), coba varian lain lewat
+    TANPA Sepeda Motor/Jumlah). Juga ditemukan 27 Jul 2026 (audit
+    bps_kabupaten_kendaraan Kaltim/Bali): buku 2026 provinsi lain punya 6
+    kolom, bukan 5 -- ada kolom "Kendaraan Khusus" di antara Sepeda Motor
+    dan Jumlah. N dihitung dinamis dari jumlah marker "(n)" di header
+    tabel (dikurangi 2 kolom non-nilai: Kabupaten/Kota dan Akhir Tahun),
+    BUKAN di-hardcode. Kode LAMA menunggu tepat 5 token sebelum commit satu
+    baris (kab, tahun) -- utk tabel 3-kolom (NTT) ini artinya token dari
+    baris tahun BERIKUTNYA (termasuk LABEL TAHUN itu sendiri) ikut
+    "ditelan" jadi nilai kolom ke-4/ke-5, mencemari kab & tahun sebelumnya;
+    utk tabel 6-kolom (Kaltim/Bali) kolom ke-5 (Kendaraan Khusus) malah
+    KETIMPA jadi "jumlah" dan token Jumlah asli (token ke-6) dibuang --
+    skor_ternormalisasi C.A3 (kendaraan/km) jadi salah karena "jumlah" bukan
+    total sebenarnya. Diperbaiki: commit baris pending SEKARANG JUGA begitu
+    ketemu penanda baris baru (label tahun baru / nama kab baru / akhir
+    tabel), bukan menunggu token ke-N_EXPECTED persis -- panjang values per
+    baris jadi APA ADANYA (3, 5, atau 6), row-builder di bawah memetakan
+    field sesuai panjang aktual. Kalau varian ini 0 baris (label tahun tak
+    pernah cocok sama sekali), coba varian lain lewat
     extract_kendaraan_provinsi_grouped() sebelum menyerah — beda provinsi
     beda tata letak kolom, lihat docstring fungsi itu."""
     p = _find_prov_page(doc, "9.1.2", "Kendaraan Bermotor")
+    header_text = doc[p].get_text()[:2000]
+    n_markers = len(re.findall(r"\(\d+\)", header_text))
+    # kolom (1)=Kabupaten/Kota, (2)=Akhir Tahun, sisanya kolom nilai per jenis
+    # kendaraan; fallback ke 5 (format lama) kalau markernya tak terbaca sama sekali
+    n_expected = n_markers - 2 if n_markers >= 3 else 5
     out = {}
 
     def _commit(section, name, tahun, values):
@@ -461,10 +474,10 @@ def extract_kendaraan_provinsi(doc, row_kab, row_kota):
                     continue
                 for tok in ln.split():
                     values.append(num(tok))
-                    if len(values) == 5:
-                        # varian 5-kolom asli: commit persis begitu genap 5
-                        # (SEBELUM baris tahun berikutnya sempat kebaca, jadi
-                        # tidak pernah ikut ke cabang _commit di atas).
+                    if len(values) == n_expected:
+                        # commit persis begitu genap n_expected (SEBELUM baris
+                        # tahun berikutnya sempat kebaca, jadi tidak pernah
+                        # ikut ke cabang _commit di atas).
                         _commit(section, name, tahun, values)
                         tahun, values = None, []
             elif awaiting_continuation:
@@ -476,17 +489,25 @@ def extract_kendaraan_provinsi(doc, row_kab, row_kota):
         _commit(section, name, tahun, values)  # baris terakhir halaman (mis. tahun 2025 tanpa penutup)
     rows = []
     for (kode, tahun), v in sorted(out.items()):
-        if len(v) >= 5:
+        if len(v) == 6:
+            # varian 6-kolom (mis. Kaltim/Bali 2026): kolom Kendaraan Khusus
+            # ditambahkan sebelum Jumlah -- Jumlah tetap dipakai apa adanya
+            # dari sumber, BUKAN sum(v[:5]), karena definisi resminya
+            # mencakup Kendaraan Khusus juga.
             row = {"mobil_penumpang": v[0], "bus": v[1], "mobil_barang": v[2],
-                   "sepeda_motor": v[3], "jumlah": v[4]}
+                   "sepeda_motor": v[3], "kendaraan_khusus": v[4], "jumlah": v[5]}
+        elif len(v) == 5:
+            row = {"mobil_penumpang": v[0], "bus": v[1], "mobil_barang": v[2],
+                   "sepeda_motor": v[3], "kendaraan_khusus": None, "jumlah": v[4]}
         elif len(v) == 3:
             # varian 3-kolom (mis. NTT 2026) -- tidak ada kolom Sepeda
             # Motor/Jumlah resmi, "jumlah" dihitung ulang (sum 3 jenis yang
             # ada) drpd dikarang dari token yang salah baca.
             row = {"mobil_penumpang": v[0], "bus": v[1], "mobil_barang": v[2],
-                   "sepeda_motor": None, "jumlah": sum(x for x in v if x is not None)}
+                   "sepeda_motor": None, "kendaraan_khusus": None,
+                   "jumlah": sum(x for x in v if x is not None)}
         else:
-            continue  # jumlah token tak dikenali (bukan 3 atau >=5) -- lewati drpd menebak
+            continue  # jumlah token tak dikenali (bukan 3, 5, atau 6) -- lewati drpd menebak
         row["kode_kab"], row["tahun"] = kode, tahun
         rows.append(row)
     if not rows:
@@ -519,7 +540,8 @@ def extract_kendaraan_provinsi_grouped(doc, row_kab, row_kota):
             rows.append({
                 "kode_kab": kode, "tahun": tahun,
                 "mobil_penumpang": mp, "bus": bus, "mobil_barang": mb,
-                "sepeda_motor": sm, "jumlah": sum(terisi) if terisi else None,
+                "sepeda_motor": sm, "kendaraan_khusus": None,
+                "jumlah": sum(terisi) if terisi else None,
             })
     return rows
 
@@ -1293,15 +1315,16 @@ def load_pg(data):
                 cur.execute(
                     """INSERT INTO bps_kabupaten_kendaraan
                        (kode_kab, nama_kab, tahun, mobil_penumpang, bus,
-                        mobil_barang, sepeda_motor, jumlah)
-                       VALUES (%s,%s,%s,%s,%s,%s,%s,%s)
+                        mobil_barang, sepeda_motor, kendaraan_khusus, jumlah)
+                       VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)
                        ON CONFLICT (kode_kab, tahun) DO UPDATE SET
                        nama_kab=EXCLUDED.nama_kab, mobil_penumpang=EXCLUDED.mobil_penumpang,
                        bus=EXCLUDED.bus, mobil_barang=EXCLUDED.mobil_barang,
-                       sepeda_motor=EXCLUDED.sepeda_motor, jumlah=EXCLUDED.jumlah""",
+                       sepeda_motor=EXCLUDED.sepeda_motor,
+                       kendaraan_khusus=EXCLUDED.kendaraan_khusus, jumlah=EXCLUDED.jumlah""",
                     (r["kode_kab"], r["nama_kab"], r["tahun"],
                      r["mobil_penumpang"], r["bus"], r["mobil_barang"],
-                     r["sepeda_motor"], r["jumlah"]))
+                     r["sepeda_motor"], r.get("kendaraan_khusus"), r["jumlah"]))
             # DELETE dulu utk kode_kab yang diproses run ini, SEBELUM INSERT --
             # tanpa ini, kecamatan yang tabel produksinya dulu SALAH NYANTOL
             # (mis. bug row-shift/tabel-salah yg baru diperbaiki) tapi sekarang

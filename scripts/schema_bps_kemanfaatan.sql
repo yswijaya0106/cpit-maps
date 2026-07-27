@@ -52,6 +52,7 @@ CREATE TABLE IF NOT EXISTS bps_kabupaten_kendaraan (
   bus             INT NULL,
   mobil_barang    INT NULL,
   sepeda_motor    INT NULL,
-  jumlah          INT NULL,
+  kendaraan_khusus INT NULL,  -- kolom baru di buku 2026 (mis. Kaltim/Bali); NULL di buku lama tanpa kolom ini
+  jumlah          INT NULL,   -- total resmi BPS, BUKAN sekadar sum(mp,bus,mb,sm,kk) -- pakai apa adanya dari sumber
   PRIMARY KEY (kode_kab, tahun)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

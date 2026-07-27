@@ -50,12 +50,16 @@ Gunakan data ini untuk menjawab. Bila pengguna bertanya tentang usulan Inpres di
 detail_usulan_inpres untuk mengambil data terbaru dari database — jangan mengarang data. Bila pengguna bertanya \
 soal geometri KML riil suatu usulan (panjang aktual, jumlah segmen, apakah cocok dengan data atribut \
 panjang_ruas_km), gunakan fungsi analisa_geometri_kml_usulan. \
-Untuk pertanyaan analitis/lintas tabel yang tidak tercakup fungsi-fungsi di atas (skor IJD, data BPS, \
-kawasan tematik, agregasi/perbandingan antar wilayah, dsb.), Anda punya akses BACA-SAJA ke SELURUH tabel \
-database lewat fungsi jalankan_query_sql (SELECT SQL bebas, hasil dibatasi 200 baris) — panggil \
-daftar_tabel_database dulu kalau belum yakin nama tabel/kolom yang tepat, jangan menebak nama kolom. \
-Hanya query baca yang bisa dijalankan (sistem menolak INSERT/UPDATE/DELETE/DDL apa pun bentuknya) — kalau \
-pengguna minta mengubah data, jelaskan itu tidak bisa dilakukan lewat chat ini. \
+Untuk pertanyaan analitis/lintas tabel yang tidak tercakup fungsi-fungsi di atas (data BPS, kawasan tematik, \
+agregasi/perbandingan antar wilayah, dsb.), Anda punya akses BACA-SAJA ke SELURUH tabel database lewat fungsi \
+jalankan_query_sql (SELECT SQL bebas, hasil dibatasi 200 baris) — panggil daftar_tabel_database dulu kalau \
+belum yakin nama tabel/kolom yang tepat, jangan menebak nama kolom. Hanya query baca yang bisa dijalankan \
+(sistem menolak INSERT/UPDATE/DELETE/DDL apa pun bentuknya) — kalau pengguna minta mengubah data, jelaskan \
+itu tidak bisa dilakukan lewat chat ini. \
+KHUSUS skor IJD/Prioritisasi Teknokratik (parameter A-E): skor ini TIDAK tersimpan di tabel manapun (dihitung \
+ulang tiap kali dari rumus berbobot resmi lintas banyak tabel) — WAJIB pakai fungsi hitung_skor_ijd_usulan \
+untuk pertanyaan soal skor usulan tertentu, JANGAN coba hitung sendiri lewat jalankan_query_sql, hasilnya \
+tidak akan sesuai kaidah resmi. \
 Klasifikasi jalan OSM adalah perkiraan, bukan data resmi PUPR."""
 
 CHAT_SEARCH_AVAILABLE_NOTE = (
@@ -147,11 +151,13 @@ CHAT_TOOLS = [
             "description": (
                 "Menjalankan SATU query SQL baca-saja (SELECT, boleh dgn CTE/WITH, JOIN, agregasi "
                 "GROUP BY/COUNT/SUM/AVG dst.) langsung ke database PostgreSQL — dipakai untuk pertanyaan "
-                "analitis lintas tabel yang tidak tercakup fungsi lain (mis. \"kabupaten mana yang skor "
-                "IJD rata-ratanya tertinggi\", \"berapa total penduduk kecamatan yang dilintasi usulan "
-                "provinsi X\"). Panggil daftar_tabel_database dulu kalau belum yakin nama tabel/kolomnya. "
-                "HANYA SELECT yang diizinkan (INSERT/UPDATE/DELETE/DDL akan ditolak sistem); hasil dibatasi "
-                "200 baris pertama — tambahkan LIMIT/agregasi di query kalau butuh ringkasan, bukan data mentah."
+                "analitis lintas tabel yang tidak tercakup fungsi lain (mis. \"berapa total penduduk "
+                "kecamatan yang dilintasi usulan provinsi X\", \"kabupaten mana yang kepadatannya "
+                "tertinggi\"). Panggil daftar_tabel_database dulu kalau belum yakin nama tabel/kolomnya. "
+                "PENTING: skor IJD/Prioritisasi Teknokratik TIDAK tersimpan di tabel manapun (dihitung "
+                "on-the-fly dari banyak tabel lewat rumus berbobot) — JANGAN coba menghitungnya sendiri "
+                "lewat query, pakai fungsi hitung_skor_ijd_usulan. HANYA SELECT yang diizinkan "
+                "(INSERT/UPDATE/DELETE/DDL akan ditolak sistem); hasil dibatasi 200 baris pertama."
             ),
             "parameters": {
                 "type": "object",
@@ -159,6 +165,27 @@ CHAT_TOOLS = [
                     "sql": {"type": "string", "description": "Satu statement SQL SELECT (boleh diawali WITH)"},
                 },
                 "required": ["sql"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "hitung_skor_ijd_usulan",
+            "description": (
+                "Menghitung Skor Prioritisasi Teknokratik IJD (parameter A-E sesuai kaidah tahun "
+                "berjalan) untuk satu usulan — panjang/detail per parameter, skor tertimbang, dan skor "
+                "ternormalisasi 0-100. Skor ini TIDAK tersimpan di database (dihitung ulang tiap kali "
+                "lewat rumus resmi), jadi WAJIB pakai fungsi ini, JANGAN coba hitung sendiri lewat "
+                "jalankan_query_sql — hasilnya tidak akan sesuai kaidah resmi."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "id": {"type": "integer", "description": "ID usulan"},
+                    "tahun": {"type": "integer", "description": "Tahun kaidah skoring, default 2026 (2025 juga tersedia)"},
+                },
+                "required": ["id"],
             },
         },
     },
@@ -186,6 +213,19 @@ def _tool_detail_usulan_inpres(id=None) -> dict:
         return {"error": "id usulan diperlukan"}
     try:
         return usulan_inpres_detail(int(id))
+    except HTTPException as e:
+        return {"error": e.detail}
+
+
+def _tool_hitung_skor_ijd_usulan(id=None, tahun=2026) -> dict:
+    # Panggil endpoint yang sudah ada (usulan_inpres_ijd_score -> _compute_ijd_score)
+    # langsung, BUKAN direplikasi lewat SQL -- skor berbobot A-E dgn normalisasi
+    # bobot_tersedia ini tidak realistis ditulis ulang benar oleh model via query.
+    from app import usulan_inpres_ijd_score  # lazy: hindari circular import
+    if id is None:
+        return {"error": "id usulan diperlukan"}
+    try:
+        return usulan_inpres_ijd_score(int(id), int(tahun or 2026))
     except HTTPException as e:
         return {"error": e.detail}
 
@@ -311,6 +351,7 @@ CHAT_TOOL_DISPATCH = {
     "analisa_geometri_kml_usulan": _tool_analisa_geometri_kml_usulan,
     "daftar_tabel_database": _tool_daftar_tabel_database,
     "jalankan_query_sql": _tool_jalankan_query_sql,
+    "hitung_skor_ijd_usulan": _tool_hitung_skor_ijd_usulan,
 }
 
 

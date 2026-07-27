@@ -451,10 +451,10 @@ def usulan_inpres_nearby(payload: UsulanNearbyRequest):
             conditions = []
             params = []
             if provinsi:
-                conditions.append("provinsi LIKE %s")
+                conditions.append("provinsi ILIKE %s")
                 params.append(f"%{provinsi}%")
             if kabupaten_kota:
-                conditions.append("kabupaten_kota LIKE %s")
+                conditions.append("kabupaten_kota ILIKE %s")
                 params.append(f"%{kabupaten_kota}%")
             where_clause = " AND ".join(conditions)
             cur.execute(
@@ -529,11 +529,11 @@ def usulan_inpres_list(
         conditions.append("provinsi = %s")
         params.append(provinsi)
     if kabupaten_kota:
-        conditions.append("kabupaten_kota LIKE %s")
+        conditions.append("kabupaten_kota ILIKE %s")
         params.append(f"%{kabupaten_kota}%")
     if q:
         like = f"%{q}%"
-        conditions.append("(nama_ruas LIKE %s OR nama_kegiatan LIKE %s OR kode_ruas LIKE %s)")
+        conditions.append("(nama_ruas ILIKE %s OR nama_kegiatan ILIKE %s OR kode_ruas ILIKE %s)")
         params.extend([like, like, like])
     where_clause = ("WHERE " + " AND ".join(conditions)) if conditions else ""
 

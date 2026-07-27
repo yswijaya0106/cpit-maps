@@ -1062,6 +1062,122 @@ def _ijd_score_tematik(row: dict, rules: dict, ctx: dict = None) -> dict:
     return {"tersedia": True, "nilai": nilai, "keterangan": keterangan}
 
 
+def _ijd_score_tematik_v2(row: dict, rules: dict, ctx: dict = None) -> dict:
+    """Varian ALTERNATIF parameter A -- BUKAN pengganti resmi
+    (_ijd_score_tematik). Dibuat 28 Jul 2026 atas permintaan eksplisit
+    user: A1 di kerangka CPIT 27.7.26 berjudul literal "A1. TEMATIK SiTIA
+    **(Kompetensi)**", dan catatannya cuma bilang "Kesesuaian Tematik
+    diambil dari SiTIA pada kolom AL" -- TANPA menyebut fallback apapun
+    ke Balai/Pemda. Jadi versi ini HANYA membaca
+    `tematik_kawasan_kompetensi` -- kalau kosong, langsung "belum
+    tersedia", TIDAK fallback ke `tematik_kawasan_balai`/
+    `tematik_kawasan_pemda` seperti _ijd_score_tematik resmi.
+
+    Dampak cakupan (dicek 28 Jul 2026, nasional 3.072 usulan): HANYA
+    1.843 usulan (60%) yang py tematik_kawasan_kompetensi terisi --
+    1.229 usulan (40%) yang di resmi dapat skor A lewat fallback Balai
+    (302) atau Pemda (927) akan jadi "tersedia: False" di sini.
+
+    Sisa logika (A3 tematik tambahan, A4 data dukung) identik persis
+    dgn _ijd_score_tematik -- keduanya SUDAH sumbernya kompetensi/tabel
+    lain, tidak ada fallback tematik_kawasan_balai/pemda di situ sama
+    sekali (A4 dari jenis_data_dukung_tematik_kompetensi, A3 dari
+    kawasan_tematik/kecamatan_data_turunan), jadi tidak perlu diubah."""
+    rule = rules.get("A")
+    if not rule:
+        return {"tersedia": False, "keterangan": "Kaidah tematik belum diset di database."}
+
+    tematik = (row.get("tematik_kawasan_kompetensi") or "").strip()
+    if not tematik:
+        return {"tersedia": False, "keterangan": "tematik_kawasan_kompetensi belum diisi (verifikasi kompetensi belum dilakukan) — tidak fallback ke Balai/Pemda."}
+
+    sub = rule["subs"].get(tematik)
+    if not sub:
+        return {"tersedia": False, "keterangan": f"Kategori tematik '{tematik}' (verifikasi kompetensi) tidak dikenali kaidah."}
+
+    nilai = sub["nilai"]
+    detail = [f"{sub['label']} — sumber: verifikasi kompetensi (tanpa fallback Balai/Pemda)"]
+    if any(k.startswith("A4_") for k in rule["subs"]):
+        status_a4 = (row.get("jenis_data_dukung_tematik_kompetensi") or "").strip().upper()
+        sub_a4 = rule["subs"].get(f"A4_{status_a4}") if status_a4 else None
+        if sub_a4:
+            nilai += sub_a4["nilai"]
+            detail.append(sub_a4["label"])
+        elif status_a4:
+            detail.append(f"A4: status data dukung '{status_a4}' tidak dikenali kaidah")
+        else:
+            detail.append("A4: data dukung belum dinilai verifikasi kompetensi")
+
+        if any(k.startswith("A3_") for k in rule["subs"]):
+            kategori_cocok = []
+            kode_kab = (row["kode_kecamatan"] // 1000) if row.get("kode_kecamatan") else None
+            if not kode_kab:
+                if ctx and "kab_by_wilayah" in ctx:
+                    kode_kab = ctx["kab_by_wilayah"].get((row.get("provinsi"), row.get("kabupaten_kota")))
+                else:
+                    with db_cursor() as cur:
+                        cur.execute(
+                            "SELECT kode_kabupaten FROM wilayah_mapping "
+                            "WHERE provinsi_sitia = %s AND kabupaten_kota_sitia = %s",
+                            (row.get("provinsi"), row.get("kabupaten_kota")),
+                        )
+                        r = cur.fetchone()
+                    kode_kab = r["kode_kabupaten"] if r else None
+            if kode_kab:
+                if ctx and "kawasan_by_kab" in ctx:
+                    kategori_cocok += [f"A3_{r['kategori']}" for r in ctx["kawasan_by_kab"].get(kode_kab, [])
+                                        if r["kode_kecamatan"] is None or r["kode_kecamatan"] == row.get("kode_kecamatan")]
+                else:
+                    with db_cursor() as cur:
+                        cur.execute(
+                            "SELECT DISTINCT kategori FROM kawasan_tematik WHERE kode_kabupaten = %s "
+                            "AND (kode_kecamatan IS NULL OR kode_kecamatan = %s)",
+                            (kode_kab, row.get("kode_kecamatan")),
+                        )
+                        kategori_cocok += [f"A3_{r['kategori']}" for r in cur.fetchall()]
+
+            kode_kec = row.get("kode_kecamatan")
+            potensi = None
+            if kode_kec:
+                if ctx and "potensi_by_kec" in ctx:
+                    potensi = ctx["potensi_by_kec"].get(kode_kec)
+                else:
+                    with db_cursor() as cur:
+                        cur.execute(
+                            "SELECT potensi_pertanian, potensi_perkebunan, potensi_peternakan, "
+                            "potensi_perikanan FROM kecamatan_data_turunan WHERE kode_kecamatan = %s "
+                            "ORDER BY tahun DESC LIMIT 1",
+                            (kode_kec,),
+                        )
+                        potensi = cur.fetchone()
+            if potensi:
+                for field, kategori in (("potensi_perkebunan", "PERKEBUNAN"),
+                                         ("potensi_peternakan", "PETERNAKAN"),
+                                         ("potensi_perikanan", "PERIKANAN")):
+                    if potensi.get(field):
+                        kategori_cocok.append(f"A3_{kategori}")
+
+            kandidat = [rule["subs"][k] for k in kategori_cocok if k in rule["subs"]]
+            sub_a3 = max(kandidat, key=lambda s: s["nilai"]) if kandidat else None
+            if sub_a3:
+                nilai += sub_a3["nilai"]
+                detail.append(sub_a3["label"])
+            else:
+                detail.append(
+                    "A3: tidak ada kawasan tematik tambahan yang cocok (Perkebunan/Peternakan/"
+                    "Perikanan/Transmigrasi/Kawasan Industri Prioritas/PKPN)"
+                )
+        else:
+            detail.append("A3 (tematik tambahan) belum tersedia — menunggu data lokus gdrive")
+        keterangan = "; ".join(detail) + "."
+    else:
+        keterangan = (
+            f"{sub['label']} (sumber: verifikasi kompetensi, tanpa fallback) — hanya mencakup "
+            "sub-parameter tematik utama (A1/A2); tematik tambahan & data dukung (A3/A4) belum tersedia."
+        )
+    return {"tersedia": True, "nilai": nilai, "keterangan": keterangan}
+
+
 def _ijd_score_kemantapan(row: dict, rules: dict, ctx: dict = None) -> dict:
     rule = rules.get("B")
     if not rule:
@@ -1521,20 +1637,48 @@ def _ijd_score_kemanfaatan(row: dict, rules: dict, ctx: dict = None) -> dict:
     return {"tersedia": True, "nilai": nilai, "keterangan": "; ".join(detail) + "."}
 
 
-def _c1_kuadran_penduduk_ctx() -> dict:
-    """Batch min/max jumlah_penduduk PER PROVINSI dari kecamatan_data_turunan,
-    dipakai _ijd_score_kemanfaatan_c1_v2 -- satu query utk semua provinsi
-    drpd query per usulan (pola sama dgn ctx _ijd_score_bulk_rows).
-    Dihitung ULANG setiap kali dipanggil (bukan konstanta tersimpan) --
-    lihat catatan stabilitas di docstring fungsi scorer-nya."""
+def _c1_total_penduduk_dilalui_per_usulan() -> dict:
+    """Total penduduk YANG DILALUI RUTE tiap usulan -- SUM jumlah_penduduk
+    seluruh kecamatan di usulan_kecamatan_dilalui (spatial_join_kecamatan_
+    multi.py, per usulan bisa >1 kecamatan), BUKAN cuma kode_kecamatan
+    dominan (koreksi 28 Jul 2026 atas permintaan user: "Jumlah Penduduk"
+    di kerangka CPIT dibaca sbg total penduduk yg dilalui ruas usulan,
+    bukan penduduk 1 kecamatan tunggal). Cakupan: 2.865/3.072 usulan
+    (93,3%) sudah py baris di usulan_kecamatan_dilalui.
+    Return {usulan_id: (total_penduduk, kode_provinsi)}."""
     with db_cursor() as cur:
         cur.execute(
-            "SELECT kode_kabupaten / 100 AS kode_provinsi, "
-            "MIN(jumlah_penduduk) AS mn, MAX(jumlah_penduduk) AS mx "
-            "FROM kecamatan_data_turunan WHERE jumlah_penduduk IS NOT NULL "
-            "GROUP BY kode_kabupaten / 100"
+            "SELECT d.usulan_id, d.kode_kabupaten, k.jumlah_penduduk "
+            "FROM usulan_kecamatan_dilalui d "
+            "JOIN LATERAL ("
+            "  SELECT jumlah_penduduk FROM kecamatan_data_turunan kt "
+            "  WHERE kt.kode_kecamatan = d.kode_kecamatan ORDER BY kt.tahun DESC LIMIT 1"
+            ") k ON true "
+            "WHERE k.jumlah_penduduk IS NOT NULL"
         )
-        return {r["kode_provinsi"]: (r["mn"], r["mx"]) for r in cur.fetchall()}
+        rows = cur.fetchall()
+    totals: dict = {}
+    for r in rows:
+        acc = totals.setdefault(r["usulan_id"], [0.0, r["kode_kabupaten"] // 100])
+        acc[0] += float(r["jumlah_penduduk"])
+    return {uid: (total, prov) for uid, (total, prov) in totals.items()}
+
+
+def _c1_kuadran_penduduk_ctx() -> dict:
+    """Batch min/max PER PROVINSI dari total-penduduk-dilalui-per-usulan
+    (_c1_total_penduduk_dilalui_per_usulan) -- dipakai
+    _ijd_score_kemanfaatan_c1_v2. Universe pembanding SEKARANG level
+    usulan (total penduduk yg dilalui rute), BUKAN level kecamatan
+    mentah -- supaya konsisten dgn metrik "total penduduk dilalui"
+    (usulan yg melintasi banyak kecamatan dibandingkan thd usulan lain
+    yg juga bisa melintasi banyak kecamatan, bukan thd populasi 1
+    kecamatan tunggal). Dihitung ULANG setiap kali dipanggil -- lihat
+    catatan stabilitas di docstring fungsi scorer-nya."""
+    per_usulan = _c1_total_penduduk_dilalui_per_usulan()
+    by_provinsi: dict = {}
+    for total, kode_prov in per_usulan.values():
+        by_provinsi.setdefault(kode_prov, []).append(total)
+    return {prov: (min(vals), max(vals)) for prov, vals in by_provinsi.items()}
 
 
 def _ijd_score_kemanfaatan_c1_v2(row: dict, ctx: dict = None) -> dict:
@@ -1547,60 +1691,88 @@ def _ijd_score_kemanfaatan_c1_v2(row: dict, ctx: dict = None) -> dict:
     50, 75, 100)"), BUKAN 4 ambang kepadatan tetap Tabel 4 PDF
     (>1000/500-1000/100-500/<100 jiwa/km2) yang dipakai
     _ijd_score_kemanfaatan saat ini -- beda metrik juga: JUMLAH PENDUDUK
-    mentah per kecamatan (bukan KEPADATAN per km2).
+    mentah (bukan KEPADATAN per km2).
 
-    Kuadran dihitung dari MIN-MAX jumlah_penduduk seluruh kecamatan DALAM
-    PROVINSI yang sama (bukan nasional) -- range dibagi 4 bagian sama
-    besar: kuadran 1 = [min, min+range/4] -> 25, kuadran 2 = (kuadran1,
+    KOREKSI 28 Jul 2026 (permintaan eksplisit user): "Jumlah Penduduk"
+    dibaca sbg TOTAL PENDUDUK YANG DILALUI RUTE usulan -- SUM jumlah_
+    penduduk seluruh kecamatan di usulan_kecamatan_dilalui (bisa >1
+    kecamatan per usulan, dari spatial_join_kecamatan_multi.py), BUKAN
+    cuma populasi 1 kecamatan dominan (kode_kecamatan) spt versi
+    sebelumnya. Konsekuensinya, universe pembanding kuadran JUGA berubah
+    ikut level usulan: dibandingkan thd total-penduduk-dilalui usulan
+    LAIN di provinsi yang sama (_c1_total_penduduk_dilalui_per_usulan),
+    bukan thd populasi kecamatan mentah lagi -- supaya apples-to-apples
+    (usulan yg melintasi banyak kecamatan dibandingkan dgn usulan lain
+    yg juga bisa melintasi banyak kecamatan).
+
+    Kuadran: kuadran 1 = [min, min+range/4] -> 25, kuadran 2 = (kuadran1,
     min+range/2] -> 50, kuadran 3 = (kuadran2, min+3*range/4] -> 75,
     kuadran 4 = (kuadran3, max] -> 100.
 
     **Catatan stabilitas (temuan dari contoh kerja user, screenshot
     27 Jul 2026)**: batas kuadran BUKAN konstanta -- selalu dihitung
     ULANG dari min/max TERKINI (`_c1_kuadran_penduduk_ctx`, query live,
-    tidak di-cache lintas panggilan). Ini berarti skor kecamatan A bisa
-    BERUBAH semata krn kecamatan LAIN di provinsi yang sama mendapat data
-    penduduk baru yang mengubah min/max (mis. contoh user: menambah 1
-    baris populasi 1.200.000 saat max sebelumnya cuma 1.000.000 akan
-    menggeser SELURUH batas kuadran provinsi itu, bukan cuma kecamatan
-    baru itu sendiri) -- beda fundamental dari ambang tetap Tabel 4 PDF
-    yang stabil lintas waktu. Ini bukan bug implementasi, tapi
-    konsekuensi inheren metode "kuadran relatif" itu sendiri -- perlu
-    disadari sebelum dipakai utk skoring resmi (skor bisa "melayang"
-    tanpa perubahan data usulan itu sendiri).
+    tidak di-cache lintas panggilan). Ini berarti skor usulan A bisa
+    BERUBAH semata krn usulan LAIN di provinsi yang sama mendapat data
+    penduduk-dilalui baru yang mengubah min/max -- beda fundamental dari
+    ambang tetap Tabel 4 PDF yang stabil lintas waktu. Ini bukan bug
+    implementasi, tapi konsekuensi inheren metode "kuadran relatif" itu
+    sendiri -- perlu disadari sebelum dipakai utk skoring resmi (skor
+    bisa "melayang" tanpa perubahan data usulan itu sendiri).
 
-    None/tersedia=False kalau kecamatan usulan tidak diketahui atau
-    datanya kosong."""
+    Cakupan: 2.865/3.072 usulan (93,3%) py baris di usulan_kecamatan_
+    dilalui. Usulan yg belum (blm sempat spatial-join) fallback ke
+    kode_kecamatan tunggal (populasi 1 kecamatan saja, ditandai jelas di
+    keterangan) supaya tidak "tersedia: False" tanpa perlu."""
+    usulan_id = row.get("id")
+    total_dilalui = None
+    kode_prov = None
+
+    cached_totals = (ctx or {}).get("c1_total_penduduk_dilalui") if ctx else None
+    if cached_totals is not None:
+        entry = cached_totals.get(usulan_id)
+    elif ctx and "c1_total_penduduk_dilalui" in ctx:
+        entry = None
+    else:
+        entry = _c1_total_penduduk_dilalui_per_usulan().get(usulan_id)
+    if entry:
+        total_dilalui, kode_prov = entry
+        sumber_populasi = "total penduduk kecamatan yang dilalui rute (usulan_kecamatan_dilalui)"
+
     kode_kec = row.get("kode_kecamatan")
-    if not kode_kec:
-        return {"tersedia": False, "keterangan": "Usulan belum dihubungkan ke kecamatan (kode_kecamatan kosong)."}
+    if total_dilalui is None:
+        # Fallback: usulan belum ada di usulan_kecamatan_dilalui (blm
+        # spatial-join) -- pakai populasi kode_kecamatan tunggal saja,
+        # ditandai jelas beda cakupan dari mayoritas usulan lain.
+        if not kode_kec:
+            return {"tersedia": False, "keterangan": "Usulan belum dihubungkan ke kecamatan manapun (kode_kecamatan & usulan_kecamatan_dilalui kosong)."}
+        with db_cursor() as cur:
+            cur.execute(
+                "SELECT jumlah_penduduk FROM kecamatan_data_turunan WHERE kode_kecamatan = %s "
+                "ORDER BY tahun DESC LIMIT 1",
+                (kode_kec,),
+            )
+            r = cur.fetchone()
+        if not r or r["jumlah_penduduk"] is None:
+            return {"tersedia": False, "keterangan": "Usulan belum ada di usulan_kecamatan_dilalui, dan populasi kode_kecamatan tunggalnya juga belum tersedia."}
+        total_dilalui = float(r["jumlah_penduduk"])
+        kode_prov = kode_kec // 100000
+        sumber_populasi = "populasi 1 kecamatan dominan (fallback, usulan blm ada di usulan_kecamatan_dilalui)"
 
-    kode_prov = kode_kec // 100000
     range_prov = (ctx or {}).get("c1_kuadran_by_provinsi", {}).get(kode_prov) if ctx else None
     if range_prov is None and not (ctx and "c1_kuadran_by_provinsi" in ctx):
         range_prov = _c1_kuadran_penduduk_ctx().get(kode_prov)
     if not range_prov:
-        return {"tersedia": False, "keterangan": f"Rentang jumlah penduduk provinsi (kode {kode_prov}) belum tersedia."}
+        return {"tersedia": False, "keterangan": f"Rentang total-penduduk-dilalui provinsi (kode {kode_prov}) belum tersedia."}
 
     mn, mx = float(range_prov[0]), float(range_prov[1])
-    with db_cursor() as cur:
-        cur.execute(
-            "SELECT jumlah_penduduk FROM kecamatan_data_turunan WHERE kode_kecamatan = %s "
-            "ORDER BY tahun DESC LIMIT 1",
-            (kode_kec,),
-        )
-        r = cur.fetchone()
-    if not r or r["jumlah_penduduk"] is None:
-        return {"tersedia": False, "keterangan": "Jumlah penduduk kecamatan usulan ini belum tersedia."}
-
-    populasi = float(r["jumlah_penduduk"])
     rentang = mx - mn
     if rentang <= 0:
-        # Semua kecamatan provinsi ini py populasi sama (rentang 0) --
+        # Semua usulan provinsi ini py total sama (rentang 0) --
         # tidak ada kuadran yang bermakna, taruh semua di kuadran 1.
         nilai, kuadran = 25.0, 1
     else:
-        posisi = (populasi - mn) / rentang
+        posisi = (total_dilalui - mn) / rentang
         if posisi <= 0.25:
             nilai, kuadran = 25.0, 1
         elif posisi <= 0.5:
@@ -1614,7 +1786,7 @@ def _ijd_score_kemanfaatan_c1_v2(row: dict, ctx: dict = None) -> dict:
         "tersedia": True,
         "nilai": nilai,
         "keterangan": (
-            f"Kuadran {kuadran}/4 (populasi kecamatan {populasi:,.0f} jiwa, "
+            f"Kuadran {kuadran}/4 ({sumber_populasi}: {total_dilalui:,.0f} jiwa, "
             f"rentang provinsi {mn:,.0f}-{mx:,.0f} jiwa) — formula alternatif "
             "kerangka CPIT 27.7.26, bukan ambang kepadatan Tabel 4 resmi."
         ),

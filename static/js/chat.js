@@ -116,18 +116,27 @@ async function sendChatMessage(text) {
   }
 }
 
-/* Tool yang dipanggil model tapi dieksekusi di FRONTEND, bukan di server
-   (lihat CLIENT_ACTION_TOOLS di chat_providers.py -- daftar nama tool di
-   sana HARUS sinkron dgn key di sini). Backend hanya meneruskan nama+argumen
-   tool call apa adanya lewat data.actions, tanpa tahu/peduli apa yang
-   sungguh terjadi di UI -- kalau nama actionnya tidak dikenal di sini,
-   diam-diam diabaikan drpd melempar error yang bikin panggilan chat gagal. */
+/* Aksi yang dieksekusi di FRONTEND atas perintah model, lewat data.actions
+   dari /api/chat. Key di sini HARUS sinkron dengan nama aksi yang dikirim
+   backend -- untuk CLIENT_ACTION_TOOLS (chat_providers.py) itu SAMA PERSIS
+   dgn nama tool-nya, tapi utk tool "hibrida" (mis.
+   tampilkan_layer_batas_administratif_usulan) nama aksinya BEDA dari nama
+   tool yang dipanggil model -- backend meresolusinya dulu jadi aksi generik
+   "tampilkan_layer_peta_overlay" dgn argumen provinsi/kabupaten/layer yang
+   sudah pasti valid, bukan ditebak model. Kalau nama aksinya tidak dikenal
+   di sini, diam-diam diabaikan drpd melempar error yang bikin panggilan
+   chat gagal. */
 const CHAT_CLIENT_ACTIONS = {
   tampilkan_usulan_di_peta: (args) => {
     if (!args || args.id == null) return;
     if (typeof loadUsulanDetail !== "function") return;
     loadUsulanDetail(args.id);
     document.getElementById("usulanBrowseDetail")?.scrollIntoView({ behavior: "smooth", block: "center" });
+  },
+  tampilkan_layer_peta_overlay: (args) => {
+    if (!args || !args.provinsi || args.layer == null) return;
+    if (typeof showMapLayer !== "function") return;
+    showMapLayer(args.provinsi, args.kabupaten ?? "", args.layer);
   },
 };
 

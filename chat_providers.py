@@ -60,6 +60,11 @@ KHUSUS skor IJD/Prioritisasi Teknokratik (parameter A-E): skor ini TIDAK tersimp
 ulang tiap kali dari rumus berbobot resmi lintas banyak tabel) — WAJIB pakai fungsi hitung_skor_ijd_usulan \
 untuk pertanyaan soal skor usulan tertentu, JANGAN coba hitung sendiri lewat jalankan_query_sql, hasilnya \
 tidak akan sesuai kaidah resmi. \
+Bila pengguna minta MENAMPILKAN/MENYALAKAN layer batas kecamatan/kabupaten/provinsi di peta untuk suatu usulan \
+(bukan sekadar bertanya datanya), pakai fungsi tampilkan_layer_batas_administratif_usulan (id usulan + level) — \
+fungsi ini otomatis mencari layer yang tepat dari lokasi usulan, JANGAN coba rakit sendiri lewat \
+daftar_layer_peta_overlay untuk maksud menampilkan (fungsi itu cuma untuk cari data provinsi/kabupaten/layer \
+sebelum analisa_spasial_usulan, bukan untuk menyalakan tampilan). \
 Klasifikasi jalan OSM adalah perkiraan, bukan data resmi PUPR."""
 
 CHAT_SEARCH_AVAILABLE_NOTE = (
@@ -258,12 +263,42 @@ CHAT_TOOLS = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "tampilkan_layer_batas_administratif_usulan",
+            "description": (
+                "Menyalakan (menampilkan) layer overlay batas kecamatan/kabupaten/provinsi DI PETA "
+                "untuk wilayah tempat satu usulan berada — pakai ini kalau pengguna minta 'tampilkan/"
+                "tunjukkan/nyalakan layer kecamatan/kabupaten/provinsi' untuk suatu usulan. Otomatis "
+                "mencari layer yang tepat dari lokasi usulan itu sendiri — TIDAK perlu panggil "
+                "daftar_layer_peta_overlay dulu untuk kasus ini."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "id": {"type": "integer", "description": "ID usulan yang jadi acuan wilayah"},
+                    "level": {"type": "string", "enum": ["kecamatan", "kabupaten", "provinsi"], "description": "Level batas administratif yang mau ditampilkan"},
+                },
+                "required": ["id", "level"],
+            },
+        },
+    },
 ]
 
-# Tool yang PANGGILANNYA diteruskan ke frontend utk dieksekusi di UI, BUKAN
-# dijalankan/di-dispatch di server (lihat _run_tool_call) -- lapisan pertama
-# fitur "AI bisa bertindak, bukan cuma menjawab" (permintaan user 27 Jul 2026).
+# Tool yang PANGGILANNYA diteruskan MENTAH ke frontend utk dieksekusi di UI,
+# BUKAN dijalankan/di-dispatch di server (lihat _run_tool_call) -- lapisan
+# pertama fitur "AI bisa bertindak, bukan cuma menjawab" (27 Jul 2026).
 CLIENT_ACTION_TOOLS = {"tampilkan_usulan_di_peta"}
+
+# Tool "hibrida": TETAP di-dispatch normal lewat CHAT_TOOL_DISPATCH (jalan di
+# server dulu -- resolve nama layer yang benar dari lokasi usulan), TAPI
+# fungsinya juga menerima param `actions` dan menambahkan aksi klien sendiri
+# di akhir (lihat _tool_tampilkan_layer_batas_administratif_usulan) --
+# ARGUMEN aksi yang dikirim ke frontend jadi SUDAH pasti valid (provinsi/
+# kabupaten/layer persis dari map_layer_meta), bukan ditebak model spt kalau
+# modelnya sendiri yang disuruh panggil daftar_layer_peta_overlay dulu.
+_TOOLS_NEED_ACTIONS_PARAM = {"tampilkan_layer_batas_administratif_usulan"}
 
 _USULAN_TOOL_FIELDS = (
     "id", "nama_kegiatan", "nama_ruas", "kabupaten_kota", "provinsi", "jenis_penanganan",
@@ -376,6 +411,69 @@ def _tool_analisa_spasial_usulan(id=None, provinsi=None, layer=None, kabupaten="
             for h in hits
         ],
     }
+
+
+_LEVEL_KE_BUCKET_LAYER = {
+    "kecamatan": "BATAS KECAMATAN",
+    "kabupaten": "BATAS KABUPATEN",
+    "provinsi": "BATAS PROVINSI",
+}
+
+
+def _tool_tampilkan_layer_batas_administratif_usulan(id=None, level=None, actions=None) -> dict:
+    """Resolve (provinsi, kabupaten, layer) map_layers YANG BENAR dari lokasi
+    usulan itu sendiri -- lihat _TOOLS_NEED_ACTIONS_PARAM di atas kenapa ini
+    tidak sesederhana CLIENT_ACTION_TOOLS biasa (model tidak disuruh menebak
+    nama layer, ditemukan lewat query ILIKE ke map_layer_meta)."""
+    bucket = _LEVEL_KE_BUCKET_LAYER.get(str(level or "").strip().lower())
+    if id is None or bucket is None:
+        return {"error": "id usulan dan level (kecamatan/kabupaten/provinsi) diperlukan"}
+
+    with db_cursor() as cur:
+        cur.execute("SELECT provinsi, kabupaten_kota FROM usulan_inpres WHERE id=%s", (int(id),))
+        row = cur.fetchone()
+        if not row:
+            return {"error": "usulan tidak ditemukan"}
+
+        if bucket == "BATAS PROVINSI":
+            # bucket nasional flat, satu layer -- tidak perlu resolve apa pun.
+            layer_provinsi, layer_kabupaten, layer_layer = bucket, "", "Provinsi"
+        else:
+            # kolom "kabupaten" di bucket ini = PROVINSI ASLI (lihat catatan
+            # arsitektur di CLAUDE.md) -- cocokkan ke provinsi usulan.
+            cur.execute(
+                "SELECT DISTINCT kabupaten FROM map_layer_meta WHERE provinsi=%s AND kabupaten ILIKE %s LIMIT 1",
+                (bucket, row["provinsi"]),
+            )
+            prov_row = cur.fetchone()
+            if not prov_row:
+                return {"error": f"Tidak ada layer {bucket} untuk provinsi '{row['provinsi']}'"}
+            layer_provinsi, layer_kabupaten = bucket, prov_row["kabupaten"]
+
+            if bucket == "BATAS KABUPATEN":
+                # satu layer tunggal per provinsi ("Kabupaten/Kota"), tidak perlu cocokkan lebih lanjut.
+                cur.execute(
+                    "SELECT layer FROM map_layer_meta WHERE provinsi=%s AND kabupaten=%s LIMIT 1",
+                    (bucket, layer_kabupaten),
+                )
+                layer_layer = cur.fetchone()["layer"]
+            else:  # BATAS KECAMATAN: "layer" = nama kabupaten/kota usulan, cocokkan longgar
+                nama_kabkota = re.sub(r"^(KABUPATEN|KOTA)\s+", "", str(row["kabupaten_kota"] or "").strip(), flags=re.IGNORECASE)
+                cur.execute(
+                    "SELECT layer FROM map_layer_meta WHERE provinsi=%s AND kabupaten=%s AND layer ILIKE %s LIMIT 1",
+                    (bucket, layer_kabupaten, f"%{nama_kabkota}%"),
+                )
+                kab_row = cur.fetchone()
+                if not kab_row:
+                    return {"error": f"Tidak ada layer kecamatan yang cocok untuk '{row['kabupaten_kota']}'"}
+                layer_layer = kab_row["layer"]
+
+    if actions is not None:
+        actions.append({
+            "nama": "tampilkan_layer_peta_overlay",
+            "argumen": {"provinsi": layer_provinsi, "kabupaten": layer_kabupaten, "layer": layer_layer},
+        })
+    return {"status": "diteruskan_ke_frontend_untuk_dieksekusi", "layer_ditemukan": layer_layer}
 
 
 def _tool_analisa_geometri_kml_usulan(id=None) -> dict:
@@ -502,6 +600,7 @@ CHAT_TOOL_DISPATCH = {
     "hitung_skor_ijd_usulan": _tool_hitung_skor_ijd_usulan,
     "daftar_layer_peta_overlay": _tool_daftar_layer_peta_overlay,
     "analisa_spasial_usulan": _tool_analisa_spasial_usulan,
+    "tampilkan_layer_batas_administratif_usulan": _tool_tampilkan_layer_batas_administratif_usulan,
     # "tampilkan_usulan_di_peta" SENGAJA tidak didaftarkan di sini -- ada di
     # CLIENT_ACTION_TOOLS, diteruskan ke frontend lewat _run_tool_call, bukan
     # dieksekusi di server.
@@ -526,7 +625,11 @@ def _run_tool_call(name: str, args: dict, actions: list) -> dict:
         actions.append({"nama": name, "argumen": args})
         return {"status": "diteruskan_ke_frontend_untuk_dieksekusi"}
     fn = CHAT_TOOL_DISPATCH.get(name)
-    return fn(**args) if fn else {"error": "fungsi tidak dikenal"}
+    if fn is None:
+        return {"error": "fungsi tidak dikenal"}
+    if name in _TOOLS_NEED_ACTIONS_PARAM:
+        return fn(actions=actions, **args)
+    return fn(**args)
 
 
 def _call_openai_compatible(provider: str, api_url: str, api_key: str, model: str, messages: List, context: Optional[dict]) -> tuple:

@@ -387,6 +387,29 @@ Deps: `requirements.txt`, venv at `.venv/` (already gitignored).
     `CHAT_TOOLS`, adding its name to `CLIENT_ACTION_TOOLS`, and adding a
     matching entry to `CHAT_CLIENT_ACTIONS` in chat.js — no other provider
     code needs to change, they all thread `actions` generically.
+  - `tampilkan_layer_batas_administratif_usulan` — second UI-action tool
+    (27 Jul 2026), but a different shape than `tampilkan_usulan_di_peta`:
+    it's a **hybrid**, registered in both `CHAT_TOOL_DISPATCH` (runs
+    server-side first) and `_TOOLS_NEED_ACTIONS_PARAM` (also gets the
+    `actions` list passed in as a kwarg so it can append to it itself).
+    Added because letting the model resolve the map-overlay `(provinsi,
+    kabupaten, layer)` triple itself via `daftar_layer_peta_overlay` before
+    calling a plain client-action tool was exactly the 3-hop chain
+    `analisa_spasial_usulan` already struggles with — this tool takes
+    `(id, level)` where `level ∈ {kecamatan, kabupaten, provinsi}`, resolves
+    the usulan's own provinsi/kabupaten_kota from `usulan_inpres` and
+    matches it against `map_layer_meta` server-side (ILIKE, handles the
+    `KABUPATEN`/`KOTA` prefix stripping the same way
+    `import_batas_administrasi_kecamatan.py`'s `kabupaten_label()` produces
+    it), then appends a **generically-named** `tampilkan_layer_peta_overlay`
+    action (not `tampilkan_layer_batas_administratif_usulan` — the tool name
+    the model calls and the action name the frontend executes are
+    deliberately different here) with the already-resolved, guaranteed-valid
+    triple. `chat.js`'s handler for it just calls the existing
+    `showMapLayer(provinsi, kabupaten, layer)` from maps-overlay.js — same
+    function the overlay tree checkboxes use, works whether or not that
+    panel is currently open. `BATAS PROVINSI` (flat national bucket,
+    `kabupaten=""`, one layer) needs no resolution at all.
   OpenAI additionally gets `web_search_preview`; the system prompt tells the
   model whether web search is available.
 - `GET /api/maps/provinces` / `GET /api/maps/kabupaten` / `GET /api/maps/layers`

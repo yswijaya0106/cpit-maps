@@ -47,7 +47,11 @@ Anda diberi data ringkas tentang rute yang sedang dilihat pengguna (jarak, duras
 dilalui, perkiraan klasifikasi jalan dari OpenStreetMap, dan usulan Inpres Jalan/Jembatan di sekitar rute). \
 Gunakan data ini untuk menjawab. Bila pengguna bertanya tentang usulan Inpres di luar rute yang sedang dilihat \
 (wilayah lain, pencarian umum, atau detail satu usulan tertentu), gunakan fungsi cari_usulan_inpres atau \
-detail_usulan_inpres untuk mengambil data terbaru dari database — jangan mengarang data. Bila pengguna bertanya \
+detail_usulan_inpres untuk mengambil data terbaru dari database — jangan mengarang data. Saat memanggil \
+cari_usulan_inpres berdasarkan nama, JANGAN isi provinsi/kabupaten_kota kecuali pengguna sendiri menyebutkan \
+wilayahnya — kalau hasil pencarian nama-saja kosong, katakan usulan tidak ditemukan apa adanya, JANGAN \
+menyebutkan provinsi/kabupaten/lokasi tertentu dalam jawaban kecuali itu benar-benar berasal dari hasil \
+tool, bukan tebakan Anda sendiri. Bila pengguna bertanya \
 soal geometri KML riil suatu usulan (panjang aktual, jumlah segmen, apakah cocok dengan data atribut \
 panjang_ruas_km), gunakan fungsi analisa_geometri_kml_usulan. \
 Untuk pertanyaan analitis/lintas tabel yang tidak tercakup fungsi-fungsi di atas (data BPS, kawasan tematik, \
@@ -96,13 +100,20 @@ CHAT_TOOLS = [
             "description": (
                 "Mencari usulan Inpres Jalan/Jembatan di database berdasarkan provinsi, "
                 "kabupaten/kota, dan/atau kata kunci nama ruas/kegiatan/kode ruas. Gunakan "
-                "ini untuk pertanyaan di luar rute yang sedang dilihat pengguna."
+                "ini untuk pertanyaan di luar rute yang sedang dilihat pengguna. PENTING: "
+                "provinsi dan kabupaten_kota HANYA diisi kalau pengguna sendiri menyebutkan "
+                "wilayahnya secara eksplisit di pesannya — JANGAN pernah menebak provinsi/"
+                "kabupaten dari nama ruas/kegiatan (mis. nama kecamatan di nama ruas tidak "
+                "menjamin itu kabupatennya). Semua filter di sini digabung dgn AND, jadi "
+                "menebak wilayah yang salah akan membuat usulan yang sebenarnya ada jadi "
+                "tidak ketemu. Kalau ragu, panggil HANYA dengan q (kata kunci nama), biarkan "
+                "provinsi/kabupaten_kota kosong."
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "provinsi": {"type": "string", "description": "Nama provinsi persis, contoh: JAWA BARAT"},
-                    "kabupaten_kota": {"type": "string", "description": "Nama kabupaten/kota (pencocokan sebagian)"},
+                    "provinsi": {"type": "string", "description": "Nama provinsi persis, contoh: JAWA BARAT — isi HANYA kalau disebutkan eksplisit oleh pengguna, jangan menebak"},
+                    "kabupaten_kota": {"type": "string", "description": "Nama kabupaten/kota (pencocokan sebagian) — isi HANYA kalau disebutkan eksplisit oleh pengguna, jangan menebak"},
                     "q": {"type": "string", "description": "Kata kunci nama ruas, nama kegiatan, atau kode ruas"},
                     "limit": {"type": "integer", "description": "Jumlah maksimum hasil, default 10, maksimum 20"},
                 },

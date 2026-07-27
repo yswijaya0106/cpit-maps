@@ -1793,65 +1793,24 @@ def _ijd_score_kemanfaatan_c1_v2(row: dict, ctx: dict = None) -> dict:
     }
 
 
-_OPLAH_IP_XLSX_PATH = BASE_DIR / "docs" / "docs" / "IP 2019-2024, OPLAH.xlsx"
-_c2_ip_oplah_cache: dict | None = None  # {kode_kab (int): ip_2024 (float)} -- diisi sekali, lihat _load_ip_oplah_2024
-
-
-def _norm_nama_kab_oplah(s) -> str:
-    if not s:
-        return ""
-    s = str(s).upper()
-    # \s+ (BUKAN \s*) -- \s* pernah salah memotong nama yg SECARA KEBETULAN
-    # diawali kata "Kota"/"Kab" tanpa spasi sbg bagian nama itu sendiri (mis.
-    # "Kotabaru" jadi "BARU"), ditemukan 27 Jul 2026 saat sinkronisasi OPLAH.
-    s = re.sub(r"^(KABUPATEN|KOTA|KAB\.?)\s+", "", s)
-    return re.sub(r"[^A-Z0-9]+", " ", s).strip()
-
-
-def _load_ip_oplah_2024() -> dict:
-    """Parsing docs/docs/IP 2019-2024, OPLAH.xlsx sheet "IP TOTAL" kolom L
-    (IP 2024, indeks 11 0-based) -> {kode_kab: ip_2024}, dicocokkan by nama
-    kabupaten/kota (file ini tidak punya kolom kode sendiri) terhadap
-    bps_kecamatan_demografi (SAMA persis metodologi & fungsi normalisasi
-    nama yang dipakai docs/perbandingan_ip_oplah_vs_bps_kabupaten_indeks_
-    penanaman.md, termasuk 14 kabupaten yang gagal cocok otomatis di sana
-    -- lihat dokumen itu utk daftarnya).
-
-    Dibuat 27 Jul 2026 utk _ijd_score_kemanfaatan_c2_ip_v2 (varian
-    ALTERNATIF, bukan pengganti C.A2b resmi yang masih pakai raster/
-    Kertas Kerja.xlsx). File OPLAH TIDAK diimpor ke tabel manapun
-    (dikonfirmasi docs/perbandingan_ip_oplah...md §1) -- fungsi ini
-    membaca xlsx langsung & cache di memori proses (bukan tabel DB),
-    krn sifatnya masih eksperimental/pembanding, belum ada keputusan
-    resmi menjadikannya sumber utama C.A2b (lihat catatan stabilitas di
-    _ijd_score_kemanfaatan_c1_v2 -- pola yang sama: fungsi baru terpisah
-    dulu, bukan langsung menggantikan yang resmi)."""
-    global _c2_ip_oplah_cache
-    if _c2_ip_oplah_cache is not None:
-        return _c2_ip_oplah_cache
-
-    wb = openpyxl.load_workbook(_OPLAH_IP_XLSX_PATH, read_only=True, data_only=True)
-    ws = wb["IP TOTAL"]
-    ip_by_nama: dict = {}
-    for row in ws.iter_rows(min_row=2, values_only=True):
-        if row[1]:  # baris provinsi (agregat) -- skip, cuma butuh baris kabupaten/kota
-            continue
-        if not row[2]:
-            continue
-        ip_by_nama[_norm_nama_kab_oplah(row[2])] = row[11]  # kolom L = IP 2024
-    wb.close()
-
+def _c2_ip_by_kab_ctx() -> dict:
+    """Batch {kode_kab (int): indeks_penanaman_pct} dari
+    bps_kabupaten_indeks_penanaman (tahun 2024) -- dipakai
+    _ijd_score_kemanfaatan_c2_ip_v2. Tabel ini SEKARANG sumbernya OPLAH
+    utk 507/514 kabupaten (disinkronkan scripts/import_ip_oplah.py 27-28
+    Jul 2026, lihat docs/perbandingan_ip_oplah_vs_bps_kabupaten_indeks_
+    penanaman.md), fallback Kertas Kerja.xlsx utk 7 sisanya yang gagal
+    cocok nama (5 Kota Adm. DKI Jakarta, Kepulauan Seribu,
+    Padangsidimpuan) -- BUKAN lagi baca file OPLAH.xlsx langsung di
+    runtime spt versi awal fungsi ini (dikoreksi 28 Jul 2026 atas
+    permintaan user: skoring harus baca dari tabel yang sudah
+    disinkronkan, bukan parsing ulang xlsx tiap panggilan)."""
     with db_cursor() as cur:
-        cur.execute("SELECT DISTINCT kode_kab, nama_kab FROM bps_kecamatan_demografi")
-        name_by_kode = {r["kode_kab"]: r["nama_kab"] for r in cur.fetchall()}
-
-    result = {}
-    for kode_kab_str, nama in name_by_kode.items():
-        ip = ip_by_nama.get(_norm_nama_kab_oplah(nama))
-        if ip is not None:
-            result[int(kode_kab_str)] = float(ip)
-    _c2_ip_oplah_cache = result
-    return result
+        cur.execute(
+            "SELECT kode_kab, indeks_penanaman_pct FROM bps_kabupaten_indeks_penanaman "
+            "WHERE tahun = 2024 AND indeks_penanaman_pct IS NOT NULL"
+        )
+        return {int(r["kode_kab"]): float(r["indeks_penanaman_pct"]) for r in cur.fetchall()}
 
 
 def _ijd_score_kemanfaatan_c2_ip_v2(row: dict, ctx: dict = None) -> dict:
@@ -1859,10 +1818,19 @@ def _ijd_score_kemanfaatan_c2_ip_v2(row: dict, ctx: dict = None) -> dict:
     _ijd_score_kemanfaatan (resmi, _IJD_SCORERS) -- dibuat 27 Jul 2026
     persis formula tertulis di docs/docs/27.7.26 KERANGKA PENGGUNAAN DATA
     UNTUK APLIKASI CPIT.xlsx sheet "Penilaian Teknokratis" baris C2 Indeks
-    Penanaman: "= nilai IP di kab / nilai IP max se Indonesia * 100",
-    sumber data eksplisit diminta user: docs/docs/IP 2019-2024,
-    OPLAH.xlsx sheet "IP TOTAL" kolom L (IP 2024) -- lihat
-    _load_ip_oplah_2024.
+    Penanaman: "= nilai IP di kab / nilai IP max se Indonesia * 100".
+
+    Sumber data: `bps_kabupaten_indeks_penanaman.indeks_penanaman_pct`
+    (tahun 2024) -- lihat `_c2_ip_by_kab_ctx`. DIKOREKSI 28 Jul 2026 atas
+    permintaan user: awalnya fungsi ini baca `IP 2019-2024, OPLAH.xlsx`
+    langsung di runtime (`_load_ip_oplah_2024`, sudah dihapus), padahal
+    tabel `bps_kabupaten_indeks_penanaman` SUDAH disinkronkan dari file
+    OPLAH yang sama persis (`scripts/import_ip_oplah.py`, 507/514
+    kabupaten) -- membaca xlsx ulang di runtime cuma duplikasi kerja &
+    berisiko drift dari tabel yang sudah jadi sumber kebenaran. Sekarang
+    scorer ini baca tabel itu langsung, sama pola dgn semua fungsi C
+    lainnya (C2-Produksi, C2-LuasLahan, dst. semuanya query tabel, bukan
+    file).
 
     Beda dari _ijd_score_kemanfaatan (C.A2b resmi, ambang Tabel 4 PDF
     absolut >300/200-299/150-199/100-149/<100%, sumber raster Dit. SDA
@@ -1879,10 +1847,11 @@ def _ijd_score_kemanfaatan_c2_ip_v2(row: dict, ctx: dict = None) -> dict:
     baru cuma mengubah rasio kabupaten lain sedikit, tidak menggeser
     definisi kuadran itu sendiri).
 
-    None/tersedia=False kalau kabupaten usulan tidak diketahui atau tidak
-    tercakup file OPLAH (lihat docs/perbandingan_ip_oplah_vs_bps_
-    kabupaten_indeks_penanaman.md §2 -- 14 kabupaten/kota gagal cocok
-    otomatis, kebanyakan DKI Jakarta & varian ejaan nama)."""
+    None/tersedia=False kalau kabupaten usulan tidak diketahui atau
+    kolomnya NULL di bps_kabupaten_indeks_penanaman (7 kabupaten yang
+    gagal disinkronkan OPLAH: 5 Kota Adm. DKI Jakarta, Kepulauan Seribu,
+    Padangsidimpuan -- lihat docs/perbandingan_ip_oplah_vs_bps_
+    kabupaten_indeks_penanaman.md §2)."""
     kode_kec = row.get("kode_kecamatan")
     if kode_kec:
         kode_kab = kode_kec // 1000
@@ -1898,14 +1867,14 @@ def _ijd_score_kemanfaatan_c2_ip_v2(row: dict, ctx: dict = None) -> dict:
     if not kode_kab:
         return {"tersedia": False, "keterangan": "Kabupaten usulan tidak diketahui (wilayah_mapping tidak match)."}
 
-    ip_by_kab = (ctx or {}).get("ip_oplah_by_kab") if ctx else None
+    ip_by_kab = (ctx or {}).get("c2_ip_by_kab") if ctx else None
     if ip_by_kab is None:
-        ip_by_kab = _load_ip_oplah_2024()
+        ip_by_kab = _c2_ip_by_kab_ctx()
     ip_kab = ip_by_kab.get(kode_kab)
     if ip_kab is None:
-        return {"tersedia": False, "keterangan": f"IP 2024 (OPLAH) kabupaten kode {kode_kab} tidak tercakup file."}
+        return {"tersedia": False, "keterangan": f"indeks_penanaman_pct kabupaten kode {kode_kab} kosong di bps_kabupaten_indeks_penanaman."}
     if not ip_by_kab:
-        return {"tersedia": False, "keterangan": "Data IP OPLAH nasional belum termuat."}
+        return {"tersedia": False, "keterangan": "Data indeks_penanaman_pct nasional belum termuat."}
 
     ip_maks_nasional = max(ip_by_kab.values())
     rasio = ip_kab / ip_maks_nasional * 100 if ip_maks_nasional > 0 else 0.0
@@ -1924,7 +1893,8 @@ def _ijd_score_kemanfaatan_c2_ip_v2(row: dict, ctx: dict = None) -> dict:
         "keterangan": (
             f"Kuadran {kuadran}/4 (IP kab. {ip_kab:.1f}%, rasio thd IP maks nasional "
             f"{ip_maks_nasional:.1f}% = {rasio:.1f}%) — formula alternatif kerangka "
-            "CPIT 27.7.26, sumber IP 2019-2024 OPLAH.xlsx, bukan ambang Tabel 4 resmi."
+            "CPIT 27.7.26, sumber bps_kabupaten_indeks_penanaman (tersinkron OPLAH), "
+            "bukan ambang Tabel 4 resmi."
         ),
     }
 

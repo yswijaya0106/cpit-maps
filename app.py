@@ -6254,8 +6254,8 @@ def usulan_inpres_export_shp(usulan_id: int):
 def chat(payload: ChatRequest):
     if not payload.messages:
         raise HTTPException(400, "Tidak ada pesan")
-    reply = chat_providers._call_chat(payload.messages, payload.context)
-    return {"reply": reply}
+    reply, actions = chat_providers._call_chat(payload.messages, payload.context)
+    return {"reply": reply, "actions": actions}
 
 
 class NoCacheStaticFiles(StaticFiles):

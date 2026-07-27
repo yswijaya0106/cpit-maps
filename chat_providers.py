@@ -182,14 +182,82 @@ CHAT_TOOLS = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "id": {"type": "integer", "description": "ID usulan"},
+    "id": {"type": "integer", "description": "ID usulan"},
                     "tahun": {"type": "integer", "description": "Tahun kaidah skoring, default 2026 (2025 juga tersedia)"},
                 },
                 "required": ["id"],
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "daftar_layer_peta_overlay",
+            "description": (
+                "Menjelajahi daftar layer overlay peta yang tersedia (batas kecamatan/kabupaten/provinsi, "
+                "jalan nasional/provinsi/tol, bandara/pelabuhan, dst.) — dipakai utk mencari nilai "
+                "provinsi/kabupaten/layer yang PERSIS sebelum panggil analisa_spasial_usulan. Tanpa "
+                "argumen: daftar bucket/kategori teratas. Isi 'provinsi' saja (jangan isi 'kabupaten' "
+                "sama sekali): daftar sub-wilayahnya. Isi 'provinsi' + 'kabupaten' dgn nilai PERSIS dari "
+                "langkah sebelumnya (untuk bucket nasional flat spt BANDARA/JALAN NASIONAL/BATAS "
+                "PROVINSI, nilai 'kabupaten' persisnya memang string KOSONG \"\" — tetap kirim \"\" "
+                "sebagai argumen, JANGAN dihilangkan): daftar layer di dalamnya."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "provinsi": {"type": "string", "description": "Nama bucket/provinsi persis dari hasil panggilan tanpa argumen"},
+                    "kabupaten": {"type": "string", "description": "Nama sub-wilayah persis dari hasil panggilan dgn provinsi saja -- boleh string kosong \"\" untuk bucket nasional flat, tapi harus tetap dikirim (jangan dihilangkan) begitu sudah tahu nilainya"},
+                },
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "analisa_spasial_usulan",
+            "description": (
+                "Menganalisa hubungan spasial rute satu usulan terhadap fitur-fitur di satu layer peta "
+                "overlay — jarak (km) ke tiap fitur terdekat (maks 10, terurut terdekat dulu) dan apakah "
+                "rute berpotongan langsung dgn fitur itu. Contoh pakai: \"seberapa dekat usulan X ke "
+                "bandara terdekat\", \"apakah usulan Y melintasi kabupaten Z\". WAJIB panggil "
+                "daftar_layer_peta_overlay dulu utk dapat nilai provinsi/kabupaten/layer yang persis — "
+                "jangan menebak."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "id": {"type": "integer", "description": "ID usulan"},
+                    "provinsi": {"type": "string", "description": "Nilai 'provinsi' persis dari daftar_layer_peta_overlay"},
+                    "kabupaten": {"type": "string", "description": "Nilai 'kabupaten' persis dari daftar_layer_peta_overlay (kosongkan string kalau layer nasional flat)"},
+                    "layer": {"type": "string", "description": "Nilai 'layer' persis dari daftar_layer_peta_overlay"},
+                },
+                "required": ["id", "provinsi", "layer"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "tampilkan_usulan_di_peta",
+            "description": (
+                "Menampilkan rute satu usulan Inpres di peta pada aplikasi ini (menggambar jalurnya & "
+                "membuka panel detail atributnya) — pakai ini kalau pengguna secara eksplisit minta "
+                "'tunjukkan/tampilkan/bukakan di peta', bukan sekadar bertanya datanya dalam teks."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {"id": {"type": "integer", "description": "ID usulan yang mau ditampilkan"}},
+                "required": ["id"],
+            },
+        },
+    },
 ]
+
+# Tool yang PANGGILANNYA diteruskan ke frontend utk dieksekusi di UI, BUKAN
+# dijalankan/di-dispatch di server (lihat _run_tool_call) -- lapisan pertama
+# fitur "AI bisa bertindak, bukan cuma menjawab" (permintaan user 27 Jul 2026).
+CLIENT_ACTION_TOOLS = {"tampilkan_usulan_di_peta"}
 
 _USULAN_TOOL_FIELDS = (
     "id", "nama_kegiatan", "nama_ruas", "kabupaten_kota", "provinsi", "jenis_penanganan",
@@ -228,6 +296,80 @@ def _tool_hitung_skor_ijd_usulan(id=None, tahun=2026) -> dict:
         return usulan_inpres_ijd_score(int(id), int(tahun or 2026))
     except HTTPException as e:
         return {"error": e.detail}
+
+
+def _tool_daftar_layer_peta_overlay(provinsi=None, kabupaten=None) -> dict:
+    # Reuse endpoint /api/maps/* yang sudah ada apa adanya (fungsi FastAPI
+    # tetap bisa dipanggil langsung sbg fungsi Python biasa, dekorator tidak
+    # mengubah calling convention-nya) -- BUKAN query map_layers manual di sini,
+    # supaya konsisten dgn hierarki yang sama dipakai UI topbar "Overlay Peta".
+    from app import maps_provinces, maps_kabupaten, maps_layers  # lazy: hindari circular import
+    if not provinsi:
+        return {"provinsi_atau_kategori": maps_provinces()}
+    # "kabupaten" is None (kosong dari model = belum dipilih) BEDA dgn ""
+    # (nilai VALID utk bucket nasional flat spt BANDARA/JALAN NASIONAL/BATAS
+    # PROVINSI, lihat maps_kabupaten() di app.py) -- pakai `is None`, BUKAN
+    # falsy check, supaya kabupaten="" yg disalin model dari hasil panggilan
+    # sebelumnya benar2 lanjut ke daftar layer, bukan diam2 tersangkut
+    # mengulang daftar sub-wilayah (bug ditemukan 27 Jul 2026 lewat tes
+    # pertanyaan "bandara terdekat" yg gagal nemu layer BANDARA).
+    if kabupaten is None:
+        try:
+            return {"kabupaten_atau_sub_wilayah": maps_kabupaten(provinsi)}
+        except HTTPException as e:
+            return {"error": e.detail}
+    try:
+        return {"layer": maps_layers(provinsi, kabupaten)}
+    except HTTPException as e:
+        return {"error": e.detail}
+
+
+def _tool_analisa_spasial_usulan(id=None, provinsi=None, layer=None, kabupaten="") -> dict:
+    if id is None or not provinsi or not layer:
+        return {"error": "id usulan, provinsi, dan layer diperlukan -- panggil daftar_layer_peta_overlay dulu utk nilai yg persis"}
+    with db_cursor() as cur:
+        cur.execute("SELECT geom_geojson FROM usulan_inpres WHERE id=%s", (int(id),))
+        row = cur.fetchone()
+        if not row:
+            return {"error": "usulan tidak ditemukan"}
+        if not row["geom_geojson"]:
+            return {"error": "usulan ini belum punya data geometri rute (geom_geojson kosong)"}
+        try:
+            # Cross join thd 1 baris target: ST_GeomFromGeoJSON dihitung SEKALI,
+            # bukan per-baris map_layers -- geometri usulan tetap teks JSON di
+            # kolom sumbernya (lihat CLAUDE.md), di-cast murni di sisi SQL
+            # (ST_GeomFromGeoJSON), tidak lewat shapely Python sama sekali jadi
+            # tidak kena bug shapely/numpy yang didokumentasikan di tempat lain.
+            # "geom <-> target" (KNN operator) memakai idx_map_layers_geom
+            # supaya tidak full-scan layer besar.
+            cur.execute(
+                """
+                SELECT ml.attrs AS attrs,
+                       ST_Distance(ml.geom::geography, t.target::geography) AS jarak_m,
+                       ST_Intersects(ml.geom, t.target) AS berpotongan
+                FROM map_layers ml,
+                     (SELECT ST_SetSRID(ST_GeomFromGeoJSON(%s), 4326) AS target) t
+                WHERE ml.provinsi = %s AND ml.kabupaten = %s AND ml.layer = %s
+                ORDER BY ml.geom <-> t.target
+                LIMIT 10
+                """,
+                (row["geom_geojson"], provinsi, kabupaten, layer),
+            )
+            hits = cur.fetchall()
+        except Exception as e:
+            return {"error": f"Gagal analisa spasial (cek nama provinsi/kabupaten/layer via daftar_layer_peta_overlay): {e}"}
+    if not hits:
+        return {"error": "Tidak ada fitur di layer itu (cek nama provinsi/kabupaten/layer)"}
+    return {
+        "fitur_terdekat": [
+            {
+                "jarak_km": round(h["jarak_m"] / 1000, 3),
+                "berpotongan_dengan_rute": bool(h["berpotongan"]),
+                **jsonable_encoder(h["attrs"] or {}),
+            }
+            for h in hits
+        ],
+    }
 
 
 def _tool_analisa_geometri_kml_usulan(id=None) -> dict:
@@ -352,6 +494,11 @@ CHAT_TOOL_DISPATCH = {
     "daftar_tabel_database": _tool_daftar_tabel_database,
     "jalankan_query_sql": _tool_jalankan_query_sql,
     "hitung_skor_ijd_usulan": _tool_hitung_skor_ijd_usulan,
+    "daftar_layer_peta_overlay": _tool_daftar_layer_peta_overlay,
+    "analisa_spasial_usulan": _tool_analisa_spasial_usulan,
+    # "tampilkan_usulan_di_peta" SENGAJA tidak didaftarkan di sini -- ada di
+    # CLIENT_ACTION_TOOLS, diteruskan ke frontend lewat _run_tool_call, bukan
+    # dieksekusi di server.
 }
 
 
@@ -362,13 +509,25 @@ def _chat_system_text(context: Optional[dict], has_search: bool = False) -> str:
     return system_text
 
 
-def _run_tool_call(name: str, args: dict) -> dict:
+def _run_tool_call(name: str, args: dict, actions: list) -> dict:
+    """actions: akumulator per-request (dibuat baru di tiap _call_* provider,
+    BUKAN global module-level -- FastAPI bisa melayani beberapa /api/chat
+    bersamaan, global mutable di sini akan tercampur antar request). Tool
+    CLIENT_ACTION_TOOLS dicatat ke sini dan dibalas dgn status sukses palsu
+    supaya model tetap lanjut menyusun kalimat penutup wajar (bukan menunggu
+    hasil eksekusi UI yang memang tidak/belum terjadi saat ini)."""
+    if name in CLIENT_ACTION_TOOLS:
+        actions.append({"nama": name, "argumen": args})
+        return {"status": "diteruskan_ke_frontend_untuk_dieksekusi"}
     fn = CHAT_TOOL_DISPATCH.get(name)
     return fn(**args) if fn else {"error": "fungsi tidak dikenal"}
 
 
-def _call_openai_compatible(provider: str, api_url: str, api_key: str, model: str, messages: List, context: Optional[dict]) -> str:
-    """Chat Completions-compatible provider tanpa pencarian web (Groq, Grok/xAI)."""
+def _call_openai_compatible(provider: str, api_url: str, api_key: str, model: str, messages: List, context: Optional[dict]) -> tuple:
+    """Chat Completions-compatible provider tanpa pencarian web (Groq, Grok/xAI).
+    Return (teks, actions) -- actions dikumpulkan baru per panggilan (lihat
+    _run_tool_call), bukan global module-level."""
+    actions: list = []
     chat_messages = [{"role": "system", "content": _chat_system_text(context)}]
     chat_messages += [{"role": m.role, "content": m.text} for m in messages]
 
@@ -396,7 +555,7 @@ def _call_openai_compatible(provider: str, api_url: str, api_key: str, model: st
             text = message.get("content") or ""
             if not text:
                 raise RuntimeError(f"{provider}: jawaban kosong")
-            return text
+            return text, actions
 
         chat_messages.append(message)
         for tc in tool_calls:
@@ -404,7 +563,7 @@ def _call_openai_compatible(provider: str, api_url: str, api_key: str, model: st
                 args = json.loads(tc["function"].get("arguments") or "{}")
             except json.JSONDecodeError:
                 args = {}
-            result = _run_tool_call(tc["function"]["name"], args)
+            result = _run_tool_call(tc["function"]["name"], args, actions)
             chat_messages.append({
                 "role": "tool",
                 "tool_call_id": tc["id"],
@@ -424,9 +583,10 @@ OPENAI_RESPONSES_TOOLS = [{"type": "web_search_preview"}] + [
 ]
 
 
-def _call_openai_responses(api_key: str, model: str, messages: List, context: Optional[dict]) -> str:
+def _call_openai_responses(api_key: str, model: str, messages: List, context: Optional[dict]) -> tuple:
     """OpenAI Responses API — satu-satunya provider yang benar-benar mendukung
     pencarian internet (web_search_preview) digabung dengan tool database/KML kita."""
+    actions: list = []
     input_items = [{"role": m.role, "content": m.text} for m in messages]
 
     for _ in range(4):  # batas jumlah putaran pemanggilan fungsi, cegah loop tak berujung
@@ -459,7 +619,7 @@ def _call_openai_responses(api_key: str, model: str, messages: List, context: Op
             )
             if not text:
                 raise RuntimeError("OpenAI: jawaban kosong")
-            return text
+            return text, actions
 
         # Balas semua output turn ini (termasuk pemanggilan web_search_preview,
         # bila ada) lalu tambahkan function_call_output untuk tiap function_call.
@@ -469,7 +629,7 @@ def _call_openai_responses(api_key: str, model: str, messages: List, context: Op
                 args = json.loads(fc.get("arguments") or "{}")
             except json.JSONDecodeError:
                 args = {}
-            result = _run_tool_call(fc["name"], args)
+            result = _run_tool_call(fc["name"], args, actions)
             input_items.append({
                 "type": "function_call_output",
                 "call_id": fc["call_id"],
@@ -504,7 +664,8 @@ def _openai_tools_to_gemini(tools: list) -> list:
 GEMINI_CHAT_TOOLS = _openai_tools_to_gemini(CHAT_TOOLS)
 
 
-def _call_gemini(api_key: str, model: str, messages: List, context: Optional[dict]) -> str:
+def _call_gemini(api_key: str, model: str, messages: List, context: Optional[dict]) -> tuple:
+    actions: list = []
     api_url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
     contents = [{"role": "model" if m.role == "assistant" else "user", "parts": [{"text": m.text}]} for m in messages]
 
@@ -536,13 +697,13 @@ def _call_gemini(api_key: str, model: str, messages: List, context: Optional[dic
             text = "".join(p.get("text", "") for p in parts)
             if not text:
                 raise RuntimeError("Gemini: jawaban kosong")
-            return text
+            return text, actions
 
         # Model bisa memanggil beberapa fungsi sekaligus dalam satu giliran — semua
         # harus dibalas dalam satu content "function", atau giliran berikutnya
         # kembali kosong karena Gemini masih menunggu jawaban yang belum terkirim.
         response_parts = [
-            {"functionResponse": {"name": fc["name"], "response": jsonable_encoder(_run_tool_call(fc["name"], fc.get("args") or {}))}}
+            {"functionResponse": {"name": fc["name"], "response": jsonable_encoder(_run_tool_call(fc["name"], fc.get("args") or {}, actions))}}
             for fc in function_calls
         ]
         contents.append({"role": "model", "parts": parts})
@@ -557,7 +718,8 @@ CLAUDE_TOOLS = [
 ]
 
 
-def _call_claude(api_key: str, model: str, messages: List, context: Optional[dict]) -> str:
+def _call_claude(api_key: str, model: str, messages: List, context: Optional[dict]) -> tuple:
+    actions: list = []
     client = anthropic.Anthropic(api_key=api_key)
     claude_messages = [{"role": m.role, "content": m.text} for m in messages]
 
@@ -578,14 +740,14 @@ def _call_claude(api_key: str, model: str, messages: List, context: Optional[dic
             text = "".join(b.text for b in response.content if b.type == "text")
             if not text:
                 raise RuntimeError("Claude: jawaban kosong")
-            return text
+            return text, actions
 
         claude_messages.append({"role": "assistant", "content": response.content})
         tool_results = [
             {
                 "type": "tool_result",
                 "tool_use_id": tb.id,
-                "content": json.dumps(jsonable_encoder(_run_tool_call(tb.name, tb.input or {})), ensure_ascii=False),
+                "content": json.dumps(jsonable_encoder(_run_tool_call(tb.name, tb.input or {}, actions)), ensure_ascii=False),
             }
             for tb in tool_use_blocks
         ]
@@ -613,7 +775,9 @@ def _chat_providers() -> list:
     return providers
 
 
-def _call_chat(messages: List, context: Optional[dict]) -> str:
+def _call_chat(messages: List, context: Optional[dict]) -> tuple:
+    """Return (teks, actions) -- actions = daftar CLIENT_ACTION_TOOLS yang
+    dipanggil model, diteruskan app.py ke frontend utk dieksekusi di UI."""
     providers = _chat_providers()
     if not providers:
         raise HTTPException(

@@ -49,6 +49,7 @@ async function sendChatMessage(text) {
     if (!res.ok) throw new Error(await res.text());
     const data = await res.json();
     state.chat.messages.push({ role: "assistant", text: data.reply });
+    (data.actions || []).forEach(runChatAction);
   } catch (err) {
     console.error(err);
     state.chat.messages.push({ role: "assistant", text: "Maaf, terjadi kesalahan saat menghubungi asisten. Coba lagi." });
@@ -56,6 +57,26 @@ async function sendChatMessage(text) {
     state.chat.busy = false;
     renderChatMessages();
   }
+}
+
+/* Tool yang dipanggil model tapi dieksekusi di FRONTEND, bukan di server
+   (lihat CLIENT_ACTION_TOOLS di chat_providers.py -- daftar nama tool di
+   sana HARUS sinkron dgn key di sini). Backend hanya meneruskan nama+argumen
+   tool call apa adanya lewat data.actions, tanpa tahu/peduli apa yang
+   sungguh terjadi di UI -- kalau nama actionnya tidak dikenal di sini,
+   diam-diam diabaikan drpd melempar error yang bikin panggilan chat gagal. */
+const CHAT_CLIENT_ACTIONS = {
+  tampilkan_usulan_di_peta: (args) => {
+    if (!args || args.id == null) return;
+    if (typeof loadUsulanDetail !== "function") return;
+    loadUsulanDetail(args.id);
+    document.getElementById("usulanBrowseDetail")?.scrollIntoView({ behavior: "smooth", block: "center" });
+  },
+};
+
+function runChatAction(action) {
+  const fn = CHAT_CLIENT_ACTIONS[action?.nama];
+  if (fn) fn(action.argumen || {});
 }
 
 const CHAT_GREETING = "Halo! Cari rute lalu tanya saya tentang jarak, wilayah yang dilalui, klasifikasi jalan, atau usulan Inpres di sekitarnya.";

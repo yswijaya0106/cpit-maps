@@ -314,27 +314,79 @@ Deps: `requirements.txt`, venv at `.venv/` (already gitignored).
 - `POST /api/penduduk-kecamatan/import` / `GET .../export/xlsx` — BPS
   population-per-kecamatan master (also loadable via the CLI script).
 - `POST /api/chat` — chat assistant, logic lives in `chat_providers.py`
-  (route/dispatch stays in app.py). Providers are tried in order
+  (route/dispatch stays in app.py, `chat()` returns `{"reply", "actions"}` —
+  see below for `actions`). Providers are tried in order
   Groq → Grok → OpenAI → Claude → Gemini depending on which API keys exist.
-  The model gets a compact context of the currently viewed route plus five
-  tools (`CHAT_TOOLS`): three fixed read-only helpers
-  (search/detail/KML-geometry of usulan, calling existing parameterized-query
-  functions) **plus** (added 27 Jul 2026, explicit user request superseding
-  the old "never give the model free-form SQL" stance) `daftar_tabel_database`
-  (schema introspection: list tables, or columns of one table) and
-  `jalankan_query_sql` (arbitrary single-statement `SELECT`/`WITH` across
-  every table in `public`, capped at 200 rows, 8s `statement_timeout`).
-  `jalankan_query_sql` is genuinely free-form SQL, not a query builder — the
-  safety model is two independent layers, not "trust the regex": (1) text
-  validation rejects multiple statements and any DDL/DML keyword anywhere in
-  the string (`_SQL_KEYWORD_TERLARANG`), but (2) the real backstop is
-  `SET TRANSACTION READ ONLY` issued before the query runs, which PostgreSQL
-  itself enforces against every write path — including a data-modifying CTE
-  smuggled inside a syntactically-SELECT statement (`WITH x AS (DELETE ...
-  RETURNING *) SELECT * FROM x`) that would slip past a keyword-only filter.
-  Verified directly: same statement run without the keyword-regex layer still
-  gets rejected by Postgres with `ReadOnlySqlTransaction`. Don't remove the
-  `SET TRANSACTION READ ONLY` call thinking the regex alone is sufficient.
+  The model gets a compact context of the currently viewed route plus
+  `CHAT_TOOLS`: three original fixed read-only helpers (search/detail/
+  KML-geometry of usulan, calling existing parameterized-query functions)
+  **plus**, added 27 Jul 2026 on explicit user request (superseding the old
+  "never give the model free-form SQL" stance):
+  - `daftar_tabel_database` — schema introspection (list tables, or columns
+    of one table).
+  - `jalankan_query_sql` — arbitrary single-statement `SELECT`/`WITH` across
+    every table in `public`, capped at 200 rows, 8s `statement_timeout`.
+    Genuinely free-form SQL, not a query builder — the safety model is two
+    independent layers, not "trust the regex": (1) text validation rejects
+    multiple statements and any DDL/DML keyword anywhere in the string
+    (`_SQL_KEYWORD_TERLARANG`), but (2) the real backstop is
+    `SET TRANSACTION READ ONLY` issued before the query runs, which
+    PostgreSQL itself enforces against every write path — including a
+    data-modifying CTE smuggled inside a syntactically-SELECT statement
+    (`WITH x AS (DELETE ... RETURNING *) SELECT * FROM x`) that would slip
+    past a keyword-only filter. Verified directly: same statement run
+    without the keyword-regex layer still gets rejected by Postgres with
+    `ReadOnlySqlTransaction`. Don't remove the `SET TRANSACTION READ ONLY`
+    call thinking the regex alone is sufficient.
+  - `hitung_skor_ijd_usulan` — IJD teknokratik score isn't stored anywhere
+    (computed on-the-fly by a weighted multi-component formula), so
+    `jalankan_query_sql` can't answer score questions at all; this calls
+    `usulan_inpres_ijd_score`/`_compute_ijd_score` directly instead of
+    letting the model guess at replicating the algorithm via SQL.
+  - `daftar_layer_peta_overlay` / `analisa_spasial_usulan` — spatial
+    questions against the map overlay layers (`map_layers`, real PostGIS
+    geometry) for a given usulan's route: nearest-N features + distance +
+    intersection test, via `ST_GeomFromGeoJSON` cast (done in SQL, not
+    Python/shapely, so none of the shapely/numpy MultiPolygon-from-dict bugs
+    elsewhere in this codebase apply here) and a KNN `<->` ORDER BY so it
+    uses `idx_map_layers_geom` instead of a full scan. Usulan route geometry
+    itself (`usulan_inpres.geom_geojson`) is plain JSON text, not a native
+    geometry column — that's why this needs its own tool rather than being
+    answerable through `jalankan_query_sql`. `daftar_layer_peta_overlay`
+    exists because the model needs the exact `(provinsi, kabupaten, layer)`
+    triple first (reuses `maps_provinces`/`maps_kabupaten`/`maps_layers`
+    directly) — **gotcha**: national flat buckets (`BANDARA`, `JALAN
+    NASIONAL`, `BATAS PROVINSI`, etc.) have `kabupaten=""` as their one
+    real, non-omittable value, not "no kabupaten yet" — the tool
+    distinguishes this by checking `kabupaten is None` (not given) vs
+    `kabupaten == ""` (given, flat bucket), not a truthiness check; a
+    truthiness check silently gets stuck one level too shallow, which is
+    the exact bug this was fixed from. In practice this 3-hop discovery
+    (list buckets → list sub-wilayah → list layers → query) is only
+    reliably chained by stronger models — observed gpt-4o-mini give up and
+    report "no data" without ever calling `analisa_spasial_usulan` for the
+    empty-kabupaten case, consistent with the same-model checklist-skipping
+    behavior already documented for the bulk Bappenas narrative above.
+  - `tampilkan_usulan_di_peta` — **not** in `CHAT_TOOL_DISPATCH`, registered
+    in `CLIENT_ACTION_TOOLS` instead: this is the first "AI can act, not
+    just answer" tool (27 Jul 2026). When the model calls a
+    `CLIENT_ACTION_TOOLS` name, `_run_tool_call` records
+    `{"nama", "argumen"}` into a per-request `actions` list (created fresh
+    inside each `_call_openai_compatible`/`_call_openai_responses`/
+    `_call_gemini`/`_call_claude` — deliberately NOT a module-level global,
+    since FastAPI serves concurrent `/api/chat` requests) instead of
+    dispatching server-side, and feeds the model a synthetic
+    `{"status": "diteruskan_ke_frontend_untuk_dieksekusi"}` result so it
+    still composes a normal closing sentence. `_call_chat` now returns
+    `(text, actions)`; the `/api/chat` route returns both; `chat.js`'s
+    `CHAT_CLIENT_ACTIONS` dispatch table (keys **must** stay in sync with
+    `CLIENT_ACTION_TOOLS`) executes them — currently just
+    `loadUsulanDetail(id)` (draws the route + opens its attribute panel,
+    reusing the same function the "Jelajahi Usulan Inpres" browse panel
+    already uses). Add new UI-facing tools by: adding the tool schema to
+    `CHAT_TOOLS`, adding its name to `CLIENT_ACTION_TOOLS`, and adding a
+    matching entry to `CHAT_CLIENT_ACTIONS` in chat.js — no other provider
+    code needs to change, they all thread `actions` generically.
   OpenAI additionally gets `web_search_preview`; the system prompt tells the
   model whether web search is available.
 - `GET /api/maps/provinces` / `GET /api/maps/kabupaten` / `GET /api/maps/layers`

@@ -1159,6 +1159,70 @@ def _ijd_score_koridor(row: dict, rules: dict, ctx: dict = None) -> dict:
     }
 
 
+def _ijd_score_koridor_v2(row: dict, rules: dict, ctx: dict = None) -> dict:
+    """Varian ALTERNATIF parameter D (Koridor) -- BUKAN pengganti resmi
+    (_ijd_score_koridor). Dibuat 27-28 Jul 2026 menjawab temuan: usulan_
+    inpres.kode_koridor cocok ke bappenas_koridor.no_koridor utk 1.795
+    usulan (koridor master resmi Bappenas, `scripts/import_bappenas_
+    koridor.py`), tapi _ijd_score_koridor resmi tidak pernah memvalidasi
+    kode_koridor usulan ke tabel itu sama sekali -- proksinya cuma "kolom
+    terisi atau tidak", tanpa tahu apakah kodenya itu genuinely merujuk
+    ke koridor resmi manapun.
+
+    Disederhanakan atas arahan user 28 Jul 2026 setelah eksplorasi awal
+    (memakai status_pengajuan/disetujui_ditolak_oleh utk override) TERNYATA
+    kena masalah: no_koridor BUKAN kunci unik dan py duplikat status
+    konflik (Ditolak vs Menunggu utk (no_koridor, nama_koridor) yg sama
+    persis, tanpa kolom tanggal/versi utk memutuskan mana benar) --
+    terlalu berisiko dipakai sbg override. Versi ini jauh lebih sederhana
+    & aman: **kode_koridor usulan ketemu di bappenas_koridor.no_koridor
+    (apapun status_pengajuan-nya) -> TERIDENTIFIKASI (100)**, sbg validasi
+    tambahan yg lebih kuat drpd proksi resmi "kode_koridor terisi" (yang
+    tidak pernah dicek kebenarannya thd data koridor resmi apapun).
+
+    Selain itu (kode_koridor kosong ATAU tidak ketemu di bappenas_koridor)
+    -> fallback PERSIS logika resmi (_ijd_score_koridor): status_koridor_
+    balai lalu proksi kode_koridor terisi/kosong.
+
+    Ini belum menjawab celah "koridor tidak langsung" (radius <50m dari
+    SHP, lihat docs/analisa_kerangka_penggunaan_data_cpit_270726.md §8)
+    -- itu masih butuh geometri koridor yg belum ada di database."""
+    rule = rules.get("D")
+    if not rule:
+        return {"tersedia": False, "keterangan": "Kaidah koridor belum diset di database."}
+
+    kode_koridor = (row.get("kode_koridor") or "").strip()
+    ketemu_di_bappenas = False
+    if kode_koridor:
+        cached = (ctx or {}).get("bappenas_koridor_no_koridor_set") if ctx else None
+        if cached is not None:
+            ketemu_di_bappenas = kode_koridor in cached
+        else:
+            with db_cursor() as cur:
+                cur.execute("SELECT 1 FROM bappenas_koridor WHERE no_koridor = %s LIMIT 1", (kode_koridor,))
+                ketemu_di_bappenas = cur.fetchone() is not None
+
+    if ketemu_di_bappenas:
+        sub = rule["subs"]["TERIDENTIFIKASI"]
+        return {
+            "tersedia": True, "nilai": sub["nilai"],
+            "keterangan": f"{sub['label']} (kode_koridor '{kode_koridor}' ditemukan di bappenas_koridor).",
+        }
+
+    # Fallback: kode_koridor kosong atau tak ketemu di bappenas_koridor -- pakai logika resmi apa adanya.
+    status_balai = (row.get("status_koridor_balai") or "").strip().upper()
+    if status_balai == "SESUAI":
+        sub, sumber = rule["subs"]["TERIDENTIFIKASI"], "verifikasi Balai (kode_koridor tak ketemu di bappenas_koridor)"
+    elif status_balai:
+        sub = rule["subs"].get("LAINNYA_BALAI") or rule["subs"]["LAINNYA"]
+        sumber = "verifikasi Balai (kode_koridor tak ketemu di bappenas_koridor)"
+    elif kode_koridor:
+        sub, sumber = rule["subs"]["TERIDENTIFIKASI"], "perkiraan dari kode koridor (tak ketemu di bappenas_koridor)"
+    else:
+        sub, sumber = rule["subs"]["LAINNYA"], "perkiraan dari kode koridor"
+    return {"tersedia": True, "nilai": sub["nilai"], "keterangan": f"{sub['label']} ({sumber})."}
+
+
 def _ijd_score_rc(row: dict, rules: dict, ctx: dict = None) -> dict:
     rule = rules.get("F")
     if not rule:

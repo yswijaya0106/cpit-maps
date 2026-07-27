@@ -63,14 +63,20 @@ tidak akan sesuai kaidah resmi. \
 Klasifikasi jalan OSM adalah perkiraan, bukan data resmi PUPR."""
 
 CHAT_SEARCH_AVAILABLE_NOTE = (
-    " Anda memiliki akses pencarian web untuk pertanyaan di luar data aplikasi (jumlah penduduk, kondisi "
-    "ekonomi, konteks wilayah lain di sekitar lokasi jalan, dsb.) — gunakan pencarian web untuk itu, dan "
-    "sebutkan bahwa jawabannya berasal dari hasil pencarian internet, bukan data resmi aplikasi ini."
+    " Anda memiliki akses pencarian web untuk pertanyaan yang BENAR-BENAR di luar data aplikasi maupun "
+    "database (mis. berita terkini, harga terbaru, cuaca, konteks umum non-infrastruktur) — gunakan "
+    "pencarian web untuk itu, dan sebutkan bahwa jawabannya berasal dari hasil pencarian internet, bukan "
+    "data resmi aplikasi ini. JANGAN pakai pencarian web untuk hal yang sebenarnya ADA di database (jumlah "
+    "penduduk, data BPS, skor IJD, dsb.) — itu jawabannya lewat jalankan_query_sql/hitung_skor_ijd_usulan, "
+    "BUKAN web search."
 )
 CHAT_SEARCH_UNAVAILABLE_NOTE = (
-    " Anda TIDAK punya akses pencarian internet saat ini — bila pengguna bertanya hal di luar data aplikasi "
-    "(jumlah penduduk, kondisi ekonomi, konteks wilayah lain, dsb.), katakan terus terang bahwa data itu "
-    "tidak tersedia di aplikasi ini, jangan mengarang jawaban."
+    " Anda TIDAK punya akses pencarian internet saat ini — bila pengguna bertanya hal yang BENAR-BENAR di "
+    "luar data aplikasi maupun database (mis. berita terkini, harga terbaru, cuaca, konteks umum non-"
+    "infrastruktur), katakan terus terang data itu tidak tersedia, jangan mengarang jawaban. TAPI jangan "
+    "buru-buru bilang \"tidak tersedia\" untuk hal yang sebenarnya ADA di database (jumlah penduduk, data "
+    "BPS, skor IJD, dsb.) — coba dulu daftar_tabel_database/jalankan_query_sql/hitung_skor_ijd_usulan "
+    "sebelum menyimpulkan datanya tidak ada."
 )
 
 # Fungsi yang boleh dipanggil model (tool calling gaya OpenAI, dipakai Groq) —

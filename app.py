@@ -2229,6 +2229,75 @@ def _ijd_score_kemanfaatan_c3_kendaraan_v2(row: dict, ctx: dict = None) -> dict:
     }
 
 
+# Bobot internal C versi kerangka CPIT 27.7.26 (beda dari Tabel 4 PDF
+# resmi -- C1 Jumlah Penduduk 35%, C2 dipecah 3 sub 11%+12%+12%=35%, C3
+# Kepemilikan Kendaraan 30%; total 100% pd skala internal C, sama pola
+# dgn A yang nilainya disimpan sudah "internal 0-100 sblm dikali bobot_
+# maks parameter" -- lihat _compute_ijd_score kontribusi = nilai/100*
+# bobot_maks). Dikonfirmasi user 28 Jul 2026 dari contoh kerja kerangka
+# ("JUMLAH NILAI AKHIR: 38,10" utk C1=17,5 + IP=4,4 + Produksi=4,8 +
+# LuasLahan=2,4 + Kendaraan=9 -- persis penjumlahan nilai kuadran x
+# bobot internal masing2 sub).
+_C_V2_BOBOT_INTERNAL = {
+    "c1": 0.35, "c2_ip": 0.11, "c2_produksi": 0.12, "c2_luas_lahan": 0.12, "c3": 0.30,
+}
+
+
+def _ijd_score_kemanfaatan_v2(row: dict, rules: dict, ctx: dict = None) -> dict:
+    """Varian ALTERNATIF parameter C (Kemanfaatan) GABUNGAN -- BUKAN
+    pengganti _ijd_score_kemanfaatan resmi, BELUM didaftarkan ke
+    _IJD_SCORERS. Dibuat 28 Jul 2026 atas permintaan eksplisit user:
+    menjumlahkan kelima sub `_v2` (C1 Jumlah Penduduk, C2 Indeks
+    Penanaman/Produksi/Luas Lahan, C3 Kepemilikan Kendaraan) persis pola
+    kerangka CPIT 27.7.26 sheet "Penilaian Teknokratis" -- tiap sub
+    dikali bobot internalnya (lihat _C_V2_BOBOT_INTERNAL) lalu dijumlah,
+    sama persis mekanisme contoh kerja user ("JUMLAH NILAI AKHIR: 38,10"
+    = 17,5 + 4,4 + 4,8 + 2,4 + 9,0).
+
+    Nilai akhir disimpan pada skala INTERNAL 0-100 milik parameter C
+    (sama pola dgn A -- lihat _ijd_score_tematik), BUKAN sudah dikali
+    bobot_maks C (25) -- itu tetap tugas _compute_ijd_score kalau fungsi
+    ini suatu saat didaftarkan ke _IJD_SCORERS
+    (kontribusi = nilai/100*bobot_maks).
+
+    `tersedia: False` HANYA kalau seluruh 5 sub gagal dihitung (pola sama
+    dgn C resmi) -- kalau sebagian tersedia, nilai dijumlah dari yang ada
+    saja dan keterangan mencantumkan sub mana yang hilang."""
+    hasil_sub = {
+        "c1": _ijd_score_kemanfaatan_c1_v2(row, ctx),
+        "c2_ip": _ijd_score_kemanfaatan_c2_ip_v2(row, ctx),
+        "c2_produksi": _ijd_score_kemanfaatan_c2_produksi_v2(row, ctx),
+        "c2_luas_lahan": _ijd_score_kemanfaatan_c2_luas_lahan_v2(row, ctx),
+        "c3": _ijd_score_kemanfaatan_c3_kendaraan_v2(row, ctx),
+    }
+    label_sub = {
+        "c1": "C1 Jumlah Penduduk", "c2_ip": "C2 Indeks Penanaman",
+        "c2_produksi": "C2 Produksi", "c2_luas_lahan": "C2 Luas Lahan",
+        "c3": "C3 Kepemilikan Kendaraan",
+    }
+
+    nilai_total = 0.0
+    detail_tersedia, detail_hilang = [], []
+    for kode, hasil in hasil_sub.items():
+        bobot = _C_V2_BOBOT_INTERNAL[kode]
+        if hasil["tersedia"]:
+            kontribusi = hasil["nilai"] * bobot
+            nilai_total += kontribusi
+            detail_tersedia.append(f"{label_sub[kode]}: {hasil['nilai']:.0f} x {bobot*100:.0f}% = {kontribusi:.2f}")
+        else:
+            detail_hilang.append(label_sub[kode])
+
+    if not detail_tersedia:
+        return {"tersedia": False, "keterangan": "Semua 5 sub-parameter C (v2) tidak tersedia untuk usulan ini."}
+
+    keterangan = "; ".join(detail_tersedia)
+    if detail_hilang:
+        keterangan += f"; TIDAK TERSEDIA: {', '.join(detail_hilang)}"
+    keterangan += f" — total {nilai_total:.2f} (skala internal C 0-100, formula kerangka CPIT 27.7.26)."
+
+    return {"tersedia": True, "nilai": round(nilai_total, 2), "keterangan": keterangan}
+
+
 def _ijd_score_penuntasan(row: dict, rules: dict, ctx: dict = None) -> dict:
     """Parameter E kaidah 2026: lanjutan/penuntasan IJD TA 2025 vs usulan baru.
     Flag usulan_inpres.lanjutan_ijd_2025 diisi scripts/import_dpp_ijd_2025.py

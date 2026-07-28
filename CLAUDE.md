@@ -179,6 +179,29 @@ Deps: `requirements.txt`, venv at `.venv/` (already gitignored).
   `docs/verifikasi_ijd_ciparay_cikumpay.md` and
   `docs/verifikasi_npr_ciparay_cikumpay.md` both hit and document this
   exact scenario (22 Jul 2026 re-validation).
+  **D (`_ijd_score_koridor_v2`) promoted to official 28 Jul 2026** (explicit
+  user request, same session that added the "PETA KORIDOR" map overlay
+  layer above): `_IJD_SCORERS["D"]` now points to `_ijd_score_koridor_v2`,
+  not the older `_ijd_score_koridor` (kept in code as reference/history,
+  no longer called). Adds a 4th tier "koridor tidak langsung" (75, DB
+  sub_kode `TIDAK_LANGSUNG` seeded into `ijd_scoring_rules` — sourced from
+  the CPIT framework doc, not PDF Tabel 5, kept transparent in the SQL
+  comment) on top of the existing 100/50/0: usulan route within 50m of
+  `map_layers` layer `'PETA KORIDOR'` geometry, checked after the exact
+  `kode_koridor`→`bappenas_koridor` match and before the old Balai/proxy
+  fallback chain. **Two performance gotchas fixed in the same change** (both
+  matter if this query is touched again): `ST_DWithin(...::geography, ...)`
+  doesn't scale in `_ijd_score_bulk_rows` (national ~3,000 usulan) even
+  though each individual call is fast — 280s for the ~1,200 usulan needing
+  the check; switched to `ST_DWithin(geometry, ...)` (planar, radius
+  converted to degrees, auto index-accelerated) → ~53s total, batched via
+  one `WITH ... AS MATERIALIZED` spatial JOIN (not one query per usulan,
+  `ctx["d_tidak_langsung_ids"]`) — `MATERIALIZED` is required or Postgres
+  12+ inlines the CTE and recomputes `ST_GeomFromGeoJSON` per candidate
+  `map_layers` row. Cached in `_ijd_bulk_cache` same as everything else, so
+  the ~53s only hits once per (provinsi-filter, tahun). Full detail:
+  `docs/checklist_implementasi_cpit.md` §"D Koridor 'tidak langsung' ...
+  DIPROMOSIKAN RESMI".
   See `.claude/skills/ijd-scoring-parameter/` before touching this.
   `GET /api/usulan-inpres/ijd-score/preview` / `.../export/xlsx`
   (`_ijd_score_bulk_rows`) rank usulan nationally and per-provinsi via

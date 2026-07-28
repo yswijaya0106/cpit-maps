@@ -108,13 +108,23 @@ INSERT INTO ijd_scoring_rules (tahun_berlaku, parameter_kode, parameter_label, b
 (2026, 'B', 'Kondisi Kemantapan Eksisting Ruas', 15, 'PEMBANGUNAN', 'Pembangunan jalan/jembatan baru', 40)
 ON DUPLICATE KEY UPDATE parameter_label=VALUES(parameter_label), bobot_maks=VALUES(bobot_maks), kondisi_label=VALUES(kondisi_label), nilai=VALUES(nilai);
 
--- D. Koridor (bobot 20) — Tabel 5, tiga tingkat. Sumber utama: kolom
--- Status Koridor Prioritas Balai (tarikan 15 Juli): SESUAI -> TERIDENTIFIKASI,
--- TIDAK SESUAI -> LAINNYA_BALAI (tingkat tengah "koridor lainnya" = 50).
--- Usulan tanpa penilaian Balai jatuh ke proksi kode_koridor: terisi ->
--- TERIDENTIFIKASI, kosong -> LAINNYA (tidak ada informasi = 0).
+-- D. Koridor (bobot 20) — Tabel 5, EMPAT tingkat sejak 28 Jul 2026 (request
+-- eksplisit user, promosi _ijd_score_koridor_v2 jadi resmi -- lihat
+-- CLAUDE.md & docs/analisa_kerangka_penggunaan_data_cpit_270726.md §8).
+-- Sumber utama TERIDENTIFIKASI/LAINNYA_BALAI/LAINNYA: kolom Status Koridor
+-- Prioritas Balai (tarikan 15 Juli): SESUAI -> TERIDENTIFIKASI, TIDAK SESUAI
+-- -> LAINNYA_BALAI (tingkat tengah "koridor lainnya" = 50). Usulan tanpa
+-- penilaian Balai jatuh ke proksi kode_koridor: cocok ke bappenas_koridor
+-- ATAU terisi -> TERIDENTIFIKASI, kosong -> LAINNYA (0).
+-- TIDAK_LANGSUNG (75) BUKAN dari Tabel 5 PDF resmi (14072026) -- sumbernya
+-- kerangka CPIT 27.7.26 sheet "D. KORIDOR" ("mendukung koridor tidak
+-- langsung ... diambil dari shp koridor terhubung dengan radius <50m").
+-- Dicek di _ijd_score_koridor_v2() via ST_DWithin thd map_layers layer
+-- 'PETA KORIDOR' (scripts/import_peta_koridor_to_postgis.py), SETELAH match
+-- langsung kode_koridor->bappenas_koridor dan SEBELUM fallback Balai/proksi.
 INSERT INTO ijd_scoring_rules (tahun_berlaku, parameter_kode, parameter_label, bobot_maks, sub_kode, kondisi_label, nilai) VALUES
 (2026, 'D', 'Koridor', 20, 'TERIDENTIFIKASI', 'Bagian dari koridor yang telah diidentifikasi', 100),
+(2026, 'D', 'Koridor', 20, 'TIDAK_LANGSUNG', 'Koridor tidak langsung (radius <50m dari shp Peta Koridor)', 75),
 (2026, 'D', 'Koridor', 20, 'LAINNYA_BALAI', 'Koridor lainnya (Balai: tidak sesuai koridor prioritas)', 50),
 (2026, 'D', 'Koridor', 20, 'LAINNYA', 'Bukan / tidak ada informasi koridor', 0)
 ON DUPLICATE KEY UPDATE parameter_label=VALUES(parameter_label), bobot_maks=VALUES(bobot_maks), kondisi_label=VALUES(kondisi_label), nilai=VALUES(nilai);

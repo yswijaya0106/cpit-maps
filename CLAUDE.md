@@ -201,7 +201,16 @@ Deps: `requirements.txt`, venv at `.venv/` (already gitignored).
   `map_layers` row. Cached in `_ijd_bulk_cache` same as everything else, so
   the ~53s only hits once per (provinsi-filter, tahun). Full detail:
   `docs/checklist_implementasi_cpit.md` §"D Koridor 'tidak langsung' ...
-  DIPROMOSIKAN RESMI".
+  DIPROMOSIKAN RESMI". `@app.on_event("startup")`
+  `_warm_ijd_bulk_cache_nasional()` (near the top of app.py, added same
+  session) pre-computes the nasional/2026 bulk result in a background
+  thread (`run_in_executor`, not awaited) right when the server boots, so
+  the first user to open Preview Export/Dashboard "Semua provinsi" doesn't
+  personally eat the ~53s — server itself stays responsive to other
+  requests immediately (confirmed <5s), only that one cache slot warms in
+  the background. A request that happens to land before warm-up finishes
+  still computes normally (race, not a bug) — restart the server to
+  re-trigger warm-up (cache is in-process, lost on restart same as always).
   See `.claude/skills/ijd-scoring-parameter/` before touching this.
   `GET /api/usulan-inpres/ijd-score/preview` / `.../export/xlsx`
   (`_ijd_score_bulk_rows`) rank usulan nationally and per-provinsi via

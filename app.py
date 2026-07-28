@@ -1,3 +1,4 @@
+import asyncio
 import io
 import json
 import re
@@ -68,6 +69,33 @@ app.add_middleware(
 # minimum_size supaya respons kecil (mis. endpoint status) tidak ikut
 # kena overhead gzip yang tak sepadan.
 app.add_middleware(GZipMiddleware, minimum_size=1000)
+
+
+@app.on_event("startup")
+async def _warm_ijd_bulk_cache_nasional():
+    """Pra-hitung skor IJD nasional 2026 (_ijd_score_bulk_rows, di-cache di
+    _ijd_bulk_cache) di background begitu server nyala, supaya user PERTAMA
+    yang buka Preview Export/Dashboard "Semua provinsi (Nasional)" tidak
+    kena tunggu ~53 detik "Menghitung skor..." (lihat CLAUDE.md soal
+    optimasi query spasial D Koridor 28 Jul 2026 -- 53 detik itu SEKALI per
+    proses server, cache-nya hilang tiap restart, makanya di-warm di sini).
+    Dijalankan via run_in_executor (bukan langsung di-await) supaya proses
+    startup FastAPI sendiri tidak ikut molor 53 detik -- server tetap
+    langsung menerima request lain selagi ini jalan di thread terpisah;
+    request pertama yang KEBETULAN nyerempet sebelum warm-up selesai tetap
+    akan menunggu wajar (bukan bug, cuma race biasa antara warm-up & user).
+    Kegagalan (mis. DB belum siap) sengaja diredam -- ini optimasi cache,
+    bukan bagian kritis start-up, tidak boleh bikin server gagal nyala."""
+    loop = asyncio.get_event_loop()
+
+    def _warm():
+        try:
+            _ijd_score_bulk_rows([], 2026)
+        except Exception as e:
+            print(f"  [warm-cache] gagal pra-hitung skor IJD nasional: {e}")
+
+    loop.run_in_executor(None, _warm)
+
 
 APP_USERNAME = os.getenv("APP_USERNAME")
 APP_PASSWORD = os.getenv("APP_PASSWORD")

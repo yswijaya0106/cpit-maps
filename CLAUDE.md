@@ -189,28 +189,30 @@ Deps: `requirements.txt`, venv at `.venv/` (already gitignored).
   comment) on top of the existing 100/50/0: usulan route within 50m of
   `map_layers` layer `'PETA KORIDOR'` geometry, checked after the exact
   `kode_koridor`→`bappenas_koridor` match and before the old Balai/proxy
-  fallback chain. **Two performance gotchas fixed in the same change** (both
-  matter if this query is touched again): `ST_DWithin(...::geography, ...)`
-  doesn't scale in `_ijd_score_bulk_rows` (national ~3,000 usulan) even
-  though each individual call is fast — 280s for the ~1,200 usulan needing
-  the check; switched to `ST_DWithin(geometry, ...)` (planar, radius
-  converted to degrees, auto index-accelerated) → ~53s total, batched via
-  one `WITH ... AS MATERIALIZED` spatial JOIN (not one query per usulan,
-  `ctx["d_tidak_langsung_ids"]`) — `MATERIALIZED` is required or Postgres
-  12+ inlines the CTE and recomputes `ST_GeomFromGeoJSON` per candidate
-  `map_layers` row. Cached in `_ijd_bulk_cache` same as everything else, so
-  the ~53s only hits once per (provinsi-filter, tahun). Full detail:
-  `docs/checklist_implementasi_cpit.md` §"D Koridor 'tidak langsung' ...
-  DIPROMOSIKAN RESMI". `@app.on_event("startup")`
-  `_warm_ijd_bulk_cache_nasional()` (near the top of app.py, added same
-  session) pre-computes the nasional/2026 bulk result in a background
-  thread (`run_in_executor`, not awaited) right when the server boots, so
-  the first user to open Preview Export/Dashboard "Semua provinsi" doesn't
-  personally eat the ~53s — server itself stays responsive to other
-  requests immediately (confirmed <5s), only that one cache slot warms in
-  the background. A request that happens to land before warm-up finishes
-  still computes normally (race, not a bug) — restart the server to
-  re-trigger warm-up (cache is in-process, lost on restart same as always).
+  fallback chain. **Radius check is PRECOMPUTED, not a live query**
+  (settled 28 Jul 2026, same session, after two rounds of query
+  optimization — 280s → ~53s via `ST_DWithin(geometry,...)` planar +
+  batched `MATERIALIZED` spatial JOIN — still wasn't good enough since it
+  re-ran on every cold `_ijd_bulk_cache` miss). `scripts/spatial_join_
+  koridor_radius.py` fills `usulan_inpres.koridor_radius_50m` (TEXT,
+  nullable — nearest `PETA KORIDOR` `NO_KORIDOR` within 50m, or NULL) ONCE,
+  same pattern as `kode_kecamatan`/`spatial_join_kecamatan.py`.
+  `_ijd_score_koridor_v2` just reads that column now — **zero spatial
+  query at scoring time**, national bulk went from ~53s to ~5s. Re-run the
+  script (idempotent, only fills NULLs; `--force` recomputes everything)
+  after `fetch_kml_massal.py`/reimporting `usulan_inpres`/reimporting the
+  PETA KORIDOR layer, or the column stays stale for new/changed rows —
+  same "rerun the pipeline" caveat `kode_kecamatan` already has. Full
+  detail: `docs/checklist_implementasi_cpit.md` §"D Koridor 'tidak
+  langsung' ... DIPROMOSIKAN RESMI". `@app.on_event("startup")`
+  `_warm_ijd_bulk_cache_nasional()` (near the top of app.py) still
+  pre-computes the nasional/2026 bulk result in a background thread on
+  boot so even that ~5s never hits a real user, though it matters much
+  less now than when it was written against the ~53s number — server
+  itself stays responsive to other requests immediately (<5s), only that
+  cache slot warms in the background. A request landing before warm-up
+  finishes still computes normally (race, not a bug) — restart re-triggers
+  warm-up (cache is in-process, lost on restart same as always).
   **`_ijd_bulk_cache` invalidation is narrow** — only `POST /api/usulan-
   inpres/import` (added same session), `POST /api/bappenas-lokus-a/import`,
   and the penilaian-bappenas AI-narasi endpoints call `.clear()`. Data
@@ -599,6 +601,19 @@ upsert, so they're safe to re-run:
   rows that failed text-match only. Reuses that script's
   `norm`/`_match_kabupaten`/`build_master_index` rather than rewriting them.
   See `docs/kajian_overlay_kecamatan_simpul_jalan.md`.
+- `spatial_join_koridor_radius.py` — fills `usulan_inpres.koridor_
+  radius_50m` (TEXT, nullable) with the `NO_KORIDOR` of the nearest `PETA
+  KORIDOR` layer geometry within 50m (or NULL) via a batched `ST_DWithin`
+  spatial JOIN, since both sides already live in PostGIS (unlike
+  `spatial_join_kecamatan.py`, no geopandas/shapely needed here — the join
+  runs entirely in SQL). Feeds IJD parameter D's "koridor tidak langsung"
+  tier (`_ijd_score_koridor_v2` in app.py) — precomputed so scoring itself
+  does zero spatial queries (~53s → ~5s for the national bulk score, see
+  the `GET /api/usulan-inpres/{id}/ijd-score` entry above). Idempotent
+  (only fills NULL rows unless `--force`) — rerun after `fetch_kml_massal.py`,
+  reimporting `usulan_inpres`, or reimporting the PETA KORIDOR layer
+  (`import_peta_koridor_to_postgis.py`) or the column goes stale, same
+  caveat as `kode_kecamatan`.
 - `import_maps_to_postgis.py` — one-way migration of every `.shp` under
   `Maps/` into PostGIS (`map_layers`/`map_layer_meta`), the source of
   `/api/maps/*` since 24 Jul 2026 (see above). Walks the same

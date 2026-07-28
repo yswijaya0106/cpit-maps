@@ -1305,24 +1305,7 @@ def _ijd_score_koridor(row: dict, rules: dict, ctx: dict = None) -> dict:
     }
 
 
-# Radius & nama layer TETAP konstanta Python (bukan kolom ijd_scoring_rules)
-# krn keduanya threshold/lookup-key, bukan "nilai" skor -- nilai TIDAK_LANGSUNG
-# sendiri (75) SUDAH di-seed ke ijd_scoring_rules (lihat schema_ijd_scoring_
-# 2026.sql) sejak dipromosikan jadi resmi 28 Jul 2026.
-_D_V2_RADIUS_TIDAK_LANGSUNG_M = 50
-_D_V2_PETA_KORIDOR_LAYER = "PETA KORIDOR"
-# Radius dikonversi ke derajat (bukan ST_DWithin(...::geography,...)) --
-# ditemukan 28 Jul 2026: ST_DWithin geography pakai matematika spheroidal
-# presisi yg TIDAK bisa dipercepat index geometry biasa, costnya meledak
-# begitu dibatch lintas ratusan usulan sekaligus (280 detik utk 1.197
-# usulan). ST_DWithin(geometry,...) planar murni, otomatis index-accelerated
-# (PostGIS translate ke bounding-box internal, tidak perlu && manual lagi)
-# -- turun ke ~55 detik. 111.000 m/derajat adalah pendekatan KONSTAN dekat
-# ekuator (Indonesia ~-11 s.d. +6 derajat lintang, distorsi longitude
-# <2% di rentang itu) -- cukup akurat utk ambang 50m yg memang bukan
-# perhitungan presisi survei, konsisten dgn sifat _v2 yg berbasis
-# perkiraan/formula kerangka CPIT, bukan spesifikasi geodetik resmi.
-_D_V2_RADIUS_TIDAK_LANGSUNG_DERAJAT = _D_V2_RADIUS_TIDAK_LANGSUNG_M / 111_000
+_D_V2_RADIUS_TIDAK_LANGSUNG_M = 50  # dokumentasi/keterangan saja -- perhitungan jarak sendiri sudah PRECOMPUTED, lihat docstring di bawah
 
 
 def _ijd_score_koridor_v2(row: dict, rules: dict, ctx: dict = None) -> dict:
@@ -1361,16 +1344,28 @@ def _ijd_score_koridor_v2(row: dict, rules: dict, ctx: dict = None) -> dict:
     koridor langsung" (kode_koridor cocok ke KUMPULAN DATA SITIA -> 100,
     itu yg di atas) dan "mendukung koridor tidak langsung" (rute usulan
     dlm radius <50m dari shp koridor -> 75, sub_kode TIDAK_LANGSUNG di
-    ijd_scoring_rules). Sebelumnya tidak bisa dijawab krn geometri koridor
-    belum ada di database -- sekarang ada (map_layers layer='PETA KORIDOR',
-    scripts/import_peta_koridor_to_postgis.py, 11.612 ruas nasional). Dicek
-    SETELAH match langsung (di atas) dan SEBELUM fallback Balai/proksi
-    kode_koridor di bawah, krn dua kriteria CPIT itu sendiri independen dari
-    rantai fallback lama -- "tidak langsung" cuma relevan kalau usulan
-    BUKAN bagian koridor yg match persis. Butuh usulan_inpres.geom_geojson
-    terisi (fetch_kml_massal.py) -- kalau kosong, lewati cek ini & jatuh ke
-    fallback lama apa adanya (bukan tersedia:false -- D masih bisa dijawab
-    dari jalur lain)."""
+    ijd_scoring_rules).
+
+    **PRECOMPUTED, bukan live query** (diubah 28 Jul 2026 sesi yang sama,
+    setelah live query awalnya 280 detik lalu dioptimasi ke ~53 detik utk
+    batch nasional -- user lalu menunjukkan pola yang SUDAH ADA di repo ini
+    utk kasus serupa: usulan_inpres.kode_kecamatan/usulan_kecamatan_dilalui
+    dihitung sekali via script terpisah & disimpan, bukan dihitung ulang
+    tiap request). `usulan_inpres.koridor_radius_50m` (TEXT, nullable) diisi
+    oleh `scripts/spatial_join_koridor_radius.py` -- NO_KORIDOR dari koridor
+    TERDEKAT dlm radius 50m (map_layers layer='PETA KORIDOR'), atau NULL
+    kalau tidak ada. Fungsi ini sekarang O(1) baca kolom, TANPA query
+    spasial sama sekali -- ~53 detik itu hilang total dari jalur scoring,
+    dipindah jadi biaya one-time script (dijalankan manual, sama pola dgn
+    fetch_kml_massal.py/spatial_join_kecamatan.py).
+
+    **Konsekuensi**: usulan baru/geometri baru (fetch_kml_massal.py) yang
+    belum sempat di-`spatial_join_koridor_radius.py`-kan akan punya
+    koridor_radius_50m NULL -- dianggap "tidak ketemu" (jatuh ke fallback
+    lama), BUKAN error/tersedia:false, persis sama toleransinya dgn
+    kode_kecamatan NULL utk C.A1. Jalankan ulang script itu (tanpa --force,
+    idempotent, cuma isi yg NULL) setelah reimport usulan/refresh geometri
+    kalau ingin kolom ini ikut update."""
     rule = rules.get("D")
     if not rule:
         return {"tersedia": False, "keterangan": "Kaidah koridor belum diset di database."}
@@ -1393,56 +1388,17 @@ def _ijd_score_koridor_v2(row: dict, rules: dict, ctx: dict = None) -> dict:
             "keterangan": f"{sub['label']} (kode_koridor '{kode_koridor}' ditemukan di bappenas_koridor).",
         }
 
-    if row.get("geom_geojson"):
-        # ctx["d_tidak_langsung_ids"] (kalau dioper caller, lihat
-        # _ijd_score_bulk_rows) sudah dihitung SEKALIGUS lewat 1 query JOIN
-        # spasial batch utk seluruh usulan -- pakai itu dulu drpd query
-        # sendiri per baris (mahal utk cakupan nasional). Endpoint per-
-        # usulan (usulan_inpres_ijd_score, ctx=None) tetap query langsung.
-        if ctx is not None and "d_tidak_langsung_ids" in ctx:
-            dekat = row["id"] in ctx["d_tidak_langsung_ids"]
-        else:
-            with db_cursor() as cur:
-                cur.execute(
-                    """
-                    WITH t AS MATERIALIZED (
-                        -- ST_Simplify buang vertex redundan (rute KML GPS bisa
-                        -- >800 vertex) -- toleransi 0.0001 derajat (~11m) jauh
-                        -- di bawah radius 50m yg dicek, jadi tidak mengubah
-                        -- hasil ada/tidaknya dlm radius scr praktis. MATERIALIZED
-                        -- wajib (lihat catatan sama di _ijd_score_bulk_rows) --
-                        -- tanpa itu planner inline CTE ini, ST_GeomFromGeoJSON
-                        -- dihitung ulang per kandidat baris map_layers.
-                        SELECT ST_Simplify(ST_SetSRID(ST_GeomFromGeoJSON(%s), 4326), 0.0001) AS g
-                    )
-                    SELECT EXISTS (
-                        -- ST_DWithin(geometry,...) BUKAN (::geography,...) --
-                        -- planar, otomatis index-accelerated (idx_map_layers_
-                        -- geom) tanpa perlu && manual, jauh lebih cepat drpd
-                        -- matematika spheroidal geography (ditemukan 28 Jul
-                        -- 2026 saat dibatch lintas ratusan usulan sekaligus di
-                        -- _ijd_score_bulk_rows -- 280 detik -> ~55 detik).
-                        -- Radius dikonversi ke derajat via
-                        -- _D_V2_RADIUS_TIDAK_LANGSUNG_DERAJAT (lihat komentar
-                        -- di situ soal akurasi dekat ekuator).
-                        SELECT 1 FROM map_layers, t
-                        WHERE map_layers.layer = %s
-                          AND ST_DWithin(map_layers.geom, t.g, %s)
-                    ) AS dekat
-                    """,
-                    (row["geom_geojson"], _D_V2_PETA_KORIDOR_LAYER, _D_V2_RADIUS_TIDAK_LANGSUNG_DERAJAT),
-                )
-                dekat = cur.fetchone()["dekat"]
-        if dekat and "TIDAK_LANGSUNG" in rule["subs"]:
-            sub = rule["subs"]["TIDAK_LANGSUNG"]
-            return {
-                "tersedia": True, "nilai": sub["nilai"],
-                "keterangan": (
-                    f"{sub['label']} (rute usulan dlm radius "
-                    f"{_D_V2_RADIUS_TIDAK_LANGSUNG_M:.0f}m dari shp Peta Koridor, "
-                    "formula kerangka CPIT 27.7.26)."
-                ),
-            }
+    koridor_terdekat = (row.get("koridor_radius_50m") or "").strip()
+    if koridor_terdekat and "TIDAK_LANGSUNG" in rule["subs"]:
+        sub = rule["subs"]["TIDAK_LANGSUNG"]
+        return {
+            "tersedia": True, "nilai": sub["nilai"],
+            "keterangan": (
+                f"{sub['label']} (rute usulan dlm radius {_D_V2_RADIUS_TIDAK_LANGSUNG_M:.0f}m "
+                f"dari koridor '{koridor_terdekat}', formula kerangka CPIT 27.7.26, "
+                "precomputed scripts/spatial_join_koridor_radius.py)."
+            ),
+        }
 
     # Fallback: kode_koridor kosong atau tak ketemu di bappenas_koridor -- pakai logika resmi apa adanya.
     status_balai = (row.get("status_koridor_balai") or "").strip().upper()
@@ -2882,59 +2838,24 @@ def _ijd_score_bulk_rows(provinsi, tahun: int):
             for r in cur.fetchall():
                 ip_raster_by_kab.setdefault(int(r["kode_kab"]), r["bucket_ip"])
 
-    # D Koridor (_ijd_score_koridor_v2, resmi sejak 28 Jul 2026) — dibatch di
-    # sini krn D dipanggil per-usulan spt komponen lain di atas; tanpa ini
-    # tiap baris bikin 1-2 query DB sendiri (match bappenas_koridor + cek
-    # radius spasial), yg utk cakupan nasional (±3.000 usulan) artinya
-    # ribuan koneksi kecil DAN beberapa di antaranya query spasial yg
-    # lumayan berat sendiri-sendiri -- total bisa berjam-jam. Pola sama
-    # dgn ctx lain: 1 query utk match "langsung" (persis logika bappenas_
-    # koridor_no_koridor_set yg sudah lama ada hook-nya di fungsi tapi
-    # belum pernah diisi), 1 query JOIN spasial batch utk "tidak langsung"
-    # (bukan 1 query per usulan). Dites 28 Jul 2026 (~1.200 usulan perlu
-    # cek radius nasional): awalnya via ST_DWithin(...::geography,...) msh
-    # 280 detik (matematika spheroidal presisi tidak scale ke batch besar
-    # meski tiap panggilan individual cepat) -- diganti ST_DWithin(geometry,
-    # ...) planar (radius derajat, lihat _D_V2_RADIUS_TIDAK_LANGSUNG_DERAJAT)
-    # turun ke ~55 detik. Tersimpan di _ijd_bulk_cache (key provinsi+tahun)
-    # jadi cuma kena cost ini sekali per kombinasi filter, bukan tiap request.
-    # WITH ... AS MATERIALIZED wajib -- tanpa itu planner meng-inline CTE
-    # (Postgres 12+ default), geometri usulan (ST_GeomFromGeoJSON+ST_Simplify)
-    # jadi dihitung ULANG per kandidat baris map_layers, bukan sekali per
-    # usulan (bikin query jauh lebih lambat lagi, ditemukan 28 Jul 2026).
+    # D Koridor (_ijd_score_koridor_v2) match "langsung": 1 query utk seluruh
+    # kaset no_koridor Bappenas, dipakai ulang tiap baris lewat ctx (hook ini
+    # sudah lama ada di fungsi tapi baru diisi 28 Jul 2026). Tingkat "tidak
+    # langsung" (radius <50m) TIDAK dibatch di sini lagi -- sempat begitu
+    # (280 detik -> ~55 detik via ST_DWithin planar batch), tapi 28 Jul 2026
+    # (sesi yang sama) dipindah jadi PRECOMPUTED: usulan_inpres.koridor_
+    # radius_50m diisi sekali oleh scripts/spatial_join_koridor_radius.py,
+    # _ijd_score_koridor_v2 tinggal baca kolom itu (O(1), sudah ada di `row`
+    # dari SELECT * di atas) -- tidak perlu ctx/query spasial apapun lagi di
+    # sini, biaya query hilang total dari jalur ini.
     with db_cursor() as cur:
         cur.execute("SELECT DISTINCT no_koridor FROM bappenas_koridor")
         bappenas_koridor_no_koridor_set = {r["no_koridor"] for r in cur.fetchall()}
-
-    d_tidak_langsung_ids = set()
-    ids_perlu_cek_radius = [
-        r["id"] for r in rows
-        if r.get("geom_geojson") and (r.get("kode_koridor") or "").strip() not in bappenas_koridor_no_koridor_set
-    ]
-    if ids_perlu_cek_radius:
-        with db_cursor() as cur:
-            cur.execute(
-                """
-                WITH usulan_geom AS MATERIALIZED (
-                    SELECT id, ST_Simplify(ST_SetSRID(ST_GeomFromGeoJSON(geom_geojson), 4326), 0.0001) AS g
-                    FROM usulan_inpres
-                    WHERE id = ANY(%s)
-                )
-                SELECT DISTINCT ug.id
-                FROM usulan_geom ug
-                JOIN map_layers ml
-                  ON ml.layer = %s
-                 AND ST_DWithin(ml.geom, ug.g, %s)
-                """,
-                (ids_perlu_cek_radius, _D_V2_PETA_KORIDOR_LAYER, _D_V2_RADIUS_TIDAK_LANGSUNG_DERAJAT),
-            )
-            d_tidak_langsung_ids = {r["id"] for r in cur.fetchall()}
 
     # kepadatan_by_kec juga menyimpan kolom potensi_* (satu query, satu tabel
     # sumber) — dipakai ulang sebagai ctx["potensi_by_kec"] utk A3.
     ctx = {"kab_by_wilayah": kab_by_wilayah, "kawasan_by_kab": kawasan_by_kab,
            "bappenas_koridor_no_koridor_set": bappenas_koridor_no_koridor_set,
-           "d_tidak_langsung_ids": d_tidak_langsung_ids,
            "kepadatan_by_kec": kepadatan_by_kec, "potensi_by_kec": kepadatan_by_kec,
            "potensi_produksi_by_kec": potensi_produksi_by_kec,
            "bappenas_lokus_by_kab": bappenas_lokus_by_kab, "bappenas_lokus_by_prov": bappenas_lokus_by_prov,

@@ -211,6 +211,18 @@ Deps: `requirements.txt`, venv at `.venv/` (already gitignored).
   the background. A request that happens to land before warm-up finishes
   still computes normally (race, not a bug) — restart the server to
   re-trigger warm-up (cache is in-process, lost on restart same as always).
+  **`_ijd_bulk_cache` invalidation is narrow** — only `POST /api/usulan-
+  inpres/import` (added same session), `POST /api/bappenas-lokus-a/import`,
+  and the penilaian-bappenas AI-narasi endpoints call `.clear()`. Data
+  changes made OUTSIDE the running app process — any `scripts/*.py` run
+  from the CLI (`import_maps_to_postgis.py`, `import_peta_koridor_to_
+  postgis.py`, `spatial_join_kecamatan*.py`, `fetch_kml_massal.py`, etc.) —
+  **cannot** reach into the live process's in-memory dict to invalidate it;
+  there is no cross-process signal for that. Preview/Dashboard will keep
+  serving pre-change results until the server is restarted, same limitation
+  `_map_layer_geojson_cache` already has — this is not something a code fix
+  can close without a shared cache (Redis, a DB-backed version counter,
+  etc.), which hasn't been asked for.
   See `.claude/skills/ijd-scoring-parameter/` before touching this.
   `GET /api/usulan-inpres/ijd-score/preview` / `.../export/xlsx`
   (`_ijd_score_bulk_rows`) rank usulan nationally and per-provinsi via

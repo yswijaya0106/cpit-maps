@@ -614,6 +614,8 @@ def usulan_inpres_import(file: UploadFile = File(...)):
             raise HTTPException(400, str(exc))
     finally:
         conn.close()
+    _ijd_bulk_cache.clear()  # usulan_inpres berubah -> skor bulk kadaluarsa (sama pola dgn import bappenas_lokus_a)
+    _npr_bulk_cache.clear()
     return {"filename": file.filename, **stats}
 
 

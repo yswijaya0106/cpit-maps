@@ -829,7 +829,12 @@ async function ijdPreviewProsesNarasiAi() {
 
 async function ijdPreviewFetchPage() {
   const scroll = document.getElementById("ijdPreviewScroll");
-  scroll.innerHTML = '<div class="datatable-loading"><i class="bi bi-hourglass-split"></i> Menghitung skor...</div>';
+  scroll.innerHTML = `
+    <div class="datatable-loading">
+      <i class="bi bi-hourglass-split"></i> Menghitung skor...
+      <div class="datatable-loading-bar"><span></span></div>
+    </div>
+  `;
   try {
     const params = new URLSearchParams({ limit: ijdPreview.limit, offset: ijdPreview.offset });
     ijdPreview.provinsi.forEach((p) => params.append("provinsi", p));
@@ -1123,7 +1128,12 @@ async function ijdDashboardOpen() {
   const overlay = document.getElementById("ijdDashboardOverlay");
   const view = document.getElementById("ijdDashboardView");
   overlay.hidden = false;
-  view.innerHTML = '<div class="laporan-distribusi-empty"><i class="bi bi-hourglass-split"></i> Memuat dashboard...</div>';
+  view.innerHTML = `
+    <div class="laporan-distribusi-empty">
+      <i class="bi bi-hourglass-split"></i> Memuat dashboard...
+      <div class="datatable-loading-bar"><span></span></div>
+    </div>
+  `;
   try {
     const params = new URLSearchParams();
     if (state.usulanBrowse.provinsi) params.set("provinsi", state.usulanBrowse.provinsi);

@@ -189,6 +189,24 @@ html, body {
 }
 .datatable-scroll::-webkit-scrollbar-corner { background: transparent; }
 .datatable-loading { padding: 32px; text-align: center; color: var(--text-dim); font-size: 13px; }
+/* Progress bar INDETERMINATE (bukan persentase riil) -- dipakai buat proses
+   yg backend-nya satu query monolitik (mis. _ijd_score_bulk_rows, skor IJD
+   nasional ~53 detik pertama kali, lihat CLAUDE.md), jadi tidak ada angka
+   % yg bisa dilaporkan tanpa restrukturisasi backend jadi per-batch. Cuma
+   pengganti visual drpd teks statis "Menghitung skor..." polos. */
+.datatable-loading-bar {
+  width: 220px; height: 6px; border-radius: 999px; background: var(--border);
+  overflow: hidden; margin: 14px auto 0;
+}
+.datatable-loading-bar > span {
+  display: block; height: 100%; width: 35%; border-radius: 999px;
+  background: linear-gradient(90deg, var(--primary), var(--primary-dark));
+  animation: datatable-loading-slide 1.1s ease-in-out infinite;
+}
+@keyframes datatable-loading-slide {
+  0% { margin-left: -35%; }
+  100% { margin-left: 100%; }
+}
 table.datatable { border-collapse: collapse; font-size: 12.5px; min-width: 100%; }
 table.datatable th, table.datatable td {
   padding: 7px 12px; border-bottom: 1px solid var(--border);

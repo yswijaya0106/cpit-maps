@@ -6579,13 +6579,37 @@ def maps_provinces():
 
 
 @app.get("/api/maps/kabupaten")
-def maps_kabupaten(provinsi: str):
+def maps_kabupaten(provinsi: str, exclude_layer: str = "", only_layer: str = ""):
+    # exclude_layer: dipakai frontend (lihat maps-overlay.js) supaya kabupaten
+    # yang HANYA punya layer "PETA KORIDOR" (kabupaten itu dari shp PETA
+    # KORIDOR yang tidak persis merge nama dgn folder Maps/ RBI lama, lihat
+    # scripts/import_peta_koridor_to_postgis.py) tidak nyempil sbg entri
+    # "layer_count" positif tapi ternyata kosong saat di-drill di kategori
+    # "Jalan" biasa -- PETA KORIDOR sendiri sudah punya kategori tree terpisah.
+    # only_layer: kebalikannya, dipakai kategori "Peta Koridor" itu sendiri
+    # supaya "layer_count" yang tampil di node kabupaten menghitung cuma
+    # layer itu (1), bukan seluruh layer kabupaten (mis. 2 kalau kabupaten
+    # itu juga py layer jalan RBI) -- count harus konsisten dgn jumlah
+    # checkbox yang benar2 dirender loadLayerChildren(onlyLayer=...).
     with db_cursor() as cur:
-        cur.execute(
-            "SELECT kabupaten, COUNT(*) AS layer_count FROM map_layer_meta "
-            "WHERE provinsi=%s GROUP BY kabupaten ORDER BY kabupaten",
-            (provinsi,),
-        )
+        if only_layer:
+            cur.execute(
+                "SELECT kabupaten, COUNT(*) AS layer_count FROM map_layer_meta "
+                "WHERE provinsi=%s AND layer = %s GROUP BY kabupaten ORDER BY kabupaten",
+                (provinsi, only_layer),
+            )
+        elif exclude_layer:
+            cur.execute(
+                "SELECT kabupaten, COUNT(*) AS layer_count FROM map_layer_meta "
+                "WHERE provinsi=%s AND layer != %s GROUP BY kabupaten ORDER BY kabupaten",
+                (provinsi, exclude_layer),
+            )
+        else:
+            cur.execute(
+                "SELECT kabupaten, COUNT(*) AS layer_count FROM map_layer_meta "
+                "WHERE provinsi=%s GROUP BY kabupaten ORDER BY kabupaten",
+                (provinsi,),
+            )
         rows = cur.fetchall()
     return [
         {

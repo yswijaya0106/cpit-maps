@@ -122,10 +122,30 @@ async function loadMapLayerTree() {
       loadChildren: () => renderProvinsiChildren(group.rows),
     }));
   });
+
+  // "PETA KORIDOR" BUKAN bucket provinsi terpisah (beda dari BATAS
+  // KECAMATAN/BANDARA dst.) -- baris DB-nya pakai provinsi ASLI (ACEH, BALI,
+  // ...), sama seperti layer jalan RBI biasa, jadi tidak bisa dibedakan lewat
+  // categoryForProvinsi(). Dipromosikan jadi kategori top-level sendiri di
+  // sini secara manual, reuse daftar provinsi RBI yang sama dgn kategori
+  // "Jalan" (grup catch-all "jalan"), tapi drill-downnya di-filter cuma ke
+  // layer "PETA KORIDOR" (lihat opts.onlyLayer di loadLayerChildren) --
+  // supaya tidak nyempil tercampur dgn layer jalan lain 3 tingkat dalam
+  // kategori "Jalan" (temuan user 28 Jul 2026).
+  const jalanGroup = grouped.get("jalan");
+  if (jalanGroup && jalanGroup.rows.length) {
+    tree.appendChild(renderTreeNode({
+      icon: "bi-signpost-split",
+      label: "Peta Koridor",
+      count: jalanGroup.rows.length,
+      countSuffix: "provinsi",
+      loadChildren: () => renderProvinsiChildren(jalanGroup.rows, { onlyLayer: "PETA KORIDOR" }),
+    }));
+  }
   return true;
 }
 
-function renderProvinsiChildren(rows) {
+function renderProvinsiChildren(rows, opts = {}) {
   const frag = document.createDocumentFragment();
   rows
     .slice()
@@ -135,16 +155,24 @@ function renderProvinsiChildren(rows) {
         label: titleCaseWilayah(p.provinsi),
         count: p.kabupaten_count,
         countSuffix: "kab/kota",
-        loadChildren: () => loadKabupatenChildren(p.provinsi),
+        loadChildren: () => loadKabupatenChildren(p.provinsi, opts),
       }));
     });
   return frag;
 }
 
-async function loadKabupatenChildren(provinsi) {
+async function loadKabupatenChildren(provinsi, opts = {}) {
   let rows = [];
   try {
-    const res = await fetch(`/api/maps/kabupaten?provinsi=${encodeURIComponent(provinsi)}`);
+    const qs = new URLSearchParams({ provinsi });
+    // Mode normal (kategori Batas Administrasi/Simpul Transportasi/Jalan):
+    // singkirkan kabupaten yang cuma py layer PETA KORIDOR (lihat
+    // exclude_layer di app.py) supaya tidak ada entri kosong. Mode
+    // onlyLayer="PETA KORIDOR" (kategori Peta Koridor sendiri) tidak perlu
+    // exclude apapun -- justru itu yang mau ditampilkan.
+    if (opts.onlyLayer) qs.set("only_layer", opts.onlyLayer);
+    else qs.set("exclude_layer", "PETA KORIDOR");
+    const res = await fetch(`/api/maps/kabupaten?${qs}`);
     if (!res.ok) throw new Error(await res.text());
     rows = await res.json();
   } catch (err) {
@@ -157,7 +185,7 @@ async function loadKabupatenChildren(provinsi) {
   // kabupaten="" berarti tidak ada level kabupaten sama sekali -- lompat
   // langsung ke daftar layer, sama spt fallback maps_kabupaten() di app.py.
   if (rows.length === 1 && rows[0].kabupaten === "") {
-    return loadLayerChildren(provinsi, "");
+    return loadLayerChildren(provinsi, "", opts);
   }
 
   const frag = document.createDocumentFragment();
@@ -169,13 +197,13 @@ async function loadKabupatenChildren(provinsi) {
         label: r.label || r.kabupaten,
         count: r.layer_count,
         countSuffix: "layer",
-        loadChildren: () => loadLayerChildren(provinsi, r.kabupaten),
+        loadChildren: () => loadLayerChildren(provinsi, r.kabupaten, opts),
       }));
     });
   return frag;
 }
 
-async function loadLayerChildren(provinsi, kabupaten) {
+async function loadLayerChildren(provinsi, kabupaten, opts = {}) {
   let layers = [];
   try {
     const res = await fetch(`/api/maps/layers?provinsi=${encodeURIComponent(provinsi)}&kabupaten=${encodeURIComponent(kabupaten)}`);
@@ -185,6 +213,13 @@ async function loadLayerChildren(provinsi, kabupaten) {
     console.error(err);
     return mapLayerTreeError("Gagal memuat daftar layer");
   }
+  // "PETA KORIDOR" sengaja disembunyikan dari daftar layer generik (kategori
+  // "Jalan" dkk.) -- dia punya kategori top-level sendiri (lihat
+  // loadMapLayerTree), jadi di sini cuma dimunculkan kalau memang sedang
+  // di-drill lewat kategori itu (opts.onlyLayer === "PETA KORIDOR").
+  layers = opts.onlyLayer
+    ? layers.filter((l) => l.layer === opts.onlyLayer)
+    : layers.filter((l) => l.layer !== "PETA KORIDOR");
   if (!layers.length) return mapLayerTreeError("Belum ada layer (.shp) untuk kabupaten ini");
 
   const frag = document.createDocumentFragment();

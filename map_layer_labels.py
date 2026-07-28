@@ -6,6 +6,7 @@ import re
 # Best-effort Indonesian labels for RBI shapefile layer codes, keyed by the
 # name with its trailing _AR_25K/_LN_25K/_PT_25K stripped.
 MAP_LAYER_LABELS = {
+    "PETA KORIDOR": "Peta Koridor",
     "ADMINISTRASIDESA": "Batas Desa",
     "ADMINISTRASI": "Batas Administrasi",
     "AGRIKEBUN": "Kebun",

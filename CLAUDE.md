@@ -589,6 +589,35 @@ upsert, so they're safe to re-run:
   SHP) or re-run `spatial_join_kecamatan*.py` — rerun those separately and
   deliberately if the goal is also updating `usulan_inpres.kode_kecamatan`
   itself, not just the map overlay.
+- `import_peta_koridor_to_postgis.py` — imports the "PETA KORIDOR" overlay
+  layer (per-ruas geometry of Koridor IJD proposals, 11,612 features/506
+  kabupaten/37 provinsi — all except DKI Jakarta) into `map_layers`/
+  `map_layer_meta`, one `layer="PETA KORIDOR"` row per (provinsi,
+  kabupaten) — **not** one layer per koridor. Source is deliberately
+  `Maps/PETA KORIDOR/GABUNGAN_KORIDOR_SELURUH_INDONESIA/
+  seluruh_ruas_koridor_indonesia.shp`, a single pre-merged national file
+  (verified clean: 0 null/empty geometry, 0 null `NO_KORIDOR`, 0 duplicate
+  `(NO_KORIDOR, ID_RUAS)`), **not** the ~10,624 per-koridor `.shp` files
+  under `Maps/PETA KORIDOR/<provinsi>/<kabupaten>/SHP_PER_KORIDOR/<nama
+  koridor>/` (same data, split apart one koridor at a time — walking those
+  would need 3 extra directory levels beyond what `import_maps_to_postgis.py`
+  handles and would blow up the layer picker to thousands of entries per
+  kabupaten if imported 1:1). `RUAS_KML_KMZ/*.kml` (raw per-ruas upload) and
+  the per-koridor `.gpkg` duplicates are intentionally skipped — the merged
+  national `.shp` is already the processed/validated version. `attrs->>
+  'NO_KORIDOR'` on each feature is the same code format as
+  `usulan_inpres.kode_koridor` / `bappenas_koridor.no_koridor` (e.g.
+  `"11-KG-002"`) — this overlay is the first place actual koridor geometry
+  (not just a text code) is queryable, useful groundwork for a future
+  spatial (not just text-match) version of parameter D's `kode_koridor`
+  validation, though that's not implemented yet. `size_mb` in
+  `map_layer_meta` is an estimate of the per-kabupaten payload actually
+  stored (JSON attrs + WKB), not `source_shp`'s file size — unlike every
+  other `import_*_to_postgis.py` script, one shared source file here maps
+  to hundreds of layer rows, so the source file's total size would be
+  misleading per-row. Resumable per (provinsi, kabupaten) via
+  `map_layer_meta`, `--force` to reimport, `--provinsi` (repeatable) to
+  scope a run.
 - `import_kemantapan_ijd2026.py` — road-soundness per kab/kota
   (`kemantapan_ijd_2026`), the source of IJD pagu component G8.A2; also
   writes the official "Tidak mantap (%)" figure into

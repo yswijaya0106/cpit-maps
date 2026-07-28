@@ -614,6 +614,16 @@ upsert, so they're safe to re-run:
   reimporting `usulan_inpres`, or reimporting the PETA KORIDOR layer
   (`import_peta_koridor_to_postgis.py`) or the column goes stale, same
   caveat as `kode_kecamatan`.
+- `sync_usulan_pipeline.py` — thin orchestration wrapper (subprocess, no
+  new logic) that runs `import_usulan_inpres.py` (xlsx arg optional — skip
+  if already imported via the browser) → `fetch_kml_massal.py` →
+  `spatial_join_kecamatan.py` → `spatial_join_kecamatan_multi.py` →
+  `spatial_join_koridor_radius.py` in the right order, stopping at the
+  first failing step. Added so re-syncing everything after a usulan
+  reimport/geometry refresh doesn't require remembering the 5-step order —
+  safe to rerun anytime, each underlying script's own idempotency (or lack
+  thereof, `spatial_join_kecamatan_multi.py` always fully recomputes) is
+  unchanged.
 - `import_maps_to_postgis.py` — one-way migration of every `.shp` under
   `Maps/` into PostGIS (`map_layers`/`map_layer_meta`), the source of
   `/api/maps/*` since 24 Jul 2026 (see above). Walks the same

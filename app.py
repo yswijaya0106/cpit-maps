@@ -4,6 +4,7 @@ import json
 import re
 import secrets
 import sys
+import time
 import zipfile
 from datetime import datetime
 from pathlib import Path
@@ -2686,6 +2687,22 @@ def _outlier_produksi_keterangan(produksi: dict) -> str:
 # di titik-titik yang mengubah datanya (draf AI Bappenas baru, import lokus
 # Aspek A) -- restart server juga membersihkannya (sama pola dgn cache Maps
 # overlay di _map_layer_geojson_cache).
+#
+# TTL kadaluarsa (ditambahkan 30 Jul 2026, permintaan eksplisit user): entri
+# tersimpan sbg (result, timestamp_dibuat) -- dianggap basi otomatis setelah
+# _IJD_BULK_CACHE_TTL_DETIK, terlepas dari invalidasi manual di atas. Ini
+# menutup celah yang TIDAK BISA ditutup invalidasi manual: perubahan data
+# lewat skrip CLI (scripts/*.py, jalan di proses TERPISAH dari server yang
+# sedang berjalan) tidak pernah bisa memicu .clear() di proses app ini --
+# tanpa TTL, hasil bulk akan basi permanen sampai server di-restart manual
+# (skenario nyata yang ditemukan saat validasi skor IJD 29-30 Jul 2026: data
+# bps_kabupaten_padi disinkronkan via psql langsung, bukan lewat endpoint
+# import). 10 menit dipilih sbg jaring pengaman -- cukup pendek utk staff
+# tidak perlu restart manual demi lihat data barunya, cukup panjang supaya
+# navigasi berulang ke halaman preview/export dalam sesi kerja yang sama
+# tetap kena cache (biaya bulk nasional masih puluhan detik, lihat docstring
+# _ijd_score_bulk_rows).
+_IJD_BULK_CACHE_TTL_DETIK = 600
 _ijd_bulk_cache: dict = {}
 
 
@@ -2718,8 +2735,11 @@ def _ijd_score_bulk_rows(provinsi, tahun: int):
     """
     provinsi = _normalisasi_provinsi_multi(provinsi)
     key = (provinsi, tahun)
-    if key in _ijd_bulk_cache:
-        return _ijd_bulk_cache[key]
+    cached = _ijd_bulk_cache.get(key)
+    if cached is not None:
+        result, dibuat_pada = cached
+        if time.time() - dibuat_pada < _IJD_BULK_CACHE_TTL_DETIK:
+            return result
 
     with db_cursor() as cur:
         if provinsi:
@@ -3170,7 +3190,7 @@ def _ijd_score_bulk_rows(provinsi, tahun: int):
         data_rows.append(data_row)
 
     result = (header_row, header_row_short, data_rows)
-    _ijd_bulk_cache[key] = result
+    _ijd_bulk_cache[key] = (result, time.time())
     return result
 
 

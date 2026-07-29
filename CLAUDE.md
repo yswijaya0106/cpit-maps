@@ -331,11 +331,26 @@ Deps: `requirements.txt`, venv at `.venv/` (already gitignored).
   from the CLI (`import_maps_to_postgis.py`, `import_peta_koridor_to_
   postgis.py`, `spatial_join_kecamatan*.py`, `fetch_kml_massal.py`, etc.) —
   **cannot** reach into the live process's in-memory dict to invalidate it;
-  there is no cross-process signal for that. Preview/Dashboard will keep
-  serving pre-change results until the server is restarted, same limitation
-  `_map_layer_geojson_cache` already has — this is not something a code fix
-  can close without a shared cache (Redis, a DB-backed version counter,
-  etc.), which hasn't been asked for.
+  there is no cross-process signal for that.
+  **`_IJD_BULK_CACHE_TTL_DETIK` (added 30 Jul 2026, explicit user request)
+  closes this gap with a 600s (10 min) expiry**, not a cross-process
+  signal: entries are stored as `(result, timestamp)`, and a lookup past
+  the TTL is treated as a miss and recomputed — so a CLI-side data change
+  is visible to every endpoint within at most 10 minutes without needing a
+  server restart, no matter which script touched the data. This was
+  motivated by a real incident (29-30 Jul 2026): staging's
+  `bps_kabupaten_padi` was resynced via `psql` directly (not through the
+  app), and the running server kept serving pre-sync IJD scores
+  indefinitely since nothing ever called `.clear()`. TTL is a deliberate
+  trade-off over a DB-backed version counter (rejected: would need
+  touching a dozen+ import/spatial-join scripts to stay correct, and
+  missing even one silently reintroduces this exact bug) — 10 minutes
+  balances "staff don't need a manual restart to see new data" against
+  "repeated preview/export navigation in one working session still hits
+  the cache" (national bulk is tens of seconds uncached, see
+  `_ijd_score_bulk_rows` docstring). Same limitation still applies to
+  `_map_layer_geojson_cache` (not touched by this change) — TTL wasn't
+  requested there.
   See `.claude/skills/ijd-scoring-parameter/` before touching this.
   `GET /api/usulan-inpres/ijd-score/preview` / `.../export/xlsx`
   (`_ijd_score_bulk_rows`) rank usulan nationally and per-provinsi via

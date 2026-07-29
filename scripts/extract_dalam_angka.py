@@ -108,7 +108,7 @@ MARKER = re.compile(r"^\(\d+\)$")
 NUMERICISH = re.compile(r"^-?[\d.,\s]+$")
 DASH = re.compile(r"^[–—-]$")
 STOPLINE = re.compile(r"^(Lanjutan Tabel|Sumber/Source|Catatan/Note|https?://)")
-ROW_NUMBERING = re.compile(r"^\d+\.\s*")  # "1. Kepulauan Mentawai" -> "Kepulauan Mentawai"
+ROW_NUMBERING = re.compile(r"^\d+\.?\s+")  # "1. Kepulauan Mentawai" / "01   Nias" -> "Kepulauan Mentawai" / "Nias"
 
 
 def strip_row_numbering(name):
@@ -305,10 +305,19 @@ def build_prov_row_maps(names):
 
 
 def parse_prov_rows(lines, ncols, row_kab, row_kota):
-    """Return dict[kode_kab] = [nilai...] utk halaman tabel provinsi. Sama
-    dua varian format yang ditangani extract_kendaraan_provinsi(): nama
-    bilingual dua baris ("Kabupaten Bogor/" + "Bogor Regency") dan baris
-    angka yang menggabungkan >1 nilai kolom dalam satu teks."""
+    """Return dict[kode_kab] = [nilai...] utk halaman tabel provinsi. Tiga
+    varian nama baris ditangani (dua sama dgn extract_kendaraan_provinsi(),
+    ketiga khusus ditemukan di validasi bps_kabupaten_padi 29 Jul 2026):
+    bilingual dua baris dgn trailing slash ("Kabupaten Bogor/" +
+    "Bogor Regency"), baris angka yang menggabungkan >1 nilai kolom dalam
+    satu teks, dan -- buku Kalbar/Gorontalo -- nama SATU baris TANPA
+    trailing slash & TANPA baris pemisah "Kabupaten/Regency"/"Kota/
+    Municipality" sama sekali ("Kabupaten Sambas" polos, atau bilingual
+    tanpa slash "Kabupaten Boalemo" + "Boalemo Regency"). Sebelum fix ini,
+    3 provinsi (Sumut, Kalbar, Gorontalo) tersimpan 0 baris di
+    bps_kabupaten_padi meski Tabel 5.1.1 ada & valid di PDF -- nama baris
+    gagal cocok ke row_kab/row_kota diam-diam (tidak ada warning),
+    ditemukan lewat re-ekstraksi & bandingkan langsung ke DB."""
     marker_idx = [i for i, ln in enumerate(lines) if MARKER.match(ln)]
     if not marker_idx:
         return {}
@@ -327,6 +336,21 @@ def parse_prov_rows(lines, ncols, row_kab, row_kota):
             sect = row_kab if ln.startswith("Kabupaten ") else row_kota
             prefix_len = len("Kabupaten ") if ln.startswith("Kabupaten ") else len("Kota ")
             section, name, values = sect, ln[prefix_len:-1], []
+            awaiting_continuation = True
+            continue
+        if ln.startswith("Kabupaten ") or ln.startswith("Kota "):
+            # varian Kalbar/Gorontalo: tanpa trailing slash, kadang tanpa
+            # baris pemisah section sama sekali (section tetap None,
+            # diresolusi via fallback row_kab/row_kota di bawah, sama pola
+            # dgn "sebagian buku tak punya baris pemisah" pada komentar di
+            # bawah). awaiting_continuation=True aman utk kedua sub-varian:
+            # kalau baris berikutnya numerik (Kalbar, satu baris polos),
+            # NUMERICISH di bawah cek duluan & reset flag sebelum dipakai;
+            # kalau baris berikutnya nama Inggris (Gorontalo, bilingual
+            # tanpa slash), baru ke-consume oleh cabang awaiting_continuation.
+            sect = row_kab if ln.startswith("Kabupaten ") else row_kota
+            prefix_len = len("Kabupaten ") if ln.startswith("Kabupaten ") else len("Kota ")
+            section, name, values = sect, ln[prefix_len:], []
             awaiting_continuation = True
             continue
         if NUMERICISH.match(ln) or DASH.match(ln):

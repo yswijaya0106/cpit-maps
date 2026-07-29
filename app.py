@@ -1131,14 +1131,14 @@ def _ijd_score_tematik_v2(row: dict, rules: dict, ctx: dict = None) -> dict:
 
     tematik = (row.get("tematik_kawasan_kompetensi") or "").strip()
     if not tematik:
-        return {"tersedia": False, "keterangan": "tematik_kawasan_kompetensi belum diisi (verifikasi kompetensi belum dilakukan) — tidak fallback ke Balai/Pemda."}
+        return {"tersedia": False, "keterangan": "tematik_kawasan_kompetensi belum diisi (verifikasi kompetensi belum dilakukan)."}
 
     sub = rule["subs"].get(tematik)
     if not sub:
         return {"tersedia": False, "keterangan": f"Kategori tematik '{tematik}' (verifikasi kompetensi) tidak dikenali kaidah."}
 
     nilai = sub["nilai"]
-    detail = [f"{sub['label']} — sumber: verifikasi kompetensi (tanpa fallback Balai/Pemda)"]
+    detail = [f"{sub['label']} — sumber: verifikasi kompetensi"]
     if any(k.startswith("A4_") for k in rule["subs"]):
         status_a4 = (row.get("jenis_data_dukung_tematik_kompetensi") or "").strip().upper()
         sub_a4 = rule["subs"].get(f"A4_{status_a4}") if status_a4 else None
@@ -1214,7 +1214,7 @@ def _ijd_score_tematik_v2(row: dict, rules: dict, ctx: dict = None) -> dict:
         keterangan = "; ".join(detail) + "."
     else:
         keterangan = (
-            f"{sub['label']} (sumber: verifikasi kompetensi, tanpa fallback) — hanya mencakup "
+            f"{sub['label']} (sumber: verifikasi kompetensi) — hanya mencakup "
             "sub-parameter tematik utama (A1/A2); tematik tambahan & data dukung (A3/A4) belum tersedia."
         )
     return {"tersedia": True, "nilai": nilai, "keterangan": keterangan}
@@ -1246,31 +1246,31 @@ def _ijd_score_kemantapan(row: dict, rules: dict, ctx: dict = None) -> dict:
 
 
 def _ijd_score_kemantapan_v2(row: dict, rules: dict, ctx: dict = None) -> dict:
-    """Varian ALTERNATIF parameter B (Kondisi Kemantapan Eksisting Ruas),
-    BUKAN pengganti _ijd_score_kemantapan (yang resmi dipakai
-    _IJD_SCORERS) -- fungsi terpisah, tidak didaftarkan ke _IJD_SCORERS,
-    dibuat 27 Jul 2026 utk menguji formula persis yang tertulis di
+    """Parameter B (Kondisi Kemantapan Eksisting Ruas) RESMI sejak 29 Jul
+    2026 (konfirmasi eksplisit user/pemilik kaidah, sesi validasi laporan
+    teknokratis) -- terdaftar di _IJD_SCORERS["B"], menggantikan
+    _ijd_score_kemantapan lama (fungsi lama TETAP ada, dipertahankan sbg
+    referensi/riwayat, tidak lagi dipanggil _compute_ijd_score). Pola
+    promosi sama persis dgn A -> _ijd_score_tematik_v2 dan
+    D -> _ijd_score_koridor_v2.
+
+    Dibuat 27 Jul 2026 utk menguji formula persis yang tertulis di
     docs/docs/27.7.26 KERANGKA PENGGUNAAN DATA UNTUK APLIKASI CPIT.xlsx
     sheet "Penilaian Teknokratis" baris B ("(panjang baik + panjang
-    sedang) / panjang ruas total x 100").
-
-    Beda satu-satunya dari _ijd_score_kemantapan: penyebutnya
-    `panjang_ruas_km` (atribut ruas resmi dari SITIA), BUKAN
-    `kondisi_baik_km + kondisi_sedang_km + kondisi_ringan_km +
-    kondisi_berat_km` (jumlah 4 kolom kondisi apa adanya). Pola & alasan
-    penyebut ini SAMA PERSIS dgn `_kemantapan_ruas_fakta` (diputuskan 21
-    Jul 2026 atas permintaan user: panjang_ruas_km jauh lebih konsisten
-    drpd alternatif lain yang pernah dicoba, cuma ~2,9% baris yg >100%
-    mentah). Dicek 27 Jul 2026 di seluruh data nasional: 31/2.635 usulan
-    (1,2%) berpindah kelas MANTAP<->TIDAK_MANTAP dibanding
-    _ijd_score_kemantapan, dan 43/2.635 (1,6%) menghasilkan pct >100%
-    mentah (di-clamp ke 100 di sini, pola sama dgn _kemantapan_ruas_fakta)
-    -- lihat docs/analisa_kerangka_penggunaan_data_cpit_270726.md §6.
-
-    Dibiarkan terpisah (bukan menggantikan B resmi) krn baris contoh di
-    kerangka CPIT itu sendiri ambigu (lihat dokumen kajian) -- belum ada
-    konfirmasi pemilik kaidah bahwa penyebut ini seharusnya menggantikan
-    formula resmi saat ini."""
+    sedang) / panjang ruas total x 100"). Dikonfirmasi 29 Jul 2026 bahwa
+    "panjang ruas total" pada kalimat itu berarti `panjang_ruas_km`
+    (atribut ruas resmi dari SITIA), BUKAN `kondisi_baik_km +
+    kondisi_sedang_km + kondisi_ringan_km + kondisi_berat_km` (jumlah 4
+    kolom kondisi apa adanya, dipakai _ijd_score_kemantapan lama). Pola &
+    alasan penyebut ini SAMA PERSIS dgn `_kemantapan_ruas_fakta`
+    (diputuskan 21 Jul 2026 atas permintaan user: panjang_ruas_km jauh
+    lebih konsisten drpd alternatif lain yang pernah dicoba, cuma ~2,9%
+    baris yg >100% mentah). Dicek 27 Jul 2026 di seluruh data nasional:
+    31/2.635 usulan (1,2%) berpindah kelas MANTAP<->TIDAK_MANTAP
+    dibanding _ijd_score_kemantapan lama, dan 43/2.635 (1,6%)
+    menghasilkan pct >100% mentah (di-clamp ke 100 di sini, pola sama
+    dgn `_kemantapan_ruas_fakta`) -- lihat
+    docs/analisa_kerangka_penggunaan_data_cpit_270726.md §6."""
     rule = rules.get("B")
     if not rule:
         return {"tersedia": False, "keterangan": "Kaidah kemantapan belum diset di database."}
@@ -2397,7 +2397,13 @@ _IJD_SCORERS = {
     # fallback kompetensi->balai->pemda) TETAP ada di kode (referensi/riwayat),
     # tidak dihapus, cuma tidak lagi didaftarkan di sini -- pola sama dgn
     # promosi D ke _ijd_score_koridor_v2 di bawah.
-    "A": _ijd_score_tematik_v2, "B": _ijd_score_kemantapan, "C": _ijd_score_kemanfaatan,
+    "A": _ijd_score_tematik_v2,
+    # B dipromosikan ke _ijd_score_kemantapan_v2 29 Jul 2026 (konfirmasi
+    # eksplisit user: penyebut "panjang ruas total" pada kerangka CPIT
+    # 27.7.26 berarti panjang_ruas_km, bukan jumlah kolom kondisi).
+    # _ijd_score_kemantapan lama TETAP ada di kode (referensi/riwayat),
+    # tidak dihapus, cuma tidak lagi didaftarkan di sini.
+    "B": _ijd_score_kemantapan_v2, "C": _ijd_score_kemanfaatan,
     # D dipromosikan ke _ijd_score_koridor_v2 28 Jul 2026 (request eksplisit
     # user) -- nambah tingkat "koridor tidak langsung" (75, radius <50m dari
     # map_layers layer 'PETA KORIDOR') yang tidak ada di _ijd_score_koridor

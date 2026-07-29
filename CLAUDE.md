@@ -167,14 +167,46 @@ Deps: `requirements.txt`, venv at `.venv/` (already gitignored).
   to begin with, so this promotion changes nothing about their logic.
   National impact: 1,229/3,072 usulan (40%) have `tematik_kawasan_
   kompetensi` NULL and previously scored A1/A2 via Balai (302) or Pemda
-  (927) fallback under the old function; those now report A1/A2
-  unresolved (though A3/A4 can still contribute if *their* sources
-  resolve, so A itself is not necessarily `"tersedia": false` overall —
-  only if A1/A2/A3/A4 all fail to resolve does A become entirely
-  unavailable, same all-sources-fail rule as before). **`_ijd_bulk_cache`
+  (927) fallback under the old function; those now report A entirely
+  `"tersedia": false`. **A3/A4 do NOT independently rescue A** — both
+  functions `return` immediately once A1/A2 fails to resolve, before the
+  A3/A4 lookup code is ever reached (verified against all 370 sampled
+  records in the validation report, zero exceptions) — there is no path
+  where A scores off A3/A4 alone while A1/A2 is unresolved. **`_ijd_bulk_cache`
   is stale after this change** (in-process, same limitation as always —
   see below) — restart the server to pick up new scores; exports
   generated before the restart still reflect the old fallback-enabled A.
+  **B (`_ijd_score_kemantapan_v2`) promoted to official 29 Jul 2026**
+  (same session, explicit user/kaidah-owner confirmation): `_IJD_SCORERS
+  ["B"]` now points to `_ijd_score_kemantapan_v2`, not the older
+  `_ijd_score_kemantapan` (kept in code as reference/history, no longer
+  called). Formula unchanged in shape (`(kondisi_baik_km +
+  kondisi_sedang_km) / denominator × 100`, <60%→TIDAK_MANTAP(100),
+  ≥60%→MANTAP(60)) — the only change is the **denominator**: confirmed to
+  be `panjang_ruas_km` (the ruas's own official SITIA length), not
+  `kondisi_baik_km + _sedang_km + _ringan_km + _berat_km` (sum of the
+  four self-reported condition columns) as the old function used. The
+  27.7.26 KERANGKA PENGGUNAAN DATA UNTUK APLIKASI CPIT.xlsx source states
+  the rule as "(panjang baik + panjang sedang) / panjang ruas total ×
+  100" — "panjang ruas total" is now confirmed to mean `panjang_ruas_km`.
+  `pct_mantap` is clamped to 100% (a handful of rows report condition
+  lengths that sum past their own official ruas length — a genuine
+  source-data inconsistency, same clamp pattern as `_kemantapan_ruas_
+  fakta`). Nationwide (rechecked 29 Jul 2026 against the current
+  3,072-usulan dataset), this reclassifies 23/2,068 comparable usulan
+  (1.1%) between MANTAP/TIDAK_MANTAP, and clamps 37 usulan whose raw
+  `pct_mantap` would exceed 100% — small in volume but a real behavior
+  change for those rows. **Far more consequential**:
+  `_ijd_score_kemantapan_v2` requires `kondisi_baik_km`/
+  `kondisi_sedang_km` to be **non-NULL** (not just non-zero) to report
+  available, stricter than the old function's `float(x or 0)` coercion
+  (which only failed when *all four* condition columns were null/zero).
+  This alone pushes B-unavailable from 226/3,072 (7.4%) under the old
+  formula to **794/3,072 (25.8%)** under the new one — B is now
+  unavailable for roughly 1 in 4 usulan nationally, not 1 in 14. Every
+  downstream consumer of "Kelengkapan Data Skor Teknokratis" (bulk
+  export, dashboard, `docs/validation-report/`) needs to be read against
+  this new baseline, not the pre-29-Jul-2026 one.
   **C (`_ijd_score_kemanfaatan`) is 3 independently-
   gated subs, not all-or-nothing** (changed 2026-07-22): A1 Kepadatan
   (35%) prefers kecamatan-level `kecamatan_data_turunan` via

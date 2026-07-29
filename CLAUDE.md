@@ -240,6 +240,56 @@ Deps: `requirements.txt`, venv at `.venv/` (already gitignored).
   `docs/verifikasi_ijd_ciparay_cikumpay.md` and
   `docs/verifikasi_npr_ciparay_cikumpay.md` both hit and document this
   exact scenario (22 Jul 2026 re-validation).
+  **C (`_ijd_score_kemanfaatan_v2`) promoted to official 29 Jul 2026**
+  (same session, explicit user request): `_IJD_SCORERS["C"]` now points
+  to `_ijd_score_kemanfaatan_v2`, not the older `_ijd_score_kemanfaatan`
+  described in the paragraph above (kept in code as reference/history, no
+  longer called). Whole-formula replacement, not a tweak: v2 sums 5
+  independently-gated sub-scores — C1 Jumlah Penduduk (35%, total
+  penduduk YANG DILALUI RUTE across every kecamatan in
+  `usulan_kecamatan_dilalui`, **not** kepadatan/km² of one dominant
+  kecamatan), C2 Indeks Penanaman (11%, kabupaten IP as a ratio to the
+  national max IP), C2 Produksi (12%, `bps_kabupaten_padi.produksi_ton`
+  — a sub the old function never had at all), C2 Luas Lahan (12%,
+  `bps_kabupaten_indeks_penanaman.lahan_baku_sawah_ha` — also never
+  existed in the old function), C3 Kepemilikan Kendaraan/km (30%, same
+  ratio metric as before) — every sub scored via the CPIT 27.7.26 sheet's
+  "Equal Interval Range dibagi rata jadi 4" quadrant method (25/50/75/100)
+  instead of the old function's fixed Tabel 4 PDF thresholds. C1 and C3
+  are quadrant-per-**provinsi**; C2 Produksi and C2 Luas Lahan are
+  quadrant-per-**nasional** (no per-provinsi qualifier in the sheet note
+  for those two rows) — asymmetric on purpose, confirmed 27 Jul 2026.
+  **C1's quadrant boundaries are NOT stable over time** — they're
+  recomputed from the current min/max of total-penduduk-dilalui across
+  *all* usulan in the same province every time the score runs (not a
+  cached constant), so one usulan's C score can shift purely because a
+  *different* usulan in the same province got new routing/population data
+  — a real behavioral difference from every other promoted parameter
+  (A/B/D/E), which are all stable absolute-threshold/flag formulas.
+  Accepted knowingly at promotion time (explicit user confirmation after
+  being shown this caveat), not an oversight — don't "fix" it into a
+  fixed threshold without being asked. C2 Produksi/Luas Lahan's national-
+  quadrant reading and their exact source columns are still flagged
+  "asumsi pembacaan kerangka, belum dikonfirmasi ulang pemilik kaidah" in
+  their own docstrings even after promotion — the promotion is about
+  which formula runs in production, not a claim that every reading
+  ambiguity is resolved. Bulk/export path (`_ijd_score_bulk_rows`)
+  batches all 5 subs' national/per-provinsi ranges and per-kabupaten raw
+  values into `ctx` once per request (`c1_total_penduduk_dilalui`,
+  `c1_kuadran_by_provinsi`, `c2_ip_by_kab`, `produksi_kuadran_nasional`,
+  `c2_produksi_by_kab`, `luas_lahan_kuadran_nasional`,
+  `c2_luas_lahan_by_kab`, `c3_kuadran_by_provinsi`, reusing the existing
+  `kendaraan_per_km_by_kab` for C3) — same "batch instead of per-row
+  query" pattern as every other bulk ctx key, avoids N+1 across ~3,000
+  usulan. **`_ijd_bulk_cache` is stale after this change** (same
+  in-process limitation as always) — restart the server to pick up the
+  new C formula; exports/previews generated before the restart still
+  reflect the old Tabel-4 C. The per-case A-E breakdown tables already
+  written into `docs/validation-report/*_5_ruas_per_provinsi_ijd2026.md`
+  (and the two main EN/ID validation reports) were generated **before**
+  this promotion and still show the old C formula's Total C/kontribusi
+  values — only the reference-only "C2 — Produksi/Luas Lahan
+  (eksperimental)" rows added afterward already reflect v2's numbers.
   **D (`_ijd_score_koridor_v2`) promoted to official 28 Jul 2026** (explicit
   user request, same session that added the "PETA KORIDOR" map overlay
   layer above): `_IJD_SCORERS["D"]` now points to `_ijd_score_koridor_v2`,

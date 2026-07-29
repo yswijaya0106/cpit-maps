@@ -1465,7 +1465,14 @@ _A2IP_RASTER_BUCKET_TO_SUB = {
 
 
 def _ijd_score_kemanfaatan(row: dict, rules: dict, ctx: dict = None) -> dict:
-    """Parameter C kaidah 2026 — sub A1 (kepadatan penduduk kecamatan, bobot
+    """Versi LAMA parameter C (ambang tetap Tabel 4 PDF) -- TIDAK LAGI
+    dipakai `_IJD_SCORERS["C"]` sejak 29 Jul 2026 (digantikan
+    `_ijd_score_kemanfaatan_v2`, formula equal-interval kerangka CPIT
+    27.7.26, promosi resmi atas permintaan eksplisit user). Tetap ada di
+    kode sbg referensi/riwayat, sama pola dgn `_ijd_score_tematik`/
+    `_ijd_score_kemantapan`/`_ijd_score_koridor` lama.
+
+    Parameter C kaidah 2026 — sub A1 (kepadatan penduduk kecamatan, bobot
     35%) + A2 produktivitas padi kabupaten (proksi "Produktivitas Ton/Ha",
     12% dari 35% A2) + A2 Indeks Penanaman kabupaten (11% dari 35% A2,
     Kertas Kerja.xlsx -- Luas Lahan 12% masih menunggu data yg skalanya
@@ -2049,17 +2056,20 @@ def _ijd_score_kemanfaatan_c2_luas_lahan_v2(row: dict, ctx: dict = None) -> dict
         return {"tersedia": False, "keterangan": "Rentang nasional lahan_baku_sawah_ha belum tersedia."}
     mn, mx = rentang
 
-    with db_cursor() as cur:
-        cur.execute(
-            "SELECT lahan_baku_sawah_ha FROM bps_kabupaten_indeks_penanaman "
-            "WHERE kode_kab = %s AND tahun = 2024",
-            (f"{kode_kab:04d}",),
-        )
-        r = cur.fetchone()
-    if not r or r["lahan_baku_sawah_ha"] is None:
+    luas_by_kab = (ctx or {}).get("c2_luas_lahan_by_kab") if ctx else None
+    if luas_by_kab is not None or (ctx and "c2_luas_lahan_by_kab" in ctx):
+        luas = luas_by_kab.get(kode_kab) if luas_by_kab else None
+    else:
+        with db_cursor() as cur:
+            cur.execute(
+                "SELECT lahan_baku_sawah_ha FROM bps_kabupaten_indeks_penanaman "
+                "WHERE kode_kab = %s AND tahun = 2024",
+                (f"{kode_kab:04d}",),
+            )
+            r = cur.fetchone()
+        luas = float(r["lahan_baku_sawah_ha"]) if r and r["lahan_baku_sawah_ha"] is not None else None
+    if luas is None:
         return {"tersedia": False, "keterangan": f"Luas baku sawah kabupaten kode {kode_kab} tidak tersedia."}
-
-    luas = float(r["lahan_baku_sawah_ha"])
     rentang_nilai = mx - mn
     if rentang_nilai <= 0:
         nilai, kuadran = 25.0, 1
@@ -2147,17 +2157,20 @@ def _ijd_score_kemanfaatan_c2_produksi_v2(row: dict, ctx: dict = None) -> dict:
         return {"tersedia": False, "keterangan": "Rentang nasional produksi_ton belum tersedia."}
     mn, mx = rentang
 
-    with db_cursor() as cur:
-        cur.execute(
-            "SELECT produksi_ton FROM bps_kabupaten_padi WHERE kode_kab = %s "
-            "ORDER BY tahun DESC LIMIT 1",
-            (f"{kode_kab:04d}",),
-        )
-        r = cur.fetchone()
-    if not r or r["produksi_ton"] is None:
+    produksi_by_kab = (ctx or {}).get("c2_produksi_by_kab") if ctx else None
+    if produksi_by_kab is not None or (ctx and "c2_produksi_by_kab" in ctx):
+        produksi = produksi_by_kab.get(kode_kab) if produksi_by_kab else None
+    else:
+        with db_cursor() as cur:
+            cur.execute(
+                "SELECT produksi_ton FROM bps_kabupaten_padi WHERE kode_kab = %s "
+                "ORDER BY tahun DESC LIMIT 1",
+                (f"{kode_kab:04d}",),
+            )
+            r = cur.fetchone()
+        produksi = float(r["produksi_ton"]) if r and r["produksi_ton"] is not None else None
+    if produksi is None:
         return {"tersedia": False, "keterangan": f"Produksi padi kabupaten kode {kode_kab} tidak tersedia."}
-
-    produksi = float(r["produksi_ton"])
     rentang_nilai = mx - mn
     if rentang_nilai <= 0:
         nilai, kuadran = 25.0, 1
@@ -2248,19 +2261,22 @@ def _ijd_score_kemanfaatan_c3_kendaraan_v2(row: dict, ctx: dict = None) -> dict:
         return {"tersedia": False, "keterangan": f"Rentang rasio kendaraan/km provinsi (kode {kode_prov}) belum tersedia."}
     mn, mx = range_prov
 
-    with db_cursor() as cur:
-        cur.execute(
-            "SELECT k.jumlah / j.panjang_total_km AS per_km FROM bps_kabupaten_kendaraan k "
-            "JOIN bps_kabupaten_jalan j ON j.kode_kab = k.kode_kab "
-            "WHERE k.kode_kab = %s AND j.panjang_total_km > 0 AND k.jumlah IS NOT NULL "
-            "ORDER BY k.tahun DESC LIMIT 1",
-            (f"{kode_kab:04d}",),
-        )
-        r = cur.fetchone()
-    if not r or r["per_km"] is None:
+    kendaraan_by_kab = (ctx or {}).get("kendaraan_per_km_by_kab") if ctx else None
+    if kendaraan_by_kab is not None or (ctx and "kendaraan_per_km_by_kab" in ctx):
+        rasio = kendaraan_by_kab.get(kode_kab) if kendaraan_by_kab else None
+    else:
+        with db_cursor() as cur:
+            cur.execute(
+                "SELECT k.jumlah / j.panjang_total_km AS per_km FROM bps_kabupaten_kendaraan k "
+                "JOIN bps_kabupaten_jalan j ON j.kode_kab = k.kode_kab "
+                "WHERE k.kode_kab = %s AND j.panjang_total_km > 0 AND k.jumlah IS NOT NULL "
+                "ORDER BY k.tahun DESC LIMIT 1",
+                (f"{kode_kab:04d}",),
+            )
+            r = cur.fetchone()
+        rasio = float(r["per_km"]) if r and r["per_km"] is not None else None
+    if rasio is None:
         return {"tersedia": False, "keterangan": f"Rasio kendaraan/km kabupaten kode {kode_kab} belum tersedia."}
-
-    rasio = float(r["per_km"])
     rentang_nilai = mx - mn
     if rentang_nilai <= 0:
         nilai, kuadran = 25.0, 1
@@ -2301,25 +2317,47 @@ _C_V2_BOBOT_INTERNAL = {
 
 
 def _ijd_score_kemanfaatan_v2(row: dict, rules: dict, ctx: dict = None) -> dict:
-    """Varian ALTERNATIF parameter C (Kemanfaatan) GABUNGAN -- BUKAN
-    pengganti _ijd_score_kemanfaatan resmi, BELUM didaftarkan ke
-    _IJD_SCORERS. Dibuat 28 Jul 2026 atas permintaan eksplisit user:
+    """Parameter C (Kemanfaatan) GABUNGAN -- **RESMI sejak 29 Jul 2026**
+    (`_IJD_SCORERS["C"]`, promosi atas permintaan eksplisit user, sesi
+    yang sama dengan penulisan `docs/validation-report/perhitungan_
+    detail_5_ruas_per_provinsi_ijd2026.md`). Dibuat 28 Jul 2026:
     menjumlahkan kelima sub `_v2` (C1 Jumlah Penduduk, C2 Indeks
     Penanaman/Produksi/Luas Lahan, C3 Kepemilikan Kendaraan) persis pola
     kerangka CPIT 27.7.26 sheet "Penilaian Teknokratis" -- tiap sub
     dikali bobot internalnya (lihat _C_V2_BOBOT_INTERNAL) lalu dijumlah,
     sama persis mekanisme contoh kerja user ("JUMLAH NILAI AKHIR: 38,10"
-    = 17,5 + 4,4 + 4,8 + 2,4 + 9,0).
+    = 17,5 + 4,4 + 4,8 + 2,4 + 9,0). Menggantikan `_ijd_score_kemanfaatan`
+    lama (ambang tetap Tabel 4 PDF, 4 sub bukan 5 -- tidak ada Produksi/
+    Luas Lahan sama sekali) -- fungsi lama TETAP ada di kode sbg
+    referensi/riwayat, tidak lagi dipanggil `_IJD_SCORERS`.
+
+    **PENTING -- sifat "kuadran relatif" C1 tetap ada meski sudah resmi**
+    (lihat catatan stabilitas di `_ijd_score_kemanfaatan_c1_v2`): batas
+    kuadran C1 dihitung ULANG dari min/max total-penduduk-dilalui SEMUA
+    usulan per provinsi setiap kali dipanggil (tidak konstan) -- skor C
+    satu usulan bisa berubah semata krn usulan LAIN di provinsi yang sama
+    dapat data baru, BUKAN cuma krn datanya sendiri berubah. Ini beda
+    fundamental dari A/B/D/E yang sudah dipromosikan sebelumnya (semua
+    berbasis ambang tetap/flag, stabil lintas waktu). Diterima sadar oleh
+    user saat promosi ini (bukan oversight) -- jangan "perbaiki" jadi
+    ambang tetap tanpa diminta.
+
+    Sub C2-Produksi & C2-Luas Lahan (sumber `bps_kabupaten_padi.
+    produksi_ton` & `bps_kabupaten_indeks_penanaman.lahan_baku_sawah_ha`)
+    dan pembacaan "kuadran nasional" (bukan per-provinsi) utk keduanya
+    masih berstatus ASUMSI PEMBACAAN kerangka CPIT, belum dikonfirmasi
+    ulang scr eksplisit oleh pemilik kaidah pada tanggal promosi ini --
+    lihat catatan di masing2 fungsi sub (`_ijd_score_kemanfaatan_c2_
+    produksi_v2`/`_c2_luas_lahan_v2`).
 
     Nilai akhir disimpan pada skala INTERNAL 0-100 milik parameter C
     (sama pola dgn A -- lihat _ijd_score_tematik), BUKAN sudah dikali
-    bobot_maks C (25) -- itu tetap tugas _compute_ijd_score kalau fungsi
-    ini suatu saat didaftarkan ke _IJD_SCORERS
-    (kontribusi = nilai/100*bobot_maks).
+    bobot_maks C (25) -- itu tugas _compute_ijd_score (kontribusi =
+    nilai/100*bobot_maks).
 
-    `tersedia: False` HANYA kalau seluruh 5 sub gagal dihitung (pola sama
-    dgn C resmi) -- kalau sebagian tersedia, nilai dijumlah dari yang ada
-    saja dan keterangan mencantumkan sub mana yang hilang."""
+    `tersedia: False` HANYA kalau seluruh 5 sub gagal dihitung -- kalau
+    sebagian tersedia, nilai dijumlah dari yang ada saja dan keterangan
+    mencantumkan sub mana yang hilang."""
     hasil_sub = {
         "c1": _ijd_score_kemanfaatan_c1_v2(row, ctx),
         "c2_ip": _ijd_score_kemanfaatan_c2_ip_v2(row, ctx),
@@ -2403,7 +2441,7 @@ _IJD_SCORERS = {
     # 27.7.26 berarti panjang_ruas_km, bukan jumlah kolom kondisi).
     # _ijd_score_kemantapan lama TETAP ada di kode (referensi/riwayat),
     # tidak dihapus, cuma tidak lagi didaftarkan di sini.
-    "B": _ijd_score_kemantapan_v2, "C": _ijd_score_kemanfaatan,
+    "B": _ijd_score_kemantapan_v2, "C": _ijd_score_kemanfaatan_v2,
     # D dipromosikan ke _ijd_score_koridor_v2 28 Jul 2026 (request eksplisit
     # user) -- nambah tingkat "koridor tidak langsung" (75, radius <50m dari
     # map_layers layer 'PETA KORIDOR') yang tidak ada di _ijd_score_koridor
@@ -2851,6 +2889,47 @@ def _ijd_score_bulk_rows(provinsi, tahun: int):
             for r in cur.fetchall():
                 lbs_by_kab.setdefault(int(r["kode_kab"]), float(r["lahan_baku_sawah_ha"]))
 
+    # C (v2, promosi resmi 29 Jul 2026) — Produksi padi & Luas Baku Sawah
+    # per-kabupaten dibatch di sini (bukan query per-usulan) supaya bulk
+    # export tidak N+1 -- sama alasan dgn kepadatan_kab_by_kab/kendaraan_
+    # per_km_by_kab di atas. Query PERSIS sama dgn live-query fallback di
+    # _ijd_score_kemanfaatan_c2_produksi_v2/_c2_luas_lahan_v2 (termasuk
+    # TANPA filter "> 0" pada luas -- beda dari lbs_by_kab di atas yang
+    # sengaja exclude 0 ha utk checklist Aspek B, di sini 0 ha valid krn
+    # rentang kuadran nasional dimulai dari 0).
+    # TIDAK difilter "produksi_ton IS NOT NULL" di WHERE -- harus match persis
+    # semantik live-query fallback (_c2_kuadran_produksi_ctx/_ijd_score_kemanfaatan_
+    # c2_produksi_v2): DISTINCT ON mengambil baris TAHUN TERBARU per kabupaten,
+    # baru dicek NULL sesudahnya. Kabupaten dengan baris tahun terbaru yg
+    # produksi_ton-nya NULL (mis. baris 2025 kosong menaungi baris 2024 berisi)
+    # harus tetap "tidak tersedia", bukan diam2 jatuh ke tahun lama yg berisi --
+    # filter NULL di WHERE (versi awal fungsi ini) salah memilih baris tahun lama
+    # kalau baris tahun terbaru NULL, ditemukan lewat validasi export vs laporan
+    # (ID 241390/241720, kab. Supiori) 29 Jul 2026.
+    c2_produksi_by_kab = {}
+    if kode_kab_set:
+        with db_cursor() as cur:
+            cur.execute(
+                "SELECT DISTINCT ON (kode_kab) kode_kab, produksi_ton FROM bps_kabupaten_padi "
+                "WHERE kode_kab = ANY(%s) "
+                "ORDER BY kode_kab, tahun DESC",
+                (kode_kab_str,),
+            )
+            for r in cur.fetchall():
+                if r["produksi_ton"] is not None:
+                    c2_produksi_by_kab[int(r["kode_kab"])] = float(r["produksi_ton"])
+
+    c2_luas_lahan_by_kab = {}
+    if kode_kab_set:
+        with db_cursor() as cur:
+            cur.execute(
+                "SELECT kode_kab, lahan_baku_sawah_ha FROM bps_kabupaten_indeks_penanaman "
+                "WHERE kode_kab = ANY(%s) AND tahun = 2024 AND lahan_baku_sawah_ha IS NOT NULL",
+                (kode_kab_str,),
+            )
+            for r in cur.fetchall():
+                c2_luas_lahan_by_kab[int(r["kode_kab"])] = float(r["lahan_baku_sawah_ha"])
+
     # Indeks Penanaman kabupaten — sumber PRIMER (raster resmi Dit. SDA,
     # lihat _A2IP_RASTER_BUCKET_TO_SUB); indeks_penanaman_by_kab di atas
     # (Kertas Kerja.xlsx) jadi fallback SEKUNDER kalau kabupaten tak tercakup.
@@ -2879,6 +2958,22 @@ def _ijd_score_bulk_rows(provinsi, tahun: int):
         cur.execute("SELECT DISTINCT no_koridor FROM bappenas_koridor")
         bappenas_koridor_no_koridor_set = {r["no_koridor"] for r in cur.fetchall()}
 
+    # C (v2, resmi 29 Jul 2026) — rentang kuadran & dict nasional dibatch SATU
+    # kali per request bulk (bukan per-usulan): _c1_kuadran_penduduk_ctx()/
+    # _c2_ip_by_kab_ctx()/_c2_kuadran_produksi_ctx()/_c2_kuadran_luas_lahan_ctx()/
+    # _c3_kuadran_kendaraan_ctx() semuanya query NASIONAL (tidak difilter
+    # kode_kab_set batch ini) krn kuadran equal-interval harus dibanding thd
+    # seluruh Indonesia (C1/C3 per-provinsi, C2-IP/Produksi/LuasLahan nasional),
+    # bukan cuma provinsi yang sedang di-export. c2_ip_by_kab TIDAK boleh dituker
+    # dgn indeks_penanaman_by_kab di atas (itu sudah difilter kode_kab_set --
+    # dipakai official C2-IP yang cuma butuh nilai kabupaten usulan sendiri,
+    # sedangkan v2 butuh MAX nasional buat rasio, jadi harus dict lengkap).
+    c1_total_penduduk_dilalui = _c1_total_penduduk_dilalui_per_usulan()
+    c1_kuadran_by_provinsi: dict = {}
+    for _total, _prov in c1_total_penduduk_dilalui.values():
+        c1_kuadran_by_provinsi.setdefault(_prov, []).append(_total)
+    c1_kuadran_by_provinsi = {p: (min(v), max(v)) for p, v in c1_kuadran_by_provinsi.items()}
+
     # kepadatan_by_kec juga menyimpan kolom potensi_* (satu query, satu tabel
     # sumber) — dipakai ulang sebagai ctx["potensi_by_kec"] utk A3.
     ctx = {"kab_by_wilayah": kab_by_wilayah, "kawasan_by_kab": kawasan_by_kab,
@@ -2891,7 +2986,15 @@ def _ijd_score_bulk_rows(provinsi, tahun: int):
            "kepadatan_kab_by_kab": kepadatan_kab_by_kab,
            "ip_raster_by_kab": ip_raster_by_kab,
            "kendaraan_per_km_by_kab": kendaraan_per_km_by_kab,
-           "indeks_penanaman_by_kab": indeks_penanaman_by_kab, "lbs_by_kab": lbs_by_kab}
+           "indeks_penanaman_by_kab": indeks_penanaman_by_kab, "lbs_by_kab": lbs_by_kab,
+           "c1_total_penduduk_dilalui": c1_total_penduduk_dilalui,
+           "c1_kuadran_by_provinsi": c1_kuadran_by_provinsi,
+           "c2_ip_by_kab": _c2_ip_by_kab_ctx(),
+           "produksi_kuadran_nasional": _c2_kuadran_produksi_ctx(),
+           "c2_produksi_by_kab": c2_produksi_by_kab,
+           "luas_lahan_kuadran_nasional": _c2_kuadran_luas_lahan_ctx(),
+           "c2_luas_lahan_by_kab": c2_luas_lahan_by_kab,
+           "c3_kuadran_by_provinsi": _c3_kuadran_kendaraan_ctx()}
     # NPR (Nilai Prioritas Ruas) per usulan -- dibatch sama pola dgn ctx
     # teknokratis di atas (lihat _npr_bulk_ctx), dipakai SEJAK 22 Jul 2026
     # (request eksplisit user) sbg basis ranking export ini (gantikan

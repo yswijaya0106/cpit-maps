@@ -1093,26 +1093,38 @@ def _ijd_score_tematik(row: dict, rules: dict, ctx: dict = None) -> dict:
 
 
 def _ijd_score_tematik_v2(row: dict, rules: dict, ctx: dict = None) -> dict:
-    """Varian ALTERNATIF parameter A -- BUKAN pengganti resmi
-    (_ijd_score_tematik). Dibuat 28 Jul 2026 atas permintaan eksplisit
-    user: A1 di kerangka CPIT 27.7.26 berjudul literal "A1. TEMATIK SiTIA
-    **(Kompetensi)**", dan catatannya cuma bilang "Kesesuaian Tematik
-    diambil dari SiTIA pada kolom AL" -- TANPA menyebut fallback apapun
-    ke Balai/Pemda. Jadi versi ini HANYA membaca
-    `tematik_kawasan_kompetensi` -- kalau kosong, langsung "belum
+    """Parameter A (Tematik & Data Dukung) RESMI sejak 29 Jul 2026
+    (konfirmasi eksplisit user/pemilik kaidah, sesi validasi laporan
+    teknokratis) -- terdaftar di _IJD_SCORERS["A"], menggantikan
+    _ijd_score_tematik lama (fungsi lama TETAP ada, dipertahankan sbg
+    referensi/riwayat, tidak lagi dipanggil _compute_ijd_score). Pola
+    promosi sama persis dgn D -> _ijd_score_koridor_v2 (28 Jul 2026).
+
+    Dibuat 28 Jul 2026 atas permintaan awal: A1 di kerangka CPIT 27.7.26
+    berjudul literal "A1. TEMATIK SiTIA **(Kompetensi)**", dan catatannya
+    cuma bilang "Kesesuaian Tematik diambil dari SiTIA pada kolom AL" --
+    TANPA menyebut fallback apapun ke Balai/Pemda; pola sama utk A2
+    TEMATIK KONEKTIVITAS (30%), yg di kode saat ini SATU lookup kolom yg
+    sama dgn A1 (bukan sub-parameter terpisah). Dikonfirmasi 29 Jul 2026
+    (audit validasi laporan teknokratis, lihat docs/validation-report/)
+    bahwa TIDAK ADA fallback ke Balai/Pemda utk A1/A2 -- HANYA
+    `tematik_kawasan_kompetensi` yg dibaca; kalau kosong, langsung "belum
     tersedia", TIDAK fallback ke `tematik_kawasan_balai`/
-    `tematik_kawasan_pemda` seperti _ijd_score_tematik resmi.
+    `tematik_kawasan_pemda`.
 
     Dampak cakupan (dicek 28 Jul 2026, nasional 3.072 usulan): HANYA
     1.843 usulan (60%) yang py tematik_kawasan_kompetensi terisi --
-    1.229 usulan (40%) yang di resmi dapat skor A lewat fallback Balai
-    (302) atau Pemda (927) akan jadi "tersedia: False" di sini.
+    1.229 usulan (40%) yang sebelumnya (di _ijd_score_tematik lama)
+    dapat skor A lewat fallback Balai (302) atau Pemda (927) sekarang
+    jadi "tersedia: False" utk A1/A2 (A3/A4-nya sendiri, kalau sumbernya
+    resolve, tetap bisa nyumbang nilai -- lihat "Sisa logika" di bawah).
 
     Sisa logika (A3 tematik tambahan, A4 data dukung) identik persis
     dgn _ijd_score_tematik -- keduanya SUDAH sumbernya kompetensi/tabel
     lain, tidak ada fallback tematik_kawasan_balai/pemda di situ sama
     sekali (A4 dari jenis_data_dukung_tematik_kompetensi, A3 dari
-    kawasan_tematik/kecamatan_data_turunan), jadi tidak perlu diubah."""
+    kawasan_tematik/kecamatan_data_turunan) -- promosi ini TIDAK mengubah
+    perilaku A3/A4 sama sekali, hanya langkah A1/A2."""
     rule = rules.get("A")
     if not rule:
         return {"tersedia": False, "keterangan": "Kaidah tematik belum diset di database."}
@@ -2376,7 +2388,16 @@ def _ijd_score_penuntasan(row: dict, rules: dict, ctx: dict = None) -> dict:
 
 
 _IJD_SCORERS = {
-    "A": _ijd_score_tematik, "B": _ijd_score_kemantapan, "C": _ijd_score_kemanfaatan,
+    # A dipromosikan ke _ijd_score_tematik_v2 29 Jul 2026 (konfirmasi
+    # eksplisit user, pemilik kaidah: A1 TEMATIK SiTIA (40%) dan A2 TEMATIK
+    # KONEKTIVITAS (30%) HANYA membaca tematik_kawasan_kompetensi -- dokumen
+    # kebijakan resmi 27.7.26 KERANGKA PENGGUNAAN DATA UNTUK APLIKASI CPIT.xlsx
+    # cuma bilang "Kesesuaian Tematik diambil dari SiTIA pada kolom AL", TANPA
+    # menyebut fallback apapun ke Balai/Pemda. _ijd_score_tematik lama (dengan
+    # fallback kompetensi->balai->pemda) TETAP ada di kode (referensi/riwayat),
+    # tidak dihapus, cuma tidak lagi didaftarkan di sini -- pola sama dgn
+    # promosi D ke _ijd_score_koridor_v2 di bawah.
+    "A": _ijd_score_tematik_v2, "B": _ijd_score_kemantapan, "C": _ijd_score_kemanfaatan,
     # D dipromosikan ke _ijd_score_koridor_v2 28 Jul 2026 (request eksplisit
     # user) -- nambah tingkat "koridor tidak langsung" (75, radius <50m dari
     # map_layers layer 'PETA KORIDOR') yang tidak ada di _ijd_score_koridor

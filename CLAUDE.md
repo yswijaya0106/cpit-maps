@@ -146,7 +146,36 @@ Deps: `requirements.txt`, venv at `.venv/` (already gitignored).
   `usulan_inpres.kode_kecamatan` — silently falls back to the kabupaten-level
   match alone when it's NULL, which lowers A3/A without marking A
   `"tersedia": false`) + A4 data dukung), B, C, D, and E; F was removed
-  from the 2026 policy. **C (`_ijd_score_kemanfaatan`) is 3 independently-
+  from the 2026 policy. **A (`_ijd_score_tematik_v2`) promoted to official
+  29 Jul 2026** (explicit user/kaidah-owner confirmation, during a
+  technocratic-score validation report exercise, see `docs/validation-
+  report/`): `_IJD_SCORERS["A"]` now points to `_ijd_score_tematik_v2`, not
+  the older `_ijd_score_tematik` (kept in code as reference/history, no
+  longer called). The only behavioral change is A1/A2 (the single-column
+  thematic-category lookup, weighted 40%/30% respectively): confirmed
+  policy is that A1 "TEMATIK SiTIA" and A2 "TEMATIK KONEKTIVITAS" read
+  **only** `usulan_inpres.tematik_kawasan_kompetensi` — the 27.7.26
+  KERANGKA PENGGUNAAN DATA UNTUK APLIKASI CPIT.xlsx source document says
+  literally "Kesesuaian Tematik diambil dari SiTIA pada kolom AL" with no
+  mention of any fallback. The old `_ijd_score_tematik` additionally fell
+  back to `tematik_kawasan_balai` then `tematik_kawasan_pemda` when
+  `_kompetensi` was empty — that fallback is now confirmed **not** to be
+  policy-sanctioned for A1/A2 and is no longer used in production. **A3
+  (tematik tambahan, `kawasan_tematik`/`kecamatan_data_turunan.potensi_*`)
+  and A4 (data dukung, `jenis_data_dukung_tematik_kompetensi`) are
+  completely unaffected** — neither ever used the Balai/Pemda fallback
+  to begin with, so this promotion changes nothing about their logic.
+  National impact: 1,229/3,072 usulan (40%) have `tematik_kawasan_
+  kompetensi` NULL and previously scored A1/A2 via Balai (302) or Pemda
+  (927) fallback under the old function; those now report A1/A2
+  unresolved (though A3/A4 can still contribute if *their* sources
+  resolve, so A itself is not necessarily `"tersedia": false` overall —
+  only if A1/A2/A3/A4 all fail to resolve does A become entirely
+  unavailable, same all-sources-fail rule as before). **`_ijd_bulk_cache`
+  is stale after this change** (in-process, same limitation as always —
+  see below) — restart the server to pick up new scores; exports
+  generated before the restart still reflect the old fallback-enabled A.
+  **C (`_ijd_score_kemanfaatan`) is 3 independently-
   gated subs, not all-or-nothing** (changed 2026-07-22): A1 Kepadatan
   (35%) prefers kecamatan-level `kecamatan_data_turunan` via
   `usulan_inpres.kode_kecamatan`, and — **with explicit user sign-off,
@@ -658,6 +687,16 @@ upsert, so they're safe to re-run:
   SHP) or re-run `spatial_join_kecamatan*.py` — rerun those separately and
   deliberately if the goal is also updating `usulan_inpres.kode_kecamatan`
   itself, not just the map overlay.
+- `import_batas_administrasi_kabupaten_provinsi.py` — sibling to
+  `import_batas_administrasi_kecamatan.py`, same `Maps/BATAS_ADMINISTRASI.gdb`
+  source but layer `Area_Batas_Wilayah_Administrasi`, adding two more
+  `map_layers` overlays: "BATAS KABUPATEN" (one layer per provinsi holding
+  all its kabupaten/kota polygons) and "BATAS PROVINSI" (one national flat
+  layer, `kabupaten=""`). The source has no clean one-row-per-provinsi
+  layer — provinsi polygons are built here via `geopandas` `dissolve()`
+  over every row (`TIPADM` 4=kabupaten/5=kota/6=unassigned island
+  fragments) grouped by `WADMPR`; skipping `TIPADM=6` would drop small
+  islands from the dissolved provinsi shape.
 - `import_peta_koridor_to_postgis.py` — imports the "PETA KORIDOR" overlay
   layer (per-ruas geometry of Koridor IJD proposals, 11,612 features/506
   kabupaten/37 provinsi — all except DKI Jakarta) into `map_layers`/
@@ -714,6 +753,33 @@ upsert, so they're safe to re-run:
   source inventory names) → `bps_kabupaten_indeks_penanaman`, the source of
   IJD C.A2 Indeks Penanaman sub-parameter; outlier-clamps IP outside
   0-500%.
+- `import_ip_oplah.py` — supersedes `import_kertas_kerja.py`'s values (by
+  name match, not a full replace) with `docs/docs/IP 2019-2024, OPLAH.xlsx`
+  sheet "IP TOTAL" (IP 2024 column) — per
+  `docs/perbandingan_ip_oplah_vs_bps_kabupaten_indeks_penanaman.md`, OPLAH
+  (satellite Luas Tanam + ML) matches the primary raster source
+  (`bps_kabupaten_indeks_penanaman_raster`) 84.4% of the time vs. Kertas
+  Kerja's 23.6% (administrative Luas Panen, prone to false-zero rows) —
+  decided/approved by the user 27 Jul 2026. Run after
+  `import_kertas_kerja.py`, not instead of it.
+- `import_konektivitas_jalan.py` / `import_jalan_nasional.py` /
+  `spatial_konektivitas_jalan.py` — three-part "Konektivitas Jaringan
+  Jalan" signal for Laporan Daerah Prioritas Aspek B
+  (`konektivitas_jaringan_jalan` table), from weakest to strongest proxy.
+  `import_konektivitas_jalan.py` sets `ada_jalan_daerah` per kabupaten from
+  the `Maps/<provinsi>/<kabupaten>/` folder structure itself (matched by
+  folder name, not shapefile attributes — those vary too much across the
+  234 per-kabupaten road SHPs to be reliable). `import_jalan_nasional.py`
+  adds a stronger signal, `ada_jalan_nasional`, from `Maps/JALAN
+  NASIONAL/Jalan Nasional.shp`'s `CITY_ID` column (a direct BPS kabupaten
+  code, no matching needed) without touching `ada_jalan_daerah` — same
+  table, additive UPSERT. `spatial_konektivitas_jalan.py` is the real
+  spatial check (explicit user request,
+  `docs/spec/laporan prioritas.md`): per usulan with cached KML geometry,
+  tests actual distance (reprojected to EPSG:3857 for meters, `STRtree`
+  built from Jalan Nasional + Jalan Provinsi + Jalan Tol combined) against
+  a 100m threshold (confirmed with the user 21 Jul 2026) rather than just
+  "kabupaten has a mapped road."
 - `extract_dalam_angka.py` — parses BPS "Kab/Kota Dalam Angka" PDFs from
   `dalam_angka/<kode> <Provinsi>/` (all 38 provinces downloaded; supports
   `--workers N` for concurrent per-province PDF parsing). Feeds IJD

@@ -24,6 +24,7 @@ Usage (venv aktif):
 """
 
 import argparse
+import difflib
 import io
 import json
 import re
@@ -54,6 +55,31 @@ def norm_compact(s):
     di usulan_kecamatan_dilalui). norm() saja tidak menangkap ini karena cuma
     menyeragamkan huruf besar/tanda baca, bukan spasi."""
     return norm(s).replace(" ", "")
+
+
+_FUZZY_CUTOFF = 0.8
+
+
+def fuzzy_match_kecamatan(nama, kode_kab, kab_kec_names):
+    """Fallback terakhir sebelum menyerah: cocokkan nama poligon SHP ke nama
+    kecamatan master (`penduduk_kecamatan`) via edit-distance, DIBATASI ke
+    kecamatan dalam kode_kab yang sama (kode_kab usulan sudah diketahui pasti
+    dari wilayah_mapping) -- tidak pernah fuzzy-match lintas kabupaten, supaya
+    tidak salah cocok ke kecamatan senama di kabupaten lain. Ditambahkan
+    30 Jul 2026 setelah audit "semua poligon ambigu" (`spatial_join_kecamatan_
+    multi.py`) menemukan 110/138 kegagalan adalah typo/beda ejaan murni antara
+    SHP Dukcapil dan master BPS (mis. SHP "KOTA COT GLIE" vs master "KUTA COT
+    GLIE", "MALLLAWA" [3 huruf L, typo SHP] vs "MALLAWA", "KARIMUN JAWA" vs
+    "KARIMUNJAWA" -- kasus terakhir ini sudah ditangani norm_compact(), tapi
+    typo huruf tunggal/ganda tidak). Cutoff 0.8 (SequenceMatcher ratio)
+    dipilih dari sampel manual -- cukup ketat utk tidak mencocokkan kecamatan
+    yang genuinely beda, cukup longgar utk menangkap 1-2 huruf typo pada nama
+    pendek. Return kode_kecamatan atau None."""
+    kandidat = kab_kec_names.get(kode_kab)
+    if not kandidat:
+        return None
+    cocok = difflib.get_close_matches(norm(nama), list(kandidat), n=1, cutoff=_FUZZY_CUTOFF)
+    return kandidat[cocok[0]] if cocok else None
 
 
 def sample_points(geom, n=12):
@@ -104,11 +130,13 @@ def main():
     by_nama = defaultdict(set)  # norm_nama -> {kode_kecamatan}
     by_kab_compact = {}   # (kode_kab, norm_compact) -> kode_kecamatan -- fallback varian spasi
     by_compact = defaultdict(set)  # norm_compact -> {kode_kecamatan}
+    kab_kec_names = defaultdict(dict)  # kode_kab -> {norm_nama: kode_kecamatan} -- fallback fuzzy
     for m in master:
         by_kab_nama[(m["kode_kabupaten"], norm(m["kecamatan"]))] = m["kode_kecamatan"]
         by_nama[norm(m["kecamatan"])].add(m["kode_kecamatan"])
         by_kab_compact[(m["kode_kabupaten"], norm_compact(m["kecamatan"]))] = m["kode_kecamatan"]
         by_compact[norm_compact(m["kecamatan"])].add(m["kode_kecamatan"])
+        kab_kec_names[m["kode_kabupaten"]][norm(m["kecamatan"])] = m["kode_kecamatan"]
 
     print(f"Antrian spatial-join: {len(usulan)} usulan bergeometri")
     updates, alasan = [], Counter()
@@ -137,6 +165,8 @@ def main():
                 kode_kec = by_kab_compact.get((kode_kab, nc))
                 if kode_kec is None and len(by_compact.get(nc, ())) == 1:
                     kode_kec = next(iter(by_compact[nc]))
+            if kode_kec is None and kode_kab:
+                kode_kec = fuzzy_match_kecamatan(nama, kode_kab, kab_kec_names)
             if kode_kec is not None:
                 break
         if kode_kec is None:

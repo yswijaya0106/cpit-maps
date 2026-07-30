@@ -36,7 +36,7 @@ from pyproj import Transformer
 from shapely.strtree import STRtree
 
 from app import _batas_kec_shp, _geojson_line_to_shapely, db_cursor  # noqa: E402
-from spatial_join_kecamatan import norm, norm_compact, sample_points  # noqa: E402 -- reuse, bukan tulis ulang
+from spatial_join_kecamatan import norm, norm_compact, sample_points, fuzzy_match_kecamatan  # noqa: E402 -- reuse, bukan tulis ulang
 
 # Skema ini masih MySQL apa adanya sejak sebelum migrasi ke PostgreSQL (lihat
 # docs/migrasi_mysql_ke_postgresql.md) -- terlewat waktu itu krn tabelnya
@@ -118,11 +118,13 @@ def main():
     by_nama = defaultdict(set)  # norm_nama -> {kode_kecamatan}
     by_kab_compact = {}   # (kode_kab, norm_compact) -> kode_kecamatan -- fallback varian spasi
     by_compact = defaultdict(set)  # norm_compact -> {kode_kecamatan}
+    kab_kec_names = defaultdict(dict)  # kode_kab -> {norm_nama: kode_kecamatan} -- fallback fuzzy
     for m in master:
         by_kab_nama[(m["kode_kabupaten"], norm(m["kecamatan"]))] = m["kode_kecamatan"]
         by_nama[norm(m["kecamatan"])].add(m["kode_kecamatan"])
         by_kab_compact[(m["kode_kabupaten"], norm_compact(m["kecamatan"]))] = m["kode_kecamatan"]
         by_compact[norm_compact(m["kecamatan"])].add(m["kode_kecamatan"])
+        kab_kec_names[m["kode_kabupaten"]][norm(m["kecamatan"])] = m["kode_kecamatan"]
 
     print(f"Antrian overlay multi-kecamatan: {len(usulan)} usulan bergeometri")
     rows_out = []
@@ -184,6 +186,8 @@ def main():
                 kode_kec = by_kab_compact.get((kode_kab_usulan, nc))
                 if kode_kec is None and len(by_compact.get(nc, ())) == 1:
                     kode_kec = next(iter(by_compact[nc]))
+            if kode_kec is None and kode_kab_usulan:
+                kode_kec = fuzzy_match_kecamatan(nama, kode_kab_usulan, kab_kec_names)
             if kode_kec is None:
                 n_ambigu_total += 1
                 continue

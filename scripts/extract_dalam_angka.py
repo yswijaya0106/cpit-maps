@@ -398,8 +398,42 @@ def parse_prov_rows(lines, ncols, row_kab, row_kota):
 
 def extract_padi_provinsi(doc, row_kab, row_kota):
     """Tabel 5.1.1 provinsi: luas panen & produktivitas (hal 1), produksi
-    (hal lanjutan). Return list of dict per kab per tahun."""
+    (hal lanjutan). Return list of dict per kab per tahun.
+
+    Format tabel 5.1.1 TIDAK seragam antar provinsi (ditemukan 30 Jul 2026
+    lewat validasi silang outlier produktivitas Kab. Tabanan/Bali,
+    158.063 ku/ha): 33/35 buku provinsi pakai format LAMA (4 kolom = Luas
+    Panen 2024, Luas Panen 2025, Produktivitas 2024, Produktivitas 2025,
+    produksi di halaman lanjutan terpisah 2 kolom Prod24/Prod25) yang cocok
+    persis asumsi kode di bawah. TAPI buku Bali (satu-satunya per 30 Jul
+    2026, `5100 Provinsi Bali...pdf`) pakai format BARU: 1 tahun (2025)
+    saja, 4 kolom BEDA maknanya (Luas Panen, Produktivitas, **Produksi
+    Padi**, Produksi Setara Beras) -- kode lama salah memetakan kolom 3
+    (Produksi Padi, mis. Tabanan 158.063 ton) ke `produktivitas_ku_ha`,
+    dan kolom 4 (Produksi Setara Beras) ke kolom tahun-2025 yang salah pula
+    -- itulah asal outlier 158.063 "ku/ha" yang sama sekali bukan
+    produktivitas. `produksi_ton` untuk format Bali TIDAK PERNAH terisi
+    lewat jalur lama krn halaman lanjutannya (Tabel 5.1.2, breakdown
+    bulanan) bukan tabel Prod24/Prod25 per-kabupaten. Dideteksi lewat
+    kemunculan "Produksi Setara Beras"/"Rice Equivalent" di header tabel
+    (frasa yang TIDAK ADA di buku format lama)."""
     p = _find_prov_page(doc, "5.1.1", "Luas Panen")
+    header_text = doc[p].get_text()[:2000]
+    if "Produksi Setara Beras" in header_text or "Rice Equivalent" in header_text:
+        # Format baru (1 tahun terbaru = 2025, 4 kolom = luas panen,
+        # produktivitas, produksi padi, produksi setara beras -- kolom ke-4
+        # tidak dipetakan, tidak ada kolom DB utk itu).
+        page1 = parse_prov_rows(page_lines(doc[p]), 4, row_kab, row_kota)
+        rows = []
+        for kode, v in page1.items():
+            rows.append({
+                "kode_kab": kode, "tahun": 2025,
+                "luas_panen_ha": v[0],
+                "produktivitas_ku_ha": v[1],
+                "produksi_ton": v[2],
+            })
+        return rows
+
     page1 = parse_prov_rows(page_lines(doc[p]), 4, row_kab, row_kota)      # LP24 LP25 Y24 Y25
     page2 = parse_prov_rows(page_lines(doc[p + 1]), 2, row_kab, row_kota)  # Prod24 Prod25
     rows = []

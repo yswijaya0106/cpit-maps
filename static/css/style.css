@@ -155,6 +155,11 @@ html, body {
 .datatable-import .maplayer-combo { width: clamp(160px, 22vw, 260px); flex: 0 1 auto; }
 .datatable-import .maplayer-combo-toggle { padding: 6px 8px; font-size: 12px; }
 .datatable-import .maplayer-combo-toggle span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Nama kriteria Lokus Bappenas suka panjang (mis. "BBM Satu Harga (6_Usulan
+   Lokus IJD 2026)") -- tanpa override ini teks opsi dropdown (nowrap bawaan
+   .maplayer-combo-option) meluber keluar panel dan menimpa tabel di
+   belakangnya, sama pola dgn .bps-subjek-field di bawah. */
+.datatable-import .maplayer-combo-option { white-space: normal; line-height: 1.35; }
 .datatable-import .btn:disabled { opacity: .5; cursor: not-allowed; }
 /* Field provinsi dialog Laporan Prioritas -- tanpa lebar eksplisit ia
    menyusut ke lebar minimum di .datatable-head-actions (flex, bisa

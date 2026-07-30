@@ -677,6 +677,7 @@ DATA_TABLES = {
     "kawasan_tematik": "Kawasan Tematik (A3 IJD)",
     "kemantapan_ijd_2026": "Kemantapan Jalan IJD 2026 (G8.A2)",
     "bappenas_koridor": "Daftar Koridor Bappenas Admin",
+    "bps_kecamatan_produksi_komoditas": "Produksi Komoditas Perkebunan per Kecamatan (Dalam Angka)",
 }
 # kolom yang tidak ditampilkan (payload besar)
 DATA_TABLE_SKIP_COLS = {"geom_geojson"}
@@ -703,6 +704,7 @@ DATA_TABLE_GEO = {
     "kawasan_tematik": ("kode_provinsi", "kode_kabupaten"),
     "kemantapan_ijd_2026": ("kode_provinsi", "kode_wilayah"),
     "bappenas_koridor": ("CAST(LEFT(kode_kab, 2) AS INTEGER)", "CAST(kode_kab AS INTEGER)"),
+    "bps_kecamatan_produksi_komoditas": ("CAST(LEFT(kode_kab, 2) AS INTEGER)", "CAST(kode_kab AS INTEGER)"),
     # tabel level provinsi (Statistik Indonesia 2026) -- tidak ada dimensi
     # kabupaten, filter kabupaten sengaja dipetakan ke kolom yg sama supaya
     # aman kalau ter-pilih (tidak match apa pun, bukan error).
@@ -5748,8 +5750,14 @@ yang dimaksud; rangkai fakta itu dengan kalimat Anda sendiri, jangan disalin ver
   meter dari "jarak_ke_..._m" berpasangan; kalau semuanya false, sampaikan bahwa ruas belum terhubung
   langsung ke jaringan jalan nasional/provinsi/tol dalam radius "ambang_m" meter (boleh dengan kalimat apa
   saja, bukan rumus tetap).
-- "simpul_transportasi" ada → sebutkan simpul transportasi (bandara/pelabuhan) terdekat dari
-  "simpul_terdekat" — jenis, "nama_simpul", "jarak_km"-nya, dalam radius "radius_km" km.
+- "simpul_transportasi" ada → WAJIB disebut, jangan dilewati. Sebutkan SEMUA jenis simpul yang muncul sebagai
+  key pada "simpul_terdekat" (BISA LEBIH DARI SATU sekaligus, mis. BANDARA *dan* PELABUHAN_NASIONAL kalau
+  keduanya ada di objek itu — jangan cuma pilih satu jenis dan diam-diam melewati sisanya), masing-masing
+  dengan jenisnya, "nama_simpul" (kalau null, sebut jenisnya saja tanpa nama), dan "jarak_km"-nya, dalam
+  radius "radius_km" km. Fakta ini SUMBERNYA TERPISAH dari checklist "indikator_ada"/kriteria
+  "SIMPUL_TRANSPORTASI" (checklist itu definisi lain, cek tabel level kabupaten yang beda) — tetap WAJIB
+  sebutkan fakta "simpul_transportasi" ini apa adanya walau "SIMPUL_TRANSPORTASI" TIDAK muncul di
+  "indikator_ada"; jangan diam-diam melewatinya hanya karena tidak ada di checklist itu.
 - "kecamatan_dilalui" ada → sebutkan SEMUA nama kecamatan pada daftar "kecamatan_dilalui" (jangan cuma
   sebagian kalau lebih dari 1) beserta PERSIS field "total_penduduk_dilalui" (jangan hitung ulang/jumlah
   manual dari daftar) — kalau "total_penduduk_dilalui" null (data penduduk sebagian/semua kecamatan tidak
@@ -6234,8 +6242,14 @@ menyinggung topik itu sama sekali utk usulan itu):
 yang true, sebut jaringan mana ("terhubung_jalan_nasional"/"terhubung_jalan_provinsi"/"terhubung_tol") \
 beserta jarak meter dari "jarak_ke_..._m" berpasangan; kalau semuanya false, tulis persis gaya "Ruas ini \
 belum terhubung langsung ke jaringan jalan nasional/provinsi/tol dalam radius <ambang_m> meter."
-- "simpul_transportasi" ada → satu kalimat sebut simpul transportasi (bandara/pelabuhan) terdekat dari \
-"simpul_terdekat" — jenis, "nama_simpul", "jarak_km"-nya, dalam radius "radius_km" km.
+- "simpul_transportasi" ada → WAJIB satu kalimat, jangan dilewati. Sebutkan SEMUA jenis simpul yang muncul \
+sebagai key pada "simpul_terdekat" (BISA LEBIH DARI SATU sekaligus, mis. BANDARA *dan* PELABUHAN_NASIONAL \
+kalau keduanya ada di objek itu — jangan cuma pilih satu jenis dan diam-diam melewati sisanya), masing-\
+masing dengan jenisnya, "nama_simpul" (kalau null, sebut jenisnya saja tanpa nama), dan "jarak_km"-nya, \
+dalam radius "radius_km" km. Fakta ini SUMBERNYA TERPISAH dari "indikator_ada"/kriteria \
+"SIMPUL_TRANSPORTASI" (checklist itu definisi lain, cek tabel level kabupaten yang beda) — tetap WAJIB \
+sebutkan fakta "simpul_transportasi" ini apa adanya walau "SIMPUL_TRANSPORTASI" TIDAK muncul di \
+"indikator_ada" untuk usulan itu; jangan diam-diam melewatinya hanya karena tidak ada di checklist itu.
 - "kecamatan_dilalui" ada → satu kalimat sebut SEMUA nama kecamatan pada daftar "kecamatan_dilalui" \
 (jangan cuma sebagian kalau lebih dari 1) beserta PERSIS field "total_penduduk_dilalui" (jangan hitung \
 ulang/jumlah manual dari daftar), gaya "Ruas ini melintasi Kecamatan A, Kecamatan B, dan Kecamatan C \

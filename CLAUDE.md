@@ -176,6 +176,25 @@ Deps: `requirements.txt`, venv at `.venv/` (already gitignored).
   is stale after this change** (in-process, same limitation as always —
   see below) — restart the server to pick up new scores; exports
   generated before the restart still reflect the old fallback-enabled A.
+  **A1 sub-category scoring made strictly binary 30 Jul 2026** (explicit
+  user/kaidah-owner confirmation): the 27.7.26 KERANGKA doc's rule for A1
+  "TEMATIK SiTIA" is "opsi penilaian hanya bisa bobot maks atau 0" (a
+  matched category always scores the full 40-of-100 A1 weight, never a
+  partial multiplier) — `ijd_scoring_rules` previously seeded 4 A1
+  sub-categories with partial credit inherited from the sheet's own
+  worked-example multipliers (`Kawasan Industri Prioritas` 50%→20,
+  `Kawasan Transmigrasi` 75%→30, `Swasembada Pangan - Kawasan Mendukung
+  Program MBG` 75%→30, legacy `Kawasan Strategis Daerah` →10), which
+  violated this explicit binary rule. Fixed by a data-only `UPDATE
+  ijd_scoring_rules SET nilai = 40.00` for those 4 rows (no `app.py`
+  change needed — `_ijd_score_tematik_v2` already reads `nilai` straight
+  from the DB rule row) — `kondisi_label` text for the 4 rows updated to
+  match (`"(100 x 40%)"`) so it no longer shows a stale partial-multiplier
+  description. National impact: 221/3,072 usulan (7.2%) had
+  `tematik_kawasan_kompetensi` matching one of these 4 categories and saw
+  their A1 contribution rise from 20/30/10 to the full 40. Picked up
+  automatically within `_IJD_BULK_CACHE_TTL_DETIK` (10 min, no restart
+  needed) since this is a rules-table change, not a code change.
   **B (`_ijd_score_kemantapan_v2`) promoted to official 29 Jul 2026**
   (same session, explicit user/kaidah-owner confirmation): `_IJD_SCORERS
   ["B"]` now points to `_ijd_score_kemantapan_v2`, not the older

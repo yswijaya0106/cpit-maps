@@ -5732,10 +5732,16 @@ CEK SATU-PER-SATU — kalau field-nya ADA pada data, FAKTA di bawah ini WAJIB ma
 (jangan diam-diam dilewati; kalau TIDAK ada field-nya, jangan menyinggung topik itu sama sekali). Yang WAJIB
 adalah ISI/ANGKA-nya, BUKAN kalimat contoh di bawah — kalimat contoh cuma ilustrasi supaya paham fakta mana
 yang dimaksud; rangkai fakta itu dengan kalimat Anda sendiri, jangan disalin verbatim:
-- "kemantapan_ruas" ada → sebutkan kondisi kemantapan ruas pakai PERSIS field "pct_tidak_mantap" (jangan
-  hitung ulang) — persentase itu = kondisi rusak ringan+berat dibanding panjang penanganan kompetensi.
-  Contoh ilustrasi (JANGAN disalin persis): "Dari aspek teknis, kondisi ruas ini tergolong <status> dengan
-  persentase sekitar <pct_tidak_mantap>%..." — cari cara lain menyampaikan fakta yang sama.
+- "kemantapan_ruas" ada → sebutkan kondisi kemantapan ruas pakai PERSIS field "status" ("Mantap"/"Tidak
+  Mantap") dan "pct_tidak_mantap" (jangan hitung ulang) — persentase itu = kondisi rusak ringan+berat
+  dibanding panjang ruas total (bukan panjang penanganan kompetensi). WAJIB langsung to-the-point: sebutkan
+  "status" dan angka "pct_tidak_mantap" dalam SATU kalimat yang jelas kaitannya (mis. jelaskan ambang: status
+  "Tidak Mantap" kalau >50% rusak ringan/berat) — JANGAN menyusun kalimat yang menyandingkan status "Mantap"
+  langsung dengan angka pct_tidak_mantap tanpa penjelasan (pola "tergolong mantap dengan persentase sekitar
+  X% tidak mantap" itu sendiri membingungkan/terkesan kontradiktif bagi pembaca awam, jangan dipakai/ditiru).
+  Boleh pakai "pct_mantap" (komplemen 100-pct_tidak_mantap) kalau itu bikin kalimat lebih lugas dan status
+  lebih match sama angkanya. Jangan tempelkan definisi rumus ("dibanding panjang ruas total", dsb.) ke dalam
+  narasi — itu cuma konteks Anda, bukan kalimat yang perlu ditulis ulang ke pembaca.
 - "konektivitas_jalan" ada → WAJIB disebut, TERMASUK kalau ketiga "terhubung_..." semuanya false (jangan
   dilewati hanya krn tidak ada yang terhubung — ini tetap fakta yang harus dilaporkan): kalau ada yang true,
   sebut jaringan mana ("terhubung_jalan_nasional"/"terhubung_jalan_provinsi"/"terhubung_tol") beserta jarak

@@ -5750,11 +5750,14 @@ yang dimaksud; rangkai fakta itu dengan kalimat Anda sendiri, jangan disalin ver
   meter dari "jarak_ke_..._m" berpasangan; kalau semuanya false, sampaikan bahwa ruas belum terhubung
   langsung ke jaringan jalan nasional/provinsi/tol dalam radius "ambang_m" meter (boleh dengan kalimat apa
   saja, bukan rumus tetap).
-- "simpul_transportasi" ada → WAJIB disebut, jangan dilewati. Sebutkan SEMUA jenis simpul yang muncul sebagai
-  key pada "simpul_terdekat" (BISA LEBIH DARI SATU sekaligus, mis. BANDARA *dan* PELABUHAN_NASIONAL kalau
-  keduanya ada di objek itu — jangan cuma pilih satu jenis dan diam-diam melewati sisanya), masing-masing
-  dengan jenisnya, "nama_simpul" (kalau null, sebut jenisnya saja tanpa nama), dan "jarak_km"-nya, dalam
-  radius "radius_km" km. Fakta ini SUMBERNYA TERPISAH dari checklist "indikator_ada"/kriteria
+- "simpul_transportasi" ada → WAJIB disebut, jangan dilewati. "simpul_dalam_radius" berisi SEMUA jenis simpul
+  yang ada dalam radius "radius_km" km (BISA LEBIH DARI SATU jenis sekaligus, mis. BANDARA *dan*
+  PELABUHAN_NASIONAL *dan* PELABUHAN_LAUT kalau ketiganya ada — jangan cuma pilih satu jenis dan diam-diam
+  melewati sisanya); untuk SETIAP jenis yang ada, sebutkan nama-nama pada "daftar"-nya (kalau "nama_simpul"
+  null, sebut jenisnya saja tanpa nama) beserta "jarak_km" masing-masing — kalau "total" jenis itu LEBIH
+  BESAR dari jumlah item di "daftar" (artinya ada yang tidak ditampilkan penuh krn dibatasi), WAJIB tambahkan
+  keterangan singkat jumlah sisanya, mis. "...serta N pelabuhan lain dalam radius 30 km", jangan diam-diam
+  memotong tanpa keterangan. Fakta ini SUMBERNYA TERPISAH dari checklist "indikator_ada"/kriteria
   "SIMPUL_TRANSPORTASI" (checklist itu definisi lain, cek tabel level kabupaten yang beda) — tetap WAJIB
   sebutkan fakta "simpul_transportasi" ini apa adanya walau "SIMPUL_TRANSPORTASI" TIDAK muncul di
   "indikator_ada"; jangan diam-diam melewatinya hanya karena tidak ada di checklist itu.
@@ -5961,9 +5964,12 @@ def _konektivitas_jalan_fakta(row: dict) -> dict | None:
     }
 
 
+_SIMPUL_TRANSPORTASI_DAFTAR_MAKS = 5  # per jenis -- lihat docstring _simpul_transportasi_fakta
+
+
 def _simpul_transportasi_fakta(row: dict) -> dict | None:
-    """Fakta simpul transportasi (bandara/pelabuhan) terdekat dari kecamatan
-    usulan -- fakta pendukung narasi AI Aspek B (sama pola dgn
+    """Fakta simpul transportasi (bandara/pelabuhan) DALAM RADIUS 30km dari
+    kecamatan usulan -- fakta pendukung narasi AI Aspek B (sama pola dgn
     _kemantapan_ruas_fakta/_konektivitas_jalan_fakta), sumber
     simpul_transportasi_kecamatan_radius (radius tetap 30km per baris,
     scripts/spatial_join_simpul_transportasi.py) -- BEDA dari
@@ -5971,7 +5977,20 @@ def _simpul_transportasi_fakta(row: dict) -> dict | None:
     level kabupaten ada/tidak; tabel ini py jarak_km aktual per simpul
     per kecamatan, jadi bisa disebut nama & jaraknya, bukan cuma ada/tidak.
     None kalau usulan.kode_kecamatan NULL (spatial-join usulan→kecamatan
-    belum jalan) ATAU tidak ada simpul dalam radius 30km dari kecamatan itu."""
+    belum jalan) ATAU tidak ada simpul dalam radius 30km dari kecamatan itu.
+
+    SEMUA simpul dalam radius dikembalikan per jenis (bukan cuma yang
+    terdekat lagi -- sebelum 31 Jul 2026 fungsi ini cuma ambil 1 terdekat
+    per jenis via setdefault(), sehingga usulan di kawasan padat simpul
+    mis. pesisir Jabodetabek/pelabuhan besar lain kehilangan >10 pelabuhan
+    lain yang sama-sama dalam radius 30km -- ditemukan lewat pertanyaan user
+    ttg usulan Teluk Naga-Dadap yang cuma menyebut 1 pelabuhan padahal
+    peta overlay menunjukkan banyak titik pelabuhan lain di radius yang
+    sama). "daftar" dibatasi _SIMPUL_TRANSPORTASI_DAFTAR_MAKS per jenis
+    (beberapa kecamatan pesisir bisa >10 PELABUHAN_LAUT dalam radius --
+    tanpa batas ini prompt LLM membengkak) tapi "total" tetap hitungan
+    LENGKAP per jenis, supaya narasi AI bisa bilang "serta N pelabuhan
+    lain" alih-alih diam-diam memotong tanpa keterangan."""
     kode_kec = row.get("kode_kecamatan")
     if not kode_kec:
         return None
@@ -5979,18 +5998,19 @@ def _simpul_transportasi_fakta(row: dict) -> dict | None:
         cur.execute(
             "SELECT jenis_simpul, nama_simpul, jarak_km, radius_km "
             "FROM simpul_transportasi_kecamatan_radius "
-            "WHERE kode_kecamatan = %s ORDER BY jarak_km",
+            "WHERE kode_kecamatan = %s ORDER BY jenis_simpul, jarak_km",
             (kode_kec,),
         )
         rows = cur.fetchall()
     if not rows:
         return None
-    terdekat = {}
+    by_jenis = {}
     for r in rows:
-        terdekat.setdefault(r["jenis_simpul"], {  # jarak_km ASC -- yg pertama per jenis = terdekat
-            "nama_simpul": r["nama_simpul"], "jarak_km": float(r["jarak_km"]),
-        })
-    return {"radius_km": rows[0]["radius_km"], "simpul_terdekat": terdekat}
+        d = by_jenis.setdefault(r["jenis_simpul"], {"total": 0, "daftar": []})
+        d["total"] += 1
+        if len(d["daftar"]) < _SIMPUL_TRANSPORTASI_DAFTAR_MAKS:  # jarak_km ASC -- yg masuk = terdekat dulu
+            d["daftar"].append({"nama_simpul": r["nama_simpul"], "jarak_km": float(r["jarak_km"])})
+    return {"radius_km": rows[0]["radius_km"], "simpul_dalam_radius": by_jenis}
 
 
 def _kecamatan_dilalui_fakta(row: dict) -> dict | None:
@@ -6242,13 +6262,16 @@ menyinggung topik itu sama sekali utk usulan itu):
 yang true, sebut jaringan mana ("terhubung_jalan_nasional"/"terhubung_jalan_provinsi"/"terhubung_tol") \
 beserta jarak meter dari "jarak_ke_..._m" berpasangan; kalau semuanya false, tulis persis gaya "Ruas ini \
 belum terhubung langsung ke jaringan jalan nasional/provinsi/tol dalam radius <ambang_m> meter."
-- "simpul_transportasi" ada → WAJIB satu kalimat, jangan dilewati. Sebutkan SEMUA jenis simpul yang muncul \
-sebagai key pada "simpul_terdekat" (BISA LEBIH DARI SATU sekaligus, mis. BANDARA *dan* PELABUHAN_NASIONAL \
-kalau keduanya ada di objek itu — jangan cuma pilih satu jenis dan diam-diam melewati sisanya), masing-\
-masing dengan jenisnya, "nama_simpul" (kalau null, sebut jenisnya saja tanpa nama), dan "jarak_km"-nya, \
-dalam radius "radius_km" km. Fakta ini SUMBERNYA TERPISAH dari "indikator_ada"/kriteria \
-"SIMPUL_TRANSPORTASI" (checklist itu definisi lain, cek tabel level kabupaten yang beda) — tetap WAJIB \
-sebutkan fakta "simpul_transportasi" ini apa adanya walau "SIMPUL_TRANSPORTASI" TIDAK muncul di \
+- "simpul_transportasi" ada → WAJIB disebut, jangan dilewati (boleh >1 kalimat kalau jenisnya banyak). \
+"simpul_dalam_radius" berisi SEMUA jenis simpul yang ada dalam radius "radius_km" km (BISA LEBIH DARI SATU \
+jenis sekaligus, mis. BANDARA *dan* PELABUHAN_NASIONAL *dan* PELABUHAN_LAUT kalau ketiganya ada — jangan \
+cuma pilih satu jenis dan diam-diam melewati sisanya); untuk SETIAP jenis yang ada, sebutkan nama-nama pada \
+"daftar"-nya (kalau "nama_simpul" null, sebut jenisnya saja tanpa nama) beserta "jarak_km" masing-masing — \
+kalau "total" jenis itu LEBIH BESAR dari jumlah item di "daftar" (ada yang tidak ditampilkan penuh krn \
+dibatasi), WAJIB tambahkan keterangan singkat jumlah sisanya, mis. "...serta N pelabuhan lain dalam radius \
+30 km", jangan diam-diam memotong tanpa keterangan. Fakta ini SUMBERNYA TERPISAH dari "indikator_ada"/\
+kriteria "SIMPUL_TRANSPORTASI" (checklist itu definisi lain, cek tabel level kabupaten yang beda) — tetap \
+WAJIB sebutkan fakta "simpul_transportasi" ini apa adanya walau "SIMPUL_TRANSPORTASI" TIDAK muncul di \
 "indikator_ada" untuk usulan itu; jangan diam-diam melewatinya hanya karena tidak ada di checklist itu.
 - "kecamatan_dilalui" ada → satu kalimat sebut SEMUA nama kecamatan pada daftar "kecamatan_dilalui" \
 (jangan cuma sebagian kalau lebih dari 1) beserta PERSIS field "total_penduduk_dilalui" (jangan hitung \

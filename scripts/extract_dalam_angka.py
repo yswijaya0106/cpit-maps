@@ -125,7 +125,7 @@ FIELD_PHRASES = [
 ]
 
 
-def num(s):
+def num(s, field=None):
     """'1.007,63' -> 1007.63 ; '2,620.24' -> 2620.24 ; '–' -> None.
 
     Sebagian besar buku pakai koma sebagai desimal ('.' = ribuan, gaya
@@ -139,7 +139,23 @@ def num(s):
         ('2,620.24' = 2620.24, koma ribuan/titik desimal) -- kalau titik DAN
         koma sama-sama ada, yang muncul TERAKHIR di string itu desimalnya
         (baik "1.234,56" gaya Indonesia maupun "1,234.56" gaya Inggris).
-    """
+
+    `field`: nama field tujuan (dari FIELD_PHRASES/`fields` di
+    parse_stat_page), dipakai utk mengatasi kasus AMBIGU yang heuristik
+    "3 digit = ribuan" di atas salah tebak. Ditemukan 30 Jul 2026 lewat
+    validasi silang kepadatan Kec. Godong/Grobogan (973.279 tersimpan sbg
+    973279): tabel "Kepadatan Penduduk per km2" SELALU mencetak PERSIS 3
+    desimal (dikonfirmasi dari baris yang punya koma di tabel yang sama,
+    mis. "1,852.630" Purwodadi -- 3 desimal juga), jadi kelompok 3-digit
+    di baris TANPA koma ("973.279") adalah desimalnya, bukan pemisah
+    ribuan, kebalikan dari default heuristik. Field lain yang lewat fungsi
+    ini (penduduk, persentase_penduduk, dst.) TIDAK exhibit pola ini
+    (persentase 2-desimal, penduduk integer murni tanpa desimal) --
+    override ini SENGAJA disempitkan hanya ke kepadatan_per_km2, bukan
+    dijadikan default global, supaya tidak merusak parsing field lain yang
+    sudah benar. Skala nasional temuan ini: 772/5.590 baris (100/411
+    kabupaten) di bps_kecamatan_demografi menunjukkan pola bilangan bulat
+    >1000 yang jadi tanda bug ini sebelum diperbaiki."""
     s = s.strip()
     if not s or DASH.match(s):
         return None
@@ -153,7 +169,7 @@ def num(s):
         s = s.replace(".", "").replace(",", ".")
     else:
         parts = s.split(".")
-        if len(parts) > 1 and len(parts[-1]) != 3:
+        if len(parts) > 1 and (len(parts[-1]) != 3 or field == "kepadatan_per_km2"):
             s = "".join(parts[:-1]) + "." + parts[-1]
         else:
             s = s.replace(".", "")
@@ -197,7 +213,8 @@ def parse_stat_page(lines):
         if NUMERICISH.match(ln) or DASH.match(ln):
             if name is None:
                 continue  # nomor halaman / angka nyasar
-            values.append(num(ln))
+            current_field = fields[len(values)] if len(values) < len(fields) else None
+            values.append(num(ln, field=current_field))
             if len(values) == ncols:
                 rows.append((_clean_name(name), values))
                 name, values = None, []

@@ -6182,6 +6182,46 @@ def _bappenas_poin_b_from_total(total: int) -> int:
     return 2 if total >= 9 else 1
 
 
+def _narasi_lewatkan_simpul(narasi: str, simpul_fakta: dict | None) -> bool:
+    """True kalau simpul_fakta ADA tapi narasi_ai tidak memenuhi instruksi
+    prompt utk menyebutnya -- guard DETERMINISTIK dipanggil setelah LLM
+    menjawab, krn instruksi "WAJIB sebutkan" (lihat PENILAIAN_SYSTEM_PROMPT)
+    terbukti kadang tetap dilewatkan/disingkat gpt-4o-mini walau datanya
+    lengkap (ditemukan lewat usulan Teluk naga- Dadap, id 241304, 31 Jul
+    2026 -- generate ulang berkali-kali berpindah-pindah antara: tidak
+    menyebut simpul sama sekali, menyebut cuma 1 dari beberapa jenis, atau
+    -- setelah _SIMPUL_TRANSPORTASI_DAFTAR_MAKS ditambahkan -- menyebut
+    JUMLAHNYA ("tiga bandara ... tujuh pelabuhan nasional") TANPA satu pun
+    NAMA konkret, padahal prompt eksplisit minta nama-nama pada "daftar").
+    Dua lapis cek per jenis simpul:
+    1. Jenis dengan nama_simpul terisi (BANDARA, PELABUHAN_NASIONAL, dst.) --
+       WAJIB minimal SATU nama dari "daftar"-nya (bukan cuma kata generik
+       "bandara"/"pelabuhan") muncul verbatim (case-insensitive) di narasi.
+    2. Jenis yang seluruh nama_simpul-nya null di sumbernya (PELABUHAN_LAUT
+       sering begini -- lihat docstring _simpul_transportasi_fakta) tidak
+       punya nama utk dicocokkan, jadi cukup cek kata jenisnya generik
+       ("bandara"/"pelabuhan") muncul."""
+    if not simpul_fakta:
+        return False
+    jenis_ada = simpul_fakta.get("simpul_dalam_radius") or {}
+    if not jenis_ada:
+        return False
+    narasi_lower = (narasi or "").lower()
+    for jenis, info in jenis_ada.items():
+        nama_list = [d["nama_simpul"] for d in (info.get("daftar") or []) if d.get("nama_simpul")]
+        if nama_list:
+            if not any(nama.lower() in narasi_lower for nama in nama_list):
+                return True
+        else:
+            kata = "bandara" if jenis == "BANDARA" else "pelabuhan"
+            if kata not in narasi_lower:
+                return True
+    return False
+
+
+_PENILAIAN_RETRY_SIMPUL_MAKS = 2  # percobaan TAMBAHAN (di luar percobaan pertama)
+
+
 @app.post("/api/usulan-inpres/{usulan_id}/penilaian-bappenas")
 def penilaian_bappenas_generate(usulan_id: int):
     _ensure_penilaian_table()
@@ -6196,16 +6236,35 @@ def penilaian_bappenas_generate(usulan_id: int):
     poin_a = _bappenas_poin_from_total(aspek_a_hasil["total_kriteria"])
     poin_b = _bappenas_poin_b_from_total(aspek_b_hasil["total_indikator"])
 
-    provider, model, teks = _llm_plain(
-        PENILAIAN_SYSTEM_PROMPT, _penilaian_context(row, aspek_a_hasil, aspek_b_hasil)
-    )
-    teks = re.sub(r"^```(?:json)?\s*|\s*```$", "", teks.strip())
-    try:
-        hasil = json.loads(teks)
-        kesimpulan = hasil["kesimpulan"]
-        aspek_b_narasi_ai = hasil.get("aspek_b_narasi_ai")
-    except (ValueError, KeyError, TypeError) as e:
-        raise HTTPException(502, f"Jawaban {provider} tidak sesuai format JSON penilaian: {e}")
+    context = _penilaian_context(row, aspek_a_hasil, aspek_b_hasil)
+    simpul_fakta = _simpul_transportasi_fakta(row)
+
+    def _generate(ctx):
+        provider, model, teks = _llm_plain(PENILAIAN_SYSTEM_PROMPT, ctx)
+        teks = re.sub(r"^```(?:json)?\s*|\s*```$", "", teks.strip())
+        try:
+            hasil = json.loads(teks)
+            return provider, model, hasil["kesimpulan"], hasil.get("aspek_b_narasi_ai")
+        except (ValueError, KeyError, TypeError) as e:
+            raise HTTPException(502, f"Jawaban {provider} tidak sesuai format JSON penilaian: {e}")
+
+    provider, model, kesimpulan, aspek_b_narasi_ai = _generate(context)
+    percobaan = 0
+    # Retry deterministik: prompt sudah bilang "WAJIB sebutkan simpul_transportasi"
+    # tapi gpt-4o-mini terbukti tidak selalu taat (lihat docstring
+    # _narasi_lewatkan_simpul) -- daripada percaya prompt penuh, cek ulang
+    # hasilnya dan minta ulang dgn penekanan eksplisit kalau masih lewat.
+    while _narasi_lewatkan_simpul(aspek_b_narasi_ai, simpul_fakta) and percobaan < _PENILAIAN_RETRY_SIMPUL_MAKS:
+        percobaan += 1
+        ctx_retry = context + (
+            "\n\nPERHATIAN -- draf jawaban Anda SEBELUMNYA tidak memenuhi instruksi \"simpul_transportasi\" "
+            "di atas: entah sama sekali tidak menyebutnya, ATAU cuma menyebut JUMLAHNYA (mis. \"tiga bandara\", "
+            '"tujuh pelabuhan nasional") TANPA satu pun NAMA konkret dari field "nama_simpul" pada "daftar". '
+            'Jawaban kali ini WAJIB menyebut NAMA-NAMA simpul yang ada di "daftar" secara eksplisit (mis. '
+            '"Bandara Soekarno Hatta", "Pelabuhan Kamal Muara" -- bukan cuma angka jumlahnya), jangan '
+            "diulangi kesalahan yang sama."
+        )
+        provider, model, kesimpulan, aspek_b_narasi_ai = _generate(ctx_retry)
 
     with db_cursor() as cur:
         cur.execute(

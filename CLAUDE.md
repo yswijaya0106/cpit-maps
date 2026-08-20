@@ -37,9 +37,20 @@ Requires `.env` (copy from `.env.example`):
   that endpoint, see static/index.html).
 - `APP_USERNAME`/`APP_PASSWORD` — optional HTTP Basic Auth gate in front of
   the entire app (static files + every `/api/*` route), enforced by the
-  `basic_auth_middleware` in app.py. Leave both blank to disable (default
-  dev flow, no login prompt); set both to require a browser login dialog —
-  useful for an internet-facing staging box.
+  `basic_auth_middleware` in app.py. **21 Aug 2026: credentials moved to a
+  `users` table** (`scripts/schema_users.sql`, role `admin`|`user`, password
+  hashed via `auth.py`'s stdlib `pbkdf2_hmac`, no new dependency) — these two
+  env vars are now only a one-time seed for the first admin account, read by
+  `_seed_initial_admin_user()` on startup when `users` is still empty.
+  Manage accounts afterward with `scripts/manage_users.py` (add/passwd/role/
+  list/remove), not `.env`. Auth is disabled (same as leaving both blank
+  used to do) whenever the `users` table is empty/unreachable — same "no
+  login prompt without explicit config" default as before. Role `user` is
+  view-only: `_require_admin()` gates `POST /api/usulan-inpres/import`
+  (403 for non-admin); the frontend hides the "Import XLSX" button for that
+  role too (`state.auth` populated from `GET /api/auth/me`,
+  `applyAuthRestrictions()` in state.js). Set both to require a browser
+  login dialog — useful for an internet-facing staging box.
 - `PG_HOST/PORT/USER/PASS/DB` — PostgreSQL connection (default db
   `route_gis`). Usulan-Inpres browsing, IJD scoring, the Data viewer, chat
   DB tools, and the `Maps/` overlay layers (`map_layers`/`map_layer_meta`)

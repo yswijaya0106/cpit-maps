@@ -492,6 +492,7 @@ function usulanModaChange(moda) {
 
   const isIjd = moda === "IJD";
   USULAN_IJD_ONLY_BUTTONS.forEach((id) => { document.getElementById(id).hidden = !isIjd; });
+  applyAuthRestrictions(); // di atas baris sebelumnya: role non-admin tetap tidak lihat tombol Import
   document.getElementById("btnUsulanModaExport").hidden = isIjd;
   document.getElementById("btnUsulanModaDashboard").hidden = isIjd;
   document.getElementById("usulanKabupatenField").hidden = !isIjd;

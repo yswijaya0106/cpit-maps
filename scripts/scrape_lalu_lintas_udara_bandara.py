@@ -23,6 +23,7 @@ Usage (venv aktif):
     python scripts/scrape_lalu_lintas_udara_bandara.py --bandara MLG,CGK
     python scripts/scrape_lalu_lintas_udara_bandara.py --tahun 2026 --bulan-mulai 1 --bulan-akhir 8
     python scripts/scrape_lalu_lintas_udara_bandara.py --kategori domestik  # cuma 1 kategori
+    python scripts/scrape_lalu_lintas_udara_bandara.py --resume              # lanjutkan run yang terputus
 """
 import argparse
 import io
@@ -44,7 +45,11 @@ BASE_URL = "https://hubud.kemenhub.go.id/lalu-lintas"
 HEADERS = {"User-Agent": "Mozilla/5.0 (compatible; analytic-maps/1.0; data referensi Ditjen Hubud)"}
 SCHEMA_PATH = Path(__file__).resolve().parent / "schema_lalu_lintas_udara_bandara.sql"
 REQUEST_DELAY = 0.4
-REQUEST_TIMEOUT = 20
+# (connect, read) terpisah, bukan satu angka -- satu timeout tunggal di
+# requests kadang tidak menangkap koneksi yang macet di level socket/DNS,
+# ditemukan 20 Aug 2026 saat run ~3.800 request macet total tanpa exception
+# sama sekali (CPU diam, tidak ada koneksi keluar) meski timeout=20 dipasang.
+REQUEST_TIMEOUT = (10, 20)
 
 ROW_LABEL_TO_COL = {
     "Pesawat": "pesawat",
@@ -119,10 +124,20 @@ def main():
     ap.add_argument("--bulan-mulai", type=int, default=1)
     ap.add_argument("--bulan-akhir", type=int, default=8)
     ap.add_argument("--kategori", choices=["domestik", "internasional", "semua"], default="semua")
+    ap.add_argument("--resume", action="store_true",
+                     help="lewati kombinasi (bandara, periode, kategori) yang sudah ada di tabel -- "
+                          "dipakai utk melanjutkan run yang terputus tanpa mengulang dari awal")
     args = ap.parse_args()
 
     with pg_cursor() as cur:
         cur.execute(SCHEMA_PATH.read_text(encoding="utf-8"))
+
+    done = set()
+    if args.resume:
+        with pg_cursor() as cur:
+            cur.execute("SELECT kode_bandara, periode, kategori FROM lalu_lintas_udara_bandara")
+            done = {(r["kode_bandara"], r["periode"].strftime("%Y-%m"), r["kategori"]) for r in cur.fetchall()}
+        print(f"--resume: {len(done)} kombinasi sudah ada di tabel, akan dilewati.\n")
 
     print("Mengambil daftar bandara dari dropdown situs...")
     html = _fetch({"bandara": "CGK", "period": f"{args.tahun}-01", "category": "domestik"})
@@ -145,12 +160,15 @@ def main():
             periode = f"{args.tahun}-{bulan:02d}"
             for kategori in kategoris:
                 job_i += 1
+                if (kode, periode, kategori) in done:
+                    continue
                 if job_i % 20 == 0 or job_i == 1:
                     print(f"[{job_i}/{total_jobs}] {kode} {periode} {kategori}...")
                 try:
                     html = _fetch({"bandara": kode, "period": periode, "category": kategori})
                     data = _parse_traffic_table(html)
-                except requests.RequestException as e:
+                except Exception as e:  # noqa: BLE001 -- run tanpa pengawasan berjam-jam,
+                    # 1 halaman gagal parse/network TIDAK BOLEH menghentikan seluruhnya
                     print(f"  GAGAL {kode} {periode} {kategori}: {e}")
                     data = None
                 time.sleep(REQUEST_DELAY)

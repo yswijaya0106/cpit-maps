@@ -39,7 +39,32 @@ const state = {
     }],
     busy: false,
   }, // riwayat percakapan asisten Gemini
+  auth: { username: null, role: null, aktif: false }, // hasil GET /api/auth/me, lihat applyAuthRestrictions()
 };
+
+// role 'admin' vs 'user' (tabel users, lihat auth.py/_require_admin di app.py)
+// -- 'user' cuma boleh melihat data, tidak boleh import xlsx usulan IJD.
+// Kalau auth nonaktif (state.auth.aktif===false, mis. dev lokal tanpa tabel
+// users), tombol TIDAK disembunyikan -- backend juga tidak menegakkan
+// _require_admin dalam kondisi itu (lihat basic_auth_middleware), jadi UI
+// harus konsisten dgn itu.
+function applyAuthRestrictions() {
+  const btn = document.getElementById("btnUsulanImport");
+  if (!btn) return;
+  const restrict = state.auth.aktif && state.auth.role !== "admin";
+  btn.hidden = restrict;
+}
+
+async function initAuth() {
+  try {
+    const res = await fetch("/api/auth/me");
+    if (res.ok) state.auth = await res.json();
+  } catch (err) {
+    console.error(err);
+  }
+  applyAuthRestrictions();
+}
+document.addEventListener("DOMContentLoaded", initAuth);
 
 function toast(msg, isError = false) {
   const el = document.getElementById("toast");

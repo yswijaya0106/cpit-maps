@@ -47,6 +47,7 @@ import import_bappenas_lokus_a as bappenas_lokus_xlsx  # noqa: E402
 
 from db import db_cursor  # noqa: E402
 from map_layer_labels import map_layer_label as _map_layer_label  # noqa: E402
+import auth  # noqa: E402
 import chat_providers  # noqa: E402
 # _llm_plain/_plain_* (penilaian Bappenas AI) masih tinggal di app.py dan
 # butuh konstanta model/URL yang ikut pindah ke chat_providers saat refactor
@@ -98,22 +99,66 @@ async def _warm_ijd_bulk_cache_nasional():
     loop.run_in_executor(None, _warm)
 
 
+# APP_USERNAME/APP_PASSWORD (.env) TIDAK LAGI dipakai sbg kredensial aktif --
+# sejak tabel users (scripts/schema_users.sql) ditambahkan, nilainya cuma
+# dipakai SEKALI sbg seed akun admin pertama (_seed_initial_admin_user() di
+# bawah), begitu users terisi keduanya diabaikan. Tetap dibaca dari .env
+# (bukan dihapus) supaya migrasi dari instalasi lama tidak butuh langkah
+# manual -- .env yang sudah ada otomatis jadi akun admin pertama.
 APP_USERNAME = os.getenv("APP_USERNAME")
 APP_PASSWORD = os.getenv("APP_PASSWORD")
+
+_USERS_SCHEMA_PATH = Path(__file__).resolve().parent / "scripts" / "schema_users.sql"
+
+
+@app.on_event("startup")
+async def _seed_initial_admin_user():
+    """Buat tabel users (idempotent) + seed 1 akun admin dari APP_USERNAME/
+    APP_PASSWORD kalau tabelnya masih kosong -- migrasi mulus dari basic
+    auth lama (kredensial tunggal di .env) ke multi-user role-based tanpa
+    langkah manual. Kalau APP_USERNAME/PASSWORD kosong DAN tabel users juga
+    kosong, auth tetap nonaktif sepenuhnya (lihat basic_auth_middleware) --
+    sama semangatnya dgn "nonaktif otomatis tanpa konfigurasi eksplisit"
+    yang lama. Kegagalan (mis. DB belum siap) sengaja diredam, sama pola
+    dgn _warm_ijd_bulk_cache_nasional -- bukan bagian kritis start-up."""
+    try:
+        with db_cursor() as cur:
+            cur.execute(_USERS_SCHEMA_PATH.read_text(encoding="utf-8"))
+            cur.execute("SELECT 1 FROM users LIMIT 1")
+            if cur.fetchone() is None and APP_USERNAME and APP_PASSWORD:
+                cur.execute(
+                    "INSERT INTO users (username, password_hash, role) VALUES (%s, %s, 'admin')",
+                    (APP_USERNAME, auth.hash_password(APP_PASSWORD)),
+                )
+                print(f"  [auth] tabel users kosong -- akun admin awal '{APP_USERNAME}' dibuat dari .env")
+    except Exception as e:
+        print(f"  [auth] gagal setup tabel users (auth nonaktif sampai DB siap): {e}")
 
 
 @app.middleware("http")
 async def basic_auth_middleware(request: Request, call_next):
-    """Gerbang HTTP Basic Auth untuk seluruh aplikasi (statis + /api/*).
+    """Gerbang HTTP Basic Auth untuk seluruh aplikasi (statis + /api/*),
+    diverifikasi terhadap tabel users (bukan lagi 1 kredensial tunggal).
 
-    Nonaktif otomatis kalau APP_USERNAME/APP_PASSWORD tidak diset di .env,
-    supaya alur dev lokal yang sudah ada tidak berubah tanpa konfigurasi
-    eksplisit.
+    Nonaktif otomatis kalau tabel users kosong/tidak ada (mis. DB belum
+    terhubung, atau instalasi baru tanpa APP_USERNAME/PASSWORD di .env utk
+    di-seed) -- sama semangatnya dgn perilaku lama "nonaktif tanpa
+    konfigurasi eksplisit", supaya alur dev lokal tanpa PostgreSQL tidak
+    berubah. Route handler yang butuh role tertentu (mis. admin-only) baca
+    request.state.role, diisi di sini saat auth berhasil.
     """
-    if not APP_USERNAME or not APP_PASSWORD:
+    try:
+        with db_cursor() as cur:
+            cur.execute("SELECT 1 FROM users LIMIT 1")
+            any_user = cur.fetchone() is not None
+    except Exception:
+        any_user = False
+
+    if not any_user:
         return await call_next(request)
 
     auth_header = request.headers.get("authorization", "")
+    username = password = ""
     if auth_header.startswith("Basic "):
         try:
             import base64
@@ -121,15 +166,41 @@ async def basic_auth_middleware(request: Request, call_next):
             username, _, password = decoded.partition(":")
         except Exception:
             username, password = "", ""
-        if secrets.compare_digest(username, APP_USERNAME) and secrets.compare_digest(
-            password, APP_PASSWORD
-        ):
+
+    if username:
+        try:
+            with db_cursor() as cur:
+                cur.execute("SELECT password_hash, role FROM users WHERE username=%s", (username,))
+                row = cur.fetchone()
+        except Exception:
+            row = None
+        if row and auth.verify_password(password, row["password_hash"]):
+            request.state.username = username
+            request.state.role = row["role"]
             return await call_next(request)
 
     return Response(
         status_code=401,
         headers={"WWW-Authenticate": 'Basic realm="The Next - SiJalan"'},
     )
+
+
+def _require_admin(request: Request):
+    """Dipanggil di awal route yang cuma boleh diakses role admin (mis.
+    import xlsx usulan IJD) -- 403 kalau bukan admin. Kalau auth nonaktif
+    (tabel users kosong, lihat basic_auth_middleware), request.state.role
+    tidak pernah di-set -- getattr default None LOLOS di sini dgn sengaja,
+    supaya dev lokal tanpa auth tidak ikut terkunci."""
+    role = getattr(request.state, "role", None)
+    if role is not None and role != "admin":
+        raise HTTPException(403, "Hanya admin yang bisa melakukan aksi ini")
+
+
+@app.get("/api/auth/me")
+def auth_me(request: Request):
+    username = getattr(request.state, "username", None)
+    role = getattr(request.state, "role", None)
+    return {"username": username, "role": role, "auth_aktif": username is not None}
 
 
 class Segment(BaseModel):
@@ -600,10 +671,12 @@ def usulan_inpres_detail(usulan_id: int):
 
 
 @app.post("/api/usulan-inpres/import")
-def usulan_inpres_import(file: UploadFile = File(...)):
+def usulan_inpres_import(request: Request, file: UploadFile = File(...)):
     """Upsert xlsx usulan (format SITIA) ke database: ID yang sudah ada
     di-update, yang belum ada di-insert. Kolom geometri hasil fetch KML
-    tidak disentuh."""
+    tidak disentuh. Admin-only (lihat _require_admin) -- role 'user' cuma
+    boleh melihat data, tidak boleh import."""
+    _require_admin(request)
     if not (file.filename or "").lower().endswith(".xlsx"):
         raise HTTPException(400, "File harus berformat .xlsx")
     conn = usulan_xlsx.connect()
@@ -692,6 +765,10 @@ DATA_TABLES = {
     "od_lrt_jabodebek": "Matriks OD Penumpang LRT Jabodebek per Bulan 2025",
     "rekap_penumpang_ka_nasional": "Rekap Penumpang Kereta Api Nasional per Sistem 2020-2025",
     "ka_perkotaan_layanan": "Kapasitas/Realisasi KA Perkotaan per Layanan 2020-2029",
+    "bandara_kemenhub": "Daftar Bandar Udara (Live, Ditjen Hubud Kemenhub)",
+    "bandara_kemenhub_rute": "Rute Domestik/Internasional per Bandara (Ditjen Hubud)",
+    "bandara_kemenhub_terdekat": "Bandar Udara Terdekat per Bandara (Ditjen Hubud)",
+    "bandara_kemenhub_fasilitas": "Fasilitas Udara/Darat per Bandara (Ditjen Hubud)",
     "psc119_layanan": "Kapasitas Layanan PSC 119 per Kab/Kota (Survei Mandiri, Data Personal Diredaksi)",
     "pelabuhan_daerah": "Database Pelabuhan Daerah (Lokal, di luar cakupan BPS)",
     "basarnas_puslat_fasilitas": "Inventaris Sarana/Prasarana Puslat SDMPP BASARNAS",

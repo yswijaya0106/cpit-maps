@@ -1,14 +1,16 @@
 -- Jumlah penumpang kereta api nasional per kategori/sistem, 2020-2025
--- (docs/New/5. DARAT/Rekap Data Daerah.xlsx, sheet "(KEN TITIP 3)") --
--- satu-satunya bagian dari file "Rekap Data Daerah.xlsx" yang cukup
--- bersih & nasional untuk diimpor; sheet lain di file yang sama
--- ('2020 - 2025', 'LKJ 2025', 'BRT & KA', 'Sheet1', '(KEN TITIP 1)',
--- '(KEN TITIP 2)') SENGAJA dilewati -- strukturnya multi-section
--- (kota BTS dikelola Kemenhub vs. BRT dikelola daerah dicampur dalam
--- satu sheet, placeholder '-'/'?'/'N/A' berbeda arti tergantung
--- konteks) dan cakupannya kota-per-kota (bukan nasional), nilai
--- tambahnya tidak sebanding dengan usaha parsing yang dibutuhkan --
--- lihat docs/kajian_data_baru_docs_new.md §7.3.
+-- (docs/New/5. DARAT/Rekap Data Daerah.xlsx, sheet "(KEN TITIP 3)").
+-- Sheet BRT ('2020 - 2025', 'LKJ 2025', 'BRT & KA', 'Sheet1') di file
+-- yang sama SENGAJA masih dilewati -- strukturnya multi-section (kota
+-- BTS dikelola Kemenhub vs. BRT dikelola daerah dicampur dalam satu
+-- sheet, placeholder '-'/'?'/'N/A' berbeda arti tergantung konteks) dan
+-- cakupannya kota-per-kota (bukan nasional) -- lihat
+-- docs/kajian_data_baru_docs_new.md §7.3. "(KEN TITIP 1)"/"(KEN TITIP 2)"
+-- SEBELUMNYA juga dilewati dengan alasan yang sama, tapi setelah
+-- ditinjau ulang 20 Agu 2026 ternyata strukturnya jauh lebih sederhana
+-- (satu baris per layanan KA perkotaan, bukan per-kota-per-koridor) --
+-- diimpor terpisah ke ka_perkotaan_layanan
+-- (schema_ka_perkotaan_layanan.sql).
 --
 -- Format long/tidy (uraian x tahun) -- 26 kategori: KA Antarkota,
 -- Kereta Cepat Whoosh, KA Perkotaan, KRL (+ rincian Jabodetabek/

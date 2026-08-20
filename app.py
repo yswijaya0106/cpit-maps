@@ -691,9 +691,11 @@ DATA_TABLES = {
     "basarnas_diklat_rekap": "Rekap Kapasitas Diklat SAR per Tahun",
     "od_lrt_jabodebek": "Matriks OD Penumpang LRT Jabodebek per Bulan 2025",
     "rekap_penumpang_ka_nasional": "Rekap Penumpang Kereta Api Nasional per Sistem 2020-2025",
+    "ka_perkotaan_layanan": "Kapasitas/Realisasi KA Perkotaan per Layanan 2020-2029",
     "psc119_layanan": "Kapasitas Layanan PSC 119 per Kab/Kota (Survei Mandiri, Data Personal Diredaksi)",
     "pelabuhan_daerah": "Database Pelabuhan Daerah (Lokal, di luar cakupan BPS)",
     "basarnas_puslat_fasilitas": "Inventaris Sarana/Prasarana Puslat SDMPP BASARNAS",
+    "maskapai_organisasi": "Daftar Maskapai Dalam Negeri (Ditjen Hubud Kemenhub)",
 }
 # kolom yang tidak ditampilkan (payload besar)
 DATA_TABLE_SKIP_COLS = {"geom_geojson", "detail_fasilitas"}
@@ -3482,6 +3484,12 @@ def usulan_moda_dashboard():
             "ORDER BY vcr DESC LIMIT 10"
         )
         darat_top_vcr = cur.fetchall()
+        cur.execute(
+            "SELECT nama_layanan AS label, realisasi_penumpang AS count "
+            "FROM ka_perkotaan_layanan WHERE tahun = 2024 AND realisasi_penumpang IS NOT NULL "
+            "ORDER BY realisasi_penumpang DESC LIMIT 10"
+        )
+        darat_ka_perkotaan = cur.fetchall()
 
         cur.execute("SELECT COUNT(DISTINCT pelabuhan) AS total_pelabuhan, MAX(tahun) AS tahun_terakhir FROM bps_kinerja_pelabuhan")
         laut_summary = cur.fetchone()
@@ -3558,6 +3566,10 @@ def usulan_moda_dashboard():
                     for r in darat_top_vcr
                 ],
             },
+            "ka_perkotaan_2024": [
+                {"label": r["label"], "count": jsonable_encoder(r["count"])}
+                for r in darat_ka_perkotaan
+            ],
         },
         "laut": {
             "total_pelabuhan": laut_summary["total_pelabuhan"],

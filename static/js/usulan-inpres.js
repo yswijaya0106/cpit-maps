@@ -1594,9 +1594,19 @@ function usulanModaDashboardRender(data) {
     })}
   </div>`;
 
+  const daratKaPerkotaanHtml = `<div class="laporan-chart-block">
+    <div class="laporan-chart-title"><i class="bi bi-train-front"></i> Darat — 10 Layanan KA Perkotaan Realisasi Penumpang Tertinggi (2024)</div>
+    <div class="laporan-chart-sub">KRL/LRT/MRT/KA Bandara/Commuter Line — realisasi aktual, bukan target Gapeka</div>
+    ${laporanHBar(data.darat.ka_perkotaan_2024, {
+      valueKey: "count",
+      maxLabelFn: (it) => `${it.label}: ${Math.round(it.count).toLocaleString("id-ID")} penumpang`,
+      barLabelFn: (it) => Math.round(it.count).toLocaleString("id-ID"),
+    })}
+  </div>`;
+
   document.getElementById("usulanModaDashboardView").innerHTML =
-    kpis + udaraHtml + lautHtml + lautTrenHtml + pelabuhanDaerahHtml + daratHtml + daratKemacetanHtml + trenLakaHtml + topLakaHtml +
-    `<p class="hint">Sumber: tabel referensi docs/New/ (bps_data_bandara, angkutan_perintis, bps_kinerja_pelabuhan, bps_lhr_ruas_nasional, pelabuhan_daerah) dan anev_laka_lantas_polda — lepas dari skor IJD/usulan_inpres, murni ringkasan/sebaran data itu sendiri.</p>`;
+    kpis + udaraHtml + lautHtml + lautTrenHtml + pelabuhanDaerahHtml + daratHtml + daratKemacetanHtml + daratKaPerkotaanHtml + trenLakaHtml + topLakaHtml +
+    `<p class="hint">Sumber: tabel referensi docs/New/ (bps_data_bandara, angkutan_perintis, bps_kinerja_pelabuhan, bps_lhr_ruas_nasional, pelabuhan_daerah, ka_perkotaan_layanan) dan anev_laka_lantas_polda — lepas dari skor IJD/usulan_inpres, murni ringkasan/sebaran data itu sendiri.</p>`;
 }
 
 function bindUsulanModaDashboard() {

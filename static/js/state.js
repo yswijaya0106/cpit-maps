@@ -72,7 +72,13 @@ async function initAuth() {
     // walau habis location.reload(), bikin status login kelihatan "nyangkut"
     // (mis. setelah logout, /api/auth/me masih balikin sesi lama).
     const res = await fetch("/api/auth/me", { cache: "no-store" });
-    if (res.ok) state.auth = await res.json();
+    if (res.ok) {
+      const data = await res.json();
+      // API balikin "auth_required" (lihat GET /api/auth/me di app.py) --
+      // dipetakan ke "required" di sini spy nama field internal konsisten
+      // dgn sisa state.auth.
+      state.auth = { username: data.username, role: data.role, required: data.auth_required };
+    }
   } catch (err) {
     console.error(err);
   }

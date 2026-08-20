@@ -703,6 +703,79 @@ Deps: `requirements.txt`, venv at `.venv/` (already gitignored).
   layer name), and the identify popup joins the feature to DB tables via
   `GET /api/kecamatan/{kode}/data?tabel=` (whitelist `KECAMATAN_JOIN_TABLES`).
 
+## Multi-modal transport data (Darat/Laut/Udara)
+
+A second, independent feature area (added 20 Aug 2026 from a `docs/New/`
+Google Drive dump) layers Darat/Laut/Udara transport reference data on top
+of the same app — separate from IJD scoring, no shared code path except
+the UI "moda" pattern below. `docs/kajian_data_baru_docs_new.md` is the
+overlap-vs-new dataset assessment that drove the import order;
+`docs/update_staging_data_baru_docs_new.md` tracks rolling the resulting
+scripts/tables/layers out to staging.
+
+- **"Moda" UI pattern**: `LAPORAN_MODA_TABLE` in `static/js/usulan-inpres.js`
+  maps `Udara→bps_data_bandara`, `Darat→angkutan_perintis`,
+  `Laut→bps_kinerja_pelabuhan` (IJD has no entry, stays on the existing
+  `usulan_inpres` flow). Two independent panels both switch on this same
+  constant when the user picks a non-IJD moda: the "Lokasi Prioritas" modal
+  (hides checklist/distribusi/dashboard tabs, renders the mapped table
+  generically via `/api/data/{table}`) and the "Jelajahi Usulan Inpres"
+  panel (also hides kabupaten/search filters, since these tables' geography
+  columns are free-text and inconsistent row-to-row, and filters province
+  via `provinsi_text` ILIKE rather than exact BPS-code matching). The same
+  `LAPORAN_MODA_TABLE` is also reused by the Data viewer's Lokus Bappenas
+  panel (`data-viewer.js`, `dataViewerSetupModa`) as a third moda selector.
+- **`GET /api/maps/cari-titik?jenis=&nama=`** — resolves a free-text
+  bandara/pelabuhan name to a lat/lon by fuzzy-matching (`ILIKE`,
+  shortest-match-wins) against SHP overlay points already in `map_layers`,
+  since `angkutan_perintis`/`bps_kinerja_pelabuhan` rows carry no
+  coordinates of their own. `angkutan_perintis`'s SHP geometry
+  (`import_angkutan_perintis_geometri.py`, `map_layers` with
+  `provinsi="ANGKUTAN PERINTIS"`) is deliberately **not** joined to the
+  `angkutan_perintis` table — its `trayek_id`/`lintas_id` use the SHP's own
+  internal numbering scheme, confirmed (manual check) to have no reliable
+  join key back to the xlsx-sourced `no_koridor_trayek` column (mostly
+  NULL). It's a standalone visual overlay; this endpoint's name-matching is
+  the fallback for placing those rows on the map.
+- **`GET /api/kantor-sar/data?nama_kantor=&tabel=`** — identify-popup join
+  from a Kantor SAR/Pos SAR map point to `basarnas_alut`/
+  `basarnas_rescuer_potensi`/`basarnas_ops_sar` (`KANTOR_SAR_JOIN_TABLES`),
+  best-effort city-name text match since each source table spells the same
+  city inconsistently (e.g. "AMBON" vs "Ambon" vs "KANTOR PENCARIAN DAN
+  PERTOLONGAN AMBON") — not 100% reliable by design.
+- **`GET /api/provinsi/{provinsi}/laka-lantas`** — yearly traffic-accident
+  stats (`anev_laka_lantas_polda`) for a province, keyed by POLDA name via
+  a hardcoded `PROVINSI_POLDA_MAP` (POLDA naming doesn't align with
+  province naming, e.g. DKI Jakarta → "METRO JAYA"); Papua Selatan/Papua
+  Pegunungan (2022 pemekaran provinces) are deliberately omitted, the
+  source has no dedicated POLDA rows for them yet.
+- **`GET /api/usulan-inpres/moda/dashboard`** — read-only aggregation
+  behind the "Dashboard" button in the Darat/Laut/Udara browse panel:
+  bandara counts (Udara), trayek + LHR/VCR congestion (Darat), pelabuhan
+  counts (Laut), and the national accident trend — no IJD scoring
+  involved.
+- New reference tables (all non-spatial except the `map_layers` overlay
+  noted above), one importer each in `scripts/import_*.py` with a matching
+  `scripts/schema_*.sql`: `bps_data_bandara` (Udara, per-airport
+  runway/apron/terminal/capacity detail); `angkutan_perintis` (Darat,
+  perintis route service categories), `bps_lhr_ruas_nasional` (Darat, 2024
+  AADT/LHR per national road segment — matches `map_layers` `LINKID` 1:1
+  but kept as its own table), `anev_laka_lantas_polda` (Darat, 2020-2025
+  POLDA accident stats), `rekap_penumpang_ka_nasional` (Darat, national
+  train passenger counts), `od_lrt_jabodebek` (Darat, LRT Jabodebek OD
+  matrix); `bps_kinerja_pelabuhan` (Laut, annual port
+  traffic/passenger/cargo), `pelabuhan_daerah` (Laut, 1008-row local/
+  regional port database, most coordinates parsed from a free-text
+  "Titik Koordinat Lokasi" source column), `list_lokpri_kawasan` (Laut
+  folder but cross-sector, priority-area kabupaten list); `basarnas_alut`,
+  `basarnas_rescuer_potensi`, `basarnas_ops_sar`, `basarnas_diklat_rekap`,
+  `basarnas_puslat_fasilitas` (BASARNAS SAR equipment/personnel/ops/
+  training); `psc119_layanan` (emergency-service survey, PII stripped at
+  import).
+- `scripts/lhr_spatial_join.py` — ad-hoc (not part of the rerun-safe
+  pipeline) spatial join of each LHR ruas against BATAS KECAMATAN polygons,
+  writing provinsi/kabupaten/kecamatan directly into the source LHR xlsx.
+
 ## Data pipeline (scripts/)
 
 CLI scripts (venv active, PostgreSQL creds `PG_*` from `.env`) that verify

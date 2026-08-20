@@ -14,6 +14,7 @@ const dataViewer = {
   geoProvinces: null, // cache /api/data/geo/provinces (sama utk semua tabel)
   bappenasKriteria: null, // cache /api/bappenas-lokus-a/kriteria
   importKriteria: "", // kriteria terpilih di panel import (khusus tabel bappenas_lokus_a)
+  moda: "IJD", // khusus panel bappenas_lokus_a (lihat dataViewerSetupModa) -- IJD | Udara | Darat | Laut
 };
 
 async function dataViewerLoadTables() {
@@ -56,20 +57,38 @@ async function dataViewerOpen(tableName) {
   dataViewer.geo = !!(t && t.geo);
   dataViewer.provinsi = "";
   dataViewer.kabupaten = "";
+  dataViewer.moda = "IJD";
   document.getElementById("dataTableOverlay").hidden = false;
   await dataViewerSetupFilters();
   dataViewerSetupImport();
+  dataViewerSetupModa();
   await dataViewerFetchPage();
 }
 
 function dataViewerSetupImport() {
   const wrap = document.getElementById("dataTableImport");
   const isBappenasLokus = dataViewer.table === "bappenas_lokus_a";
-  wrap.hidden = !isBappenasLokus;
+  wrap.hidden = !isBappenasLokus || dataViewer.moda !== "IJD";
   if (!isBappenasLokus) return;
   dataViewer.importKriteria = "";
   document.getElementById("dataTableImportKriteriaLabel").textContent = "Pilih kriteria...";
   document.getElementById("dataTableImportBtn").disabled = true;
+}
+
+// Selector moda (IJD/Udara/Darat/Laut) -- HANYA muncul di panel "Lokus
+// Aspek A Bappenas" (table === "bappenas_lokus_a"), sekalipun overlay-nya
+// dipakai bersama Data viewer generik (lihat catatan dataViewer di atas).
+// Reuse LAPORAN_MODA_TABLE dari usulan-inpres.js (sama persis dgn moda di
+// modal "Lokasi Prioritas"/panel "Jelajahi Usulan Inpres") -- diakses lewat
+// scope global bareng, aman dipanggil di sini walau usulan-inpres.js
+// dimuat SETELAH data-viewer.js (constant-nya sudah terisi saat fungsi ini
+// benar-benar dipanggil, bukan saat file di-parse).
+function dataViewerSetupModa() {
+  const sel = document.getElementById("dataTableModa");
+  const isBappenasLokus = dataViewer.table === "bappenas_lokus_a";
+  sel.hidden = !isBappenasLokus;
+  sel.value = "IJD";
+  document.getElementById("dataTableFilterKabupatenField").hidden = false; // dipulihkan tiap buka panel baru
 }
 
 const DATA_FILTER_ALL_PROV = { kode_provinsi: "", provinsi: "Semua provinsi" };
@@ -206,17 +225,33 @@ function bindDataViewerImport() {
   });
 }
 
+// Nama tabel efektif utk request saat ini -- bappenas_lokus_a sendiri kalau
+// moda IJD, atau tabel referensi lepas-IJD kalau moda Udara/Darat/Laut
+// (cuma berlaku utk panel Lokus Bappenas, table lain selalu moda "IJD").
+function dataViewerEffectiveTable() {
+  return dataViewer.table === "bappenas_lokus_a" && dataViewer.moda !== "IJD"
+    ? LAPORAN_MODA_TABLE[dataViewer.moda]
+    : dataViewer.table;
+}
+
 async function dataViewerFetchPage() {
   const scroll = document.getElementById("dataTableScroll");
   scroll.innerHTML = '<div class="datatable-loading"><i class="bi bi-hourglass-split"></i> Memuat data...</div>';
+  const table = dataViewerEffectiveTable();
+  const isModaGeneric = table !== dataViewer.table;
   try {
     const params = new URLSearchParams({ limit: dataViewer.limit, offset: dataViewer.offset });
-    if (dataViewer.provinsi) params.set("provinsi", dataViewer.provinsi);
-    if (dataViewer.kabupaten) params.set("kabupaten", dataViewer.kabupaten);
-    if (dataViewer.table === "bappenas_lokus_a" && dataViewer.importKriteria) {
-      params.set("kriteria", dataViewer.importKriteria);
+    if (isModaGeneric) {
+      const provLabel = document.getElementById("dataTableFilterProvinsiLabel").textContent;
+      if (dataViewer.provinsi && provLabel !== "Semua provinsi") params.set("provinsi_text", provLabel);
+    } else {
+      if (dataViewer.provinsi) params.set("provinsi", dataViewer.provinsi);
+      if (dataViewer.kabupaten) params.set("kabupaten", dataViewer.kabupaten);
+      if (dataViewer.table === "bappenas_lokus_a" && dataViewer.importKriteria) {
+        params.set("kriteria", dataViewer.importKriteria);
+      }
     }
-    const res = await fetch(`/api/data/${dataViewer.table}?${params}`);
+    const res = await fetch(`/api/data/${table}?${params}`);
     const data = await res.json();
     if (!res.ok) throw new Error(data.detail || "Gagal memuat data");
     dataViewer.total = data.total;
@@ -224,6 +259,14 @@ async function dataViewerFetchPage() {
   } catch (err) {
     scroll.innerHTML = `<div class="datatable-loading">${err.message}</div>`;
   }
+}
+
+function dataViewerModaChange(moda) {
+  dataViewer.moda = moda;
+  dataViewer.offset = 0;
+  dataViewerSetupImport(); // sembunyikan/tampilkan kriteria+import sesuai moda
+  document.getElementById("dataTableFilterKabupatenField").hidden = moda !== "IJD";
+  dataViewerFetchPage();
 }
 
 function dataViewerRender(data) {
@@ -294,15 +337,24 @@ function bindDataViewer() {
 
   document.getElementById("dataTableExport").addEventListener("click", () => {
     if (!dataViewer.table) return;
+    const table = dataViewerEffectiveTable();
+    const isModaGeneric = table !== dataViewer.table;
     const params = new URLSearchParams();
-    if (dataViewer.provinsi) params.set("provinsi", dataViewer.provinsi);
-    if (dataViewer.kabupaten) params.set("kabupaten", dataViewer.kabupaten);
-    if (dataViewer.table === "bappenas_lokus_a" && dataViewer.importKriteria) {
-      params.set("kriteria", dataViewer.importKriteria);
+    if (isModaGeneric) {
+      const provLabel = document.getElementById("dataTableFilterProvinsiLabel").textContent;
+      if (dataViewer.provinsi && provLabel !== "Semua provinsi") params.set("provinsi_text", provLabel);
+    } else {
+      if (dataViewer.provinsi) params.set("provinsi", dataViewer.provinsi);
+      if (dataViewer.kabupaten) params.set("kabupaten", dataViewer.kabupaten);
+      if (dataViewer.table === "bappenas_lokus_a" && dataViewer.importKriteria) {
+        params.set("kriteria", dataViewer.importKriteria);
+      }
     }
     const qs = params.toString();
-    window.location.href = `/api/data/${dataViewer.table}/export/xlsx${qs ? `?${qs}` : ""}`;
+    window.location.href = `/api/data/${table}/export/xlsx${qs ? `?${qs}` : ""}`;
   });
+
+  document.getElementById("dataTableModa").addEventListener("change", (e) => dataViewerModaChange(e.target.value));
 
   bindDataViewerGeoFilters();
   bindDataViewerImport();

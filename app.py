@@ -692,9 +692,11 @@ DATA_TABLES = {
     "od_lrt_jabodebek": "Matriks OD Penumpang LRT Jabodebek per Bulan 2025",
     "rekap_penumpang_ka_nasional": "Rekap Penumpang Kereta Api Nasional per Sistem 2020-2025",
     "psc119_layanan": "Kapasitas Layanan PSC 119 per Kab/Kota (Survei Mandiri, Data Personal Diredaksi)",
+    "pelabuhan_daerah": "Database Pelabuhan Daerah (Lokal, di luar cakupan BPS)",
+    "basarnas_puslat_fasilitas": "Inventaris Sarana/Prasarana Puslat SDMPP BASARNAS",
 }
 # kolom yang tidak ditampilkan (payload besar)
-DATA_TABLE_SKIP_COLS = {"geom_geojson"}
+DATA_TABLE_SKIP_COLS = {"geom_geojson", "detail_fasilitas"}
 
 # Tabel yang bisa difilter provinsi/kabupaten di viewer "Data" -> (ekspresi SQL
 # kode provinsi, ekspresi SQL kode kabupaten), keduanya disetarakan ke kode BPS
@@ -725,6 +727,7 @@ DATA_TABLE_GEO = {
     "si_panjang_jalan_provinsi": ("kode_provinsi", "kode_provinsi"),
     "si_kendaraan_provinsi": ("kode_provinsi", "kode_provinsi"),
     "si_lahan_sawah_provinsi": ("kode_provinsi", "kode_provinsi"),
+    "pelabuhan_daerah": ("kode_provinsi", "kode_kabupaten"),
 }
 
 # Tabel dari docs/New/ (layer overlay umum, lihat docs/kajian_data_baru_docs_new.md)

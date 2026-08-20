@@ -43,7 +43,16 @@ if [ ! -f "$DUMP_FILE" ]; then
 fi
 
 # Kredensial: env var yang sudah di-set (mis. dari shell staging) menang atas
-# .env, sama semangatnya dengan db.py yang baca os.environ.
+# .env, sama semangatnya dengan db.py yang baca os.environ. Simpan dulu
+# sebelum di-source -- source .env TIMPA TANPA SYARAT variabel shell yang
+# sudah ada (bukan cuma isi yang kosong), jadi urutan "cek dulu baru assign
+# default" saja TIDAK CUKUP utk melindungi override caller.
+_PRESET_PG_HOST="${PG_HOST-}"
+_PRESET_PG_PORT="${PG_PORT-}"
+_PRESET_PG_USER="${PG_USER-}"
+_PRESET_PG_DB="${PG_DB-}"
+_PRESET_PG_PASS="${PG_PASS-}"
+
 if [ -f "$REPO_ROOT/.env" ]; then
   set -a
   # shellcheck disable=SC1091
@@ -51,10 +60,11 @@ if [ -f "$REPO_ROOT/.env" ]; then
   set +a
 fi
 
-PG_HOST="${PG_HOST:-127.0.0.1}"
-PG_PORT="${PG_PORT:-5432}"
-PG_USER="${PG_USER:-postgres}"
-PG_DB="${PG_DB:-route_gis}"
+PG_HOST="${_PRESET_PG_HOST:-${PG_HOST:-127.0.0.1}}"
+PG_PORT="${_PRESET_PG_PORT:-${PG_PORT:-5432}}"
+PG_USER="${_PRESET_PG_USER:-${PG_USER:-postgres}}"
+PG_DB="${_PRESET_PG_DB:-${PG_DB:-route_gis}}"
+PG_PASS="${_PRESET_PG_PASS:-${PG_PASS:-}}"
 
 if ! command -v pg_restore >/dev/null 2>&1; then
   echo "GAGAL: pg_restore tidak ada di PATH. Di Windows biasanya ada di" >&2

@@ -356,11 +356,180 @@ Lantas), 2 layer Kereta Api, 3 layer Fase 4 (Terminal Tipe A, TERSUS/
 TUKS, Pelabuhan Penyeberangan Operasi) — semuanya diverifikasi hidup
 lewat server aktif (bukan cuma query DB), dan RTRW-Perda diputuskan
 cukup referensi. Item opsional yang sengaja ditunda (Data Ops SAR,
-normalisasi ALUT, LRK 2026, PSC 119, Transjakarta, Angkutan Perintis,
-Rekap Ridership BRT/KA, OD LRT Jabodebek) tetap tercatat di checklist
-di atas untuk pengerjaan lanjutan kapan pun dibutuhkan. Tidak ada satu
-pun perubahan yang menyentuh `_IJD_SCORERS`, `ijd_scoring_rules`,
-`usulan_inpres`, atau endpoint skoring IJD manapun.
+LRK 2026, PSC 119, Transjakarta, Angkutan Perintis, Rekap Ridership
+BRT/KA, OD LRT Jabodebek) tetap tercatat di checklist di atas untuk
+pengerjaan lanjutan kapan pun dibutuhkan. Tidak ada satu pun perubahan
+yang menyentuh `_IJD_SCORERS`, `ijd_scoring_rules`, `usulan_inpres`,
+atau endpoint skoring IJD manapun.
+
+### Susulan setelah Fase 1-5: 4 sumber tambahan diimplementasikan
+
+Setelah kajian ulang lintas seluruh `docs/New/` (bukan cuma yang sudah
+kena fase), ditemukan 1 **gap** (Pelabuhan Penumpang — sudah dianalisis
+di §4.3 tapi tidak jadi masuk Fase 4) dan beberapa kandidat prioritas
+sedang yang belum dikerjakan. Empat di antaranya diimplementasikan:
+
+- [x] **Pelabuhan Penumpang** (§4.3, gap dari Fase 4): 546 dari 547
+      titik valid (1 dibuang, koordinat di luar rentang Indonesia) →
+      `scripts/import_pelabuhan_penumpang_to_postgis.py`, layer baru
+      `layer="PELABUHAN PENUMPANG"` (bucket flat terpisah dari layer
+      "PELABUHAN" SHP existing), didaftarkan ke kategori "Simpul
+      Transportasi".
+- [x] **Atribut Detail Bandara** (§5): `scripts/schema_bps_data_bandara.sql`
+      + `scripts/import_bps_data_bandara.py` — tabel referensi 251
+      bandara. **Ditemukan & diperbaiki saat implementasi**: asumsi
+      index kolom awal (`COL_KAP_VALID`/`COL_KAP_ESTIMASI`/
+      `COL_KOORDINAT`/`KP`/`KD`) meleset 1 kolom dari struktur sumber
+      sebenarnya — diverifikasi ulang manual terhadap baris data mentah
+      sebelum dikoreksi. Baris kelanjutan multi-taxiway berhasil
+      digabung ke bandara induknya (contoh: Sultan Iskandar Muda,
+      5 taxiway tergabung), nilai "Tidak Terdefinisi" pada Apron Area
+      dikonversi jadi NULL (bukan dipaksa jadi angka), lat/lon berhasil
+      diparse untuk 247/251 bandara (4 sisanya memang tidak punya
+      koordinat di sumber, sesuai temuan awal kajian).
+- [x] **ALUT SAR** (§8.2): `scripts/schema_basarnas_alut.sql` +
+      `scripts/import_basarnas_alut.py` — 3.939 baris gabungan 3 matra
+      (130 udara, 1.664 darat, 2.145 laut; lebih tinggi dari estimasi
+      awal kajian karena baris "penanda kategori" & "Tidak Memiliki"
+      ikut diimpor apa adanya, bukan cuma unit individual). Offset
+      kolom header terdeteksi otomatis per file (sheet LAUT tidak
+      punya kolom spacer kosong di depan seperti UDARA/DARAT — beda
+      struktur yang baru ketahuan saat implementasi). `kondisi_kategori`
+      dinormalisasi dari teks bebas sumber (SIAP/SIAP_TERBATAS/
+      TIDAK_SIAP/LAINNYA) — hasil distribusi: 2.076 SIAP, 232
+      TIDAK_SIAP, 4 SIAP_TERBATAS, 10 LAINNYA, 1.617 tanpa kondisi
+      (baris kategori/tidak-memiliki).
+- [x] **Rescuer & Potensi SAR** (§8.3): `scripts/schema_basarnas_rescuer_potensi.sql`
+      + `scripts/import_basarnas_rescuer_potensi.py` — 47 satuan kerja
+      (termasuk 2 baris non-regional "Kantor Pusat"/"Balai SDM PP" tanpa
+      kode_daerah).
+- [x] Ketiga tabel non-spasial (`bps_data_bandara`, `basarnas_alut`,
+      `basarnas_rescuer_potensi`) didaftarkan di `DATA_TABLES`
+      (app.py) dan diverifikasi tampil di "Data" viewer lewat server
+      terisolasi bersama layer Pelabuhan Penumpang — total kini **11
+      layer/tabel baru** hidup di aplikasi sejak kajian ini dimulai.
+
+**Sisa kandidat yang masih tercatat, belum dikerjakan** (nilai lebih
+rendah/butuh keputusan tambahan): Angkutan Perintis, Rekap Data Daerah
+(ridership BRT/KA), OD LRT Jabodebek, LRK 2026, PSC 119 (perlu redaksi
+privasi), Diklat SAR (tabel kecil 5 baris).
+
+### Susulan kedua: 4 sumber lagi diimplementasikan (Kinerja Pelabuhan, List Lokpri, Data Ops SAR)
+
+- [x] **Kinerja Pelabuhan BPS** (§4.1): `scripts/schema_bps_kinerja_pelabuhan.sql`
+      + `scripts/import_bps_kinerja_pelabuhan.py` — 480 baris final
+      (482 baris sumber, 2 pasang duplikat persis di Kepulauan Riau
+      2020 collapse jadi 1 lewat UPSERT). Kolom 18+ pada sumber (artefak
+      pivot-table Excel yang nyasar ke 1 baris) sengaja tidak diimpor.
+- [x] **List Lokpri** (§4.2): `scripts/schema_list_lokpri_kawasan.sql`
+      + `scripts/import_list_lokpri_kawasan.py` — 249 baris. **Ditemukan
+      saat implementasi**: kolom "Status" jauh lebih beragam dari sampel
+      awal kajian (yang cuma menunjukkan "Tertinggal") — nyatanya ada 10
+      kategori program berbeda (Perbatasan Prioritas, Kawasan
+      Transmigrasi, Food Estate, Wisata, dll.), dan 36 kabupaten muncul
+      lebih dari sekali (program berbeda) — makanya tabel pakai
+      surrogate id, bukan kabupaten sebagai primary key.
+- [x] **Data Ops SAR 2021-2025** (§8.4, item bernilai tertinggi yang
+      sempat ditunda): `scripts/schema_basarnas_ops_sar.sql` +
+      `scripts/import_basarnas_ops_sar.py` — **diputuskan impor
+      per-insiden mentah (tanpa agregasi)**, 12.216 dari 12.372 baris
+      valid (156 dibuang, koordinat kosong/di luar rentang Indonesia).
+      Cuma sheet `REKAPITULASI DETAIL` per tahun yang diimpor (5 sheet
+      kategori lain tetap dilewati sesuai temuan awal — subset
+      terfilter, bukan data tambahan).
+      **Bug data kualitas ditemukan & diperbaiki saat verifikasi**:
+      ~620 baris (terutama tahun sumber 2025) punya `waktu_tiba` korup
+      persis `"0001-11-30 00:00:00"` (placeholder tahun 1 dari sumber)
+      — kalau tidak difilter, ini menghasilkan rata-rata response-time
+      negatif ekstrem (jutaan menit) saat dihitung
+      `waktu_tiba - waktu_lapor`. Parser ditambah validasi rentang
+      tahun wajar (2015-2030), timestamp di luar itu diperlakukan NULL.
+      Setelah fix, response-time rata-rata per jenis kecelakaan masuk
+      akal (mis. Kecelakaan Kapal ≈ 1.164 menit, Bencana ≈ 6.721 menit)
+      — mengonfirmasi nilai analitik yang disebut di kajian awal
+      (linimasa respons siap pakai per insiden) sungguh valid.
+- [x] Keempatnya didaftarkan di `DATA_TABLES` dan diverifikasi tampil
+      di "Data" viewer lewat server terisolasi — total kini **15
+      layer/tabel baru** hidup di aplikasi sejak kajian ini dimulai
+      (11 dari dua putaran sebelumnya + 4 dari putaran ini).
+
+**Sisa kandidat yang masih tercatat, belum dikerjakan** (nilai lebih
+rendah/butuh keputusan tambahan, tidak berubah dari putaran
+sebelumnya): Angkutan Perintis, Rekap Data Daerah (ridership BRT/KA),
+OD LRT Jabodebek, LRK 2026, PSC 119 (perlu redaksi privasi), Diklat
+SAR (tabel kecil 5 baris).
+
+### Susulan ketiga: seluruh sisa kandidat diimplementasikan
+
+Semua item yang sempat tercatat "belum dikerjakan" di atas kini
+diselesaikan (kecuali Rekap Data Daerah yang di-scope-ulang, lihat
+bawah), menuntaskan seluruh inventaris `docs/New/`:
+
+- [x] **LRK 2026** (§9.5): `scripts/import_lrk_2026_to_postgis.py` —
+      **kualitas sumber jauh lebih buruk dari sampel awal kajian**
+      (yang cuma melihat 4 baris rapi Aceh): format koordinat di teks
+      "Nama Ruas" sangat tidak konsisten antar BPTD (desimal berkurung,
+      desimal-koma notasi Indonesia, DMS, multi-titik per sel, dan
+      banyak baris tanpa koordinat sama sekali). Parser 4-pola dicoba
+      berurutan; hasil akhir **55 titik dari ~130 baris ruas** (81 baris
+      tanpa koordinat yang bisa dikenali, bukan kegagalan parsing —
+      memang tidak ada di sumber). Ditumpangkan ke bucket `JALAN
+      NASIONAL` yang sudah ada, pola sama dengan Blackspot.
+- [x] **Angkutan Perintis Darat** (§7.1): `scripts/schema_angkutan_perintis.sql`
+      + `scripts/import_angkutan_perintis.py` — 632 baris gabungan 5
+      jenis layanan (9 Barang Perintis, 11 Perkotaan BTS, 265
+      Penyeberangan Perintis, 34 KSPN, 313 Jalan Perintis) dalam satu
+      tabel dibedakan kolom `jenis`. Non-spasial (sesuai temuan awal —
+      sumbernya memang tidak punya koordinat sama sekali).
+- [x] **Diklat SAR** (§8.6): `scripts/schema_basarnas_diklat_rekap.sql`
+      + `scripts/import_basarnas_diklat_rekap.py` — 2 sumber kecil
+      (peserta diklat, tenaga pendidik) digabung jadi 1 tabel 5 baris
+      (2021-2025) karena dimensi tahunnya sama.
+- [x] **OD LRT Jabodebek** (§6.1): `scripts/schema_od_lrt_jabodebek.sql`
+      + `scripts/import_od_lrt_jabodebek.py` — matriks OD 18x18 stasiun
+      × 10 bulan (Jan-Okt 2025) disimpan format long/tidy, 3.240 baris.
+      **Ditemukan saat implementasi**: sheet sumber punya 2 blok
+      trailing SETELAH blok "Rata-Rata" yang BUKAN data ridership bulanan
+      (satu daftar urutan stasiun tanpa data, satu lagi matriks JARAK
+      ANTAR STASIUN dalam km — data statis, bukan jumlah penumpang) —
+      keduanya sengaja dikecualikan, cuma 10 bulan Jan-Okt yang diimpor.
+- [x] **Rekap Data Daerah — di-scope-ulang, bukan diimpor utuh**
+      (§7.3): file sumbernya (7 sheet) jauh lebih berantakan dari
+      dugaan — mayoritas sheet mencampur tabel "BTS dikelola Kemenhub"
+      dan "BRT dikelola daerah" dalam satu sheet dengan sub-section
+      berjenjang (header kota tanpa data, placeholder `-`/`?`/`N/A`
+      dengan makna berbeda-beda) — usaha parsing robust tidak sebanding
+      nilainya (cakupan kota-per-kota, bukan nasional). **Hanya sheet
+      "(KEN TITIP 3)" yang diimpor** (`scripts/schema_rekap_penumpang_ka_nasional.sql`
+      + `scripts/import_rekap_penumpang_ka_nasional.py`) — satu-satunya
+      bagian yang bersih & nasional: rekap penumpang KA per sistem
+      (KA Antarkota, Kereta Cepat Whoosh, KRL, KA Bandara, dst.)
+      2020-2025, 144 baris (26 kategori × ~6 tahun, sebagian baris
+      kolaps lewat UPSERT karena label kategori sedikit duplikat di
+      sumber). Sheet lain (`2020 - 2025`, `LKJ 2025`, `BRT & KA`,
+      `Sheet1`, `(KEN TITIP 1)`, `(KEN TITIP 2)`) **tetap tidak
+      diimpor** — keputusan sadar, bukan terlewat.
+- [x] **PSC 119 — dengan redaksi privasi wajib** (§9.4):
+      `scripts/schema_psc119_layanan.sql` + `scripts/import_psc119_layanan.py`
+      — 187 PSC. **Kolom data pribadi (nama penanggung jawab, nomor WA
+      penanggung jawab & tim teknis) TIDAK PERNAH dibaca sama sekali**
+      (bukan cuma di-null-kan setelah dibaca) — dideklarasikan eksplisit
+      di docstring & komentar skema supaya tidak diam-diam ditambahkan
+      lagi di masa depan. Diverifikasi ulang: tidak ada kolom
+      nama/kontak personal di skema final. Data tetap self-reported
+      (survei mandiri) — perlu disclaimer itu kalau ditampilkan di UI.
+- [x] Seluruhnya didaftarkan di `DATA_TABLES` dan diverifikasi tampil di
+      "Data" viewer + layer LRK 2026 tampil di Overlay Peta, lewat
+      server terisolasi — total kini **20 layer/tabel baru** hidup di
+      aplikasi sejak kajian ini dimulai.
+
+**Status akhir**: seluruh isi `docs/New/` yang punya nilai analitik
+sudah dikaji dan (kecuali yang sengaja diputuskan cukup referensi —
+RTRW-Perda, sheet Rekap Data Daerah non-KEN-TITIP-3, PDF KEP DATA LAKA
+scan-only, Laporan RUNK, peta skematik KA) sudah diimplementasikan ke
+database. Tidak ada satu pun dari 20 layer/tabel baru yang menyentuh
+`_IJD_SCORERS`, `ijd_scoring_rules`, `usulan_inpres`, atau endpoint
+skoring IJD manapun.
 
 ## 4. Pendalaman kategori LAUT (`docs/New/2. LAUT`)
 

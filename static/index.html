@@ -79,7 +79,7 @@
         <button type="button" class="topbar-basemap" id="btnLaporanPrioritas"
           title="Laporan Daerah Prioritas: checklist Aspek A/B agregat per kabupaten/kota, per provinsi">
           <i class="bi bi-clipboard-check"></i>
-          <span>Laporan Prioritas</span>
+          <span>Lokasi Prioritas</span>
         </button>
       </div>
       <div class="topbar-status" id="topbarStatus">Siap</div>
@@ -353,6 +353,12 @@
             <span class="datatable-meta" id="laporanPrioritasMeta"></span>
           </div>
           <div class="datatable-head-actions">
+            <select id="laporanPrioritasModa" class="laporan-moda-select" title="Moda: IJD memakai checklist Aspek A/B (Bappenas); Udara/Darat/Laut menampilkan tabel referensi data sektor terkait, lepas dari IJD">
+              <option value="IJD" selected>IJD</option>
+              <option value="Udara">Udara</option>
+              <option value="Darat">Darat</option>
+              <option value="Laut">Laut</option>
+            </select>
             <div class="maplayer-combo" id="laporanPrioritasProvinsiField">
               <button type="button" class="maplayer-combo-toggle" id="laporanPrioritasProvinsiToggle">
                 <span id="laporanPrioritasProvinsiLabel">Pilih provinsi...</span>
@@ -367,7 +373,7 @@
                 class="bi bi-x-lg"></i></button>
           </div>
         </div>
-        <div class="datatable-tabs">
+        <div class="datatable-tabs" id="laporanPrioritasTabs">
           <button type="button" class="datatable-tab active" id="laporanTabChecklist">
             <i class="bi bi-table"></i> Checklist
           </button>

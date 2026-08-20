@@ -1219,7 +1219,18 @@ document.addEventListener("DOMContentLoaded", bindIjdDashboard);
 
 const laporanPrioritas = {
   provinsi: "", offset: 0, limit: 50, total: 0, tab: "checklist",
-  distribusi: null, dashboard: null,
+  distribusi: null, dashboard: null, moda: "IJD",
+};
+
+// Mode Udara/Darat/Laut: tabel referensi lepas-IJD (docs/kajian_data_baru_docs_new.md)
+// yang sudah diimpor ke DB, ditampilkan generik lewat /api/data/{table} --
+// TIDAK terkait usulan_inpres/skoring IJD, murni referensi lokasi/data
+// sektor. Mode "IJD" (default) tetap pakai alur checklist Aspek A/B yang
+// sudah ada, tidak diubah.
+const LAPORAN_MODA_TABLE = {
+  Udara: "bps_data_bandara",
+  Darat: "angkutan_perintis",
+  Laut: "bps_kinerja_pelabuhan",
 };
 
 function laporanPrioritasOpen() {
@@ -1227,6 +1238,9 @@ function laporanPrioritasOpen() {
   laporanPrioritas.offset = 0;
   laporanPrioritas.distribusi = null;
   laporanPrioritas.dashboard = null;
+  laporanPrioritas.moda = "IJD";
+  document.getElementById("laporanPrioritasModa").value = "IJD";
+  document.getElementById("laporanPrioritasTabs").hidden = false;
   document.getElementById("laporanPrioritasProvinsiLabel").textContent = "Pilih provinsi...";
   document.getElementById("laporanPrioritasExport").disabled = true;
   document.getElementById("laporanPrioritasScroll").innerHTML =
@@ -1239,6 +1253,34 @@ function laporanPrioritasOpen() {
     '<div class="laporan-distribusi-empty">Pilih provinsi untuk melihat dashboard.</div>';
   laporanPrioritasSwitchTab("checklist");
   document.getElementById("laporanPrioritasOverlay").hidden = false;
+}
+
+// Ganti moda: IJD kembali ke alur checklist/distribusi/dashboard biasa;
+// Udara/Darat/Laut sembunyikan tab itu (tidak relevan, bukan skor IJD) dan
+// langsung tampilkan tabel referensi nasional (tanpa perlu pilih provinsi
+// dulu -- beda dari IJD yang wajib per-provinsi).
+function laporanPrioritasModaChange(moda) {
+  laporanPrioritas.moda = moda;
+  laporanPrioritas.offset = 0;
+  document.getElementById("laporanPrioritasTabs").hidden = moda !== "IJD";
+  if (moda === "IJD") {
+    laporanPrioritasSwitchTab(laporanPrioritas.tab); // pulihkan visibilitas checklist/distribusi/dashboard sesuai tab terakhir
+    document.getElementById("laporanPrioritasTitle").textContent = "Laporan Daerah Prioritas";
+    document.getElementById("laporanPrioritasExport").disabled = !laporanPrioritas.provinsi;
+    if (laporanPrioritas.provinsi) laporanPrioritasFetchPage();
+    else document.getElementById("laporanPrioritasScroll").innerHTML =
+      '<div class="datatable-loading">Pilih provinsi untuk melihat laporan.</div>';
+    return;
+  }
+  // Generik (Udara/Darat/Laut) selalu tampil di container checklist --
+  // paksa terlihat & sembunyikan distribusi/dashboard, lepas dari tab
+  // IJD terakhir yang aktif sebelum ganti moda.
+  document.getElementById("laporanPrioritasChecklistView").hidden = false;
+  document.getElementById("laporanPrioritasDistribusiView").hidden = true;
+  document.getElementById("laporanPrioritasDashboardView").hidden = true;
+  document.getElementById("laporanPrioritasTitle").textContent = `Lokasi Prioritas — ${moda}`;
+  document.getElementById("laporanPrioritasExport").disabled = false;
+  laporanPrioritasFetchPage();
 }
 
 function laporanPrioritasSwitchTab(tab) {
@@ -1508,6 +1550,7 @@ function laporanPrioritasRenderDashboard(data) {
 }
 
 async function laporanPrioritasFetchPage() {
+  if (laporanPrioritas.moda !== "IJD") return laporanPrioritasFetchGeneric();
   if (!laporanPrioritas.provinsi) return;
   const scroll = document.getElementById("laporanPrioritasScroll");
   scroll.innerHTML = '<div class="datatable-loading"><i class="bi bi-hourglass-split"></i> Memuat laporan...</div>';
@@ -1525,6 +1568,49 @@ async function laporanPrioritasFetchPage() {
   } catch (err) {
     scroll.innerHTML = `<div class="datatable-loading">${escapeHtml(err.message)}</div>`;
   }
+}
+
+// Mode Udara/Darat/Laut: tabel generik dari /api/data/{table}, provinsi
+// (kalau dipilih, bukan "Seluruh Indonesia"/kode 0) difilter ILIKE teks
+// lewat provinsi_text -- tabel-tabel ini kolom provinsinya teks bebas
+// SITIA-style, bukan kode BPS (lihat DATA_TABLE_TEXT_PROVINSI di app.py),
+// jadi tidak bisa reuse param `provinsi` (int) yang dipakai mode IJD.
+async function laporanPrioritasFetchGeneric() {
+  const table = LAPORAN_MODA_TABLE[laporanPrioritas.moda];
+  const scroll = document.getElementById("laporanPrioritasScroll");
+  scroll.innerHTML = '<div class="datatable-loading"><i class="bi bi-hourglass-split"></i> Memuat data...</div>';
+  try {
+    const params = new URLSearchParams({ limit: laporanPrioritas.limit, offset: laporanPrioritas.offset });
+    const provLabel = document.getElementById("laporanPrioritasProvinsiLabel").textContent;
+    if (laporanPrioritas.provinsi && provLabel !== "Seluruh Indonesia") {
+      params.set("provinsi_text", provLabel);
+    }
+    const res = await fetch(`/api/data/${table}?${params}`);
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || "Gagal memuat data");
+    laporanPrioritas.total = data.total;
+    laporanPrioritasRenderGeneric(data);
+  } catch (err) {
+    scroll.innerHTML = `<div class="datatable-loading">${escapeHtml(err.message)}</div>`;
+  }
+}
+
+function laporanPrioritasRenderGeneric(data) {
+  document.getElementById("laporanPrioritasTitle").textContent = data.label;
+  document.getElementById("laporanPrioritasMeta").textContent =
+    `${data.total.toLocaleString("id-ID")} baris`;
+  const head = data.columns.map((c) => `<th>${escapeHtml(c)}</th>`).join("");
+  const body = data.rows.map((r) =>
+    `<tr>${r.map((v) => `<td>${escapeHtml(v == null ? "" : String(v))}</td>`).join("")}</tr>`
+  ).join("");
+  document.getElementById("laporanPrioritasScroll").innerHTML =
+    `<table class="datatable"><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>`;
+
+  const page = Math.floor(data.offset / data.limit) + 1;
+  const pages = Math.max(1, Math.ceil(data.total / data.limit));
+  document.getElementById("laporanPrioritasPageInfo").textContent = `Halaman ${page} dari ${pages.toLocaleString("id-ID")}`;
+  document.getElementById("laporanPrioritasPrev").disabled = data.offset <= 0;
+  document.getElementById("laporanPrioritasNext").disabled = data.offset + data.limit >= data.total;
 }
 
 function laporanPrioritasRender(data) {
@@ -1637,8 +1723,20 @@ function bindLaporanPrioritas() {
     laporanPrioritasFetchPage();
   });
   document.getElementById("laporanPrioritasExport").addEventListener("click", () => {
+    if (laporanPrioritas.moda !== "IJD") {
+      const table = LAPORAN_MODA_TABLE[laporanPrioritas.moda];
+      const provLabel = document.getElementById("laporanPrioritasProvinsiLabel").textContent;
+      const params = new URLSearchParams();
+      if (laporanPrioritas.provinsi && provLabel !== "Seluruh Indonesia") params.set("provinsi_text", provLabel);
+      window.location.href = `/api/data/${table}/export/xlsx?${params}`;
+      return;
+    }
     if (!laporanPrioritas.provinsi) return;
     window.location.href = `/api/laporan-daerah-prioritas/export/xlsx?provinsi=${laporanPrioritas.provinsi}`;
+  });
+
+  document.getElementById("laporanPrioritasModa").addEventListener("change", (e) => {
+    laporanPrioritasModaChange(e.target.value);
   });
 }
 

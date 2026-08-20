@@ -160,6 +160,12 @@ html, body {
 .datatable-filters .maplayer-combo-toggle { padding: 6px 8px; font-size: 12px; }
 .datatable-filters .maplayer-combo-toggle span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .datatable-filters .maplayer-combo-toggle:disabled { opacity: .5; cursor: not-allowed; }
+.laporan-moda-select {
+  background: rgba(255,255,255,.05); color: var(--text); border: 1px solid var(--border);
+  border-radius: 8px; padding: 8px 10px; font-family: inherit; font-size: 12.5px;
+  cursor: pointer; flex: 0 0 auto;
+}
+.laporan-moda-select:focus { outline: 1px solid var(--accent); outline-offset: -1px; }
 .datatable-import { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
 .datatable-import[hidden] { display: none; }
 .datatable-import .maplayer-combo { width: clamp(160px, 22vw, 260px); flex: 0 1 auto; }

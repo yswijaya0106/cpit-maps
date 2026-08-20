@@ -678,6 +678,20 @@ DATA_TABLES = {
     "kemantapan_ijd_2026": "Kemantapan Jalan IJD 2026 (G8.A2)",
     "bappenas_koridor": "Daftar Koridor Bappenas Admin",
     "bps_kecamatan_produksi_komoditas": "Produksi Komoditas Perkebunan per Kecamatan (Dalam Angka)",
+    "bps_lhr_ruas_nasional": "LHR/AADT per Ruas Jalan Nasional 2024 (Bina Marga)",
+    "anev_laka_lantas_nasional": "Statistik Laka Lantas Nasional per Tahun (Korlantas POLRI)",
+    "anev_laka_lantas_polda": "Statistik Laka Lantas per Polda per Tahun (Korlantas POLRI)",
+    "bps_data_bandara": "Atribut Detail Bandara Nasional (Runway/Apron/Terminal/Kapasitas)",
+    "basarnas_alut": "Inventaris ALUT SAR (Udara/Darat/Laut) per Kantor SAR",
+    "basarnas_rescuer_potensi": "Komposisi Tenaga & Potensi SAR per Satuan Kerja",
+    "bps_kinerja_pelabuhan": "Kinerja Tahunan per Pelabuhan (Statistik Transportasi Laut BPS)",
+    "list_lokpri_kawasan": "Daftar Kabupaten Lokasi Prioritas (Lokpri) Lintas Program",
+    "basarnas_ops_sar": "Insiden Operasi SAR Nasional 2021-2025",
+    "angkutan_perintis": "Daftar Trayek Angkutan Perintis Darat 2026",
+    "basarnas_diklat_rekap": "Rekap Kapasitas Diklat SAR per Tahun",
+    "od_lrt_jabodebek": "Matriks OD Penumpang LRT Jabodebek per Bulan 2025",
+    "rekap_penumpang_ka_nasional": "Rekap Penumpang Kereta Api Nasional per Sistem 2020-2025",
+    "psc119_layanan": "Kapasitas Layanan PSC 119 per Kab/Kota (Survei Mandiri, Data Personal Diredaksi)",
 }
 # kolom yang tidak ditampilkan (payload besar)
 DATA_TABLE_SKIP_COLS = {"geom_geojson"}
@@ -711,6 +725,17 @@ DATA_TABLE_GEO = {
     "si_panjang_jalan_provinsi": ("kode_provinsi", "kode_provinsi"),
     "si_kendaraan_provinsi": ("kode_provinsi", "kode_provinsi"),
     "si_lahan_sawah_provinsi": ("kode_provinsi", "kode_provinsi"),
+}
+
+# Tabel dari docs/New/ (layer overlay umum, lihat docs/kajian_data_baru_docs_new.md)
+# yang kolom provinsinya teks bebas SITIA-style, bukan kode BPS numerik --
+# tidak bisa masuk DATA_TABLE_GEO (yang mengasumsikan kode integer). Dipakai
+# panel "Lokasi Prioritas" (mode Udara/Darat/Laut) untuk filter provinsi
+# ILIKE sederhana lewat parameter provinsi_text, lihat _data_table_geo_where.
+DATA_TABLE_TEXT_PROVINSI = {
+    "bps_data_bandara": "provinsi",
+    "bps_kinerja_pelabuhan": "provinsi",
+    "angkutan_perintis": "provinsi",
 }
 
 
@@ -831,13 +856,16 @@ def bappenas_lokus_a_import(kriteria: str, file: UploadFile = File(...)):
     return {"kriteria": kriteria, "filename": file.filename, "total": len(rows), "match_kabupaten": n_match}
 
 
-def _data_table_geo_where(table: str, provinsi: int, kabupaten: int, kriteria: str = ""):
+def _data_table_geo_where(table: str, provinsi: int, kabupaten: int, kriteria: str = "", provinsi_text: str = ""):
     """WHERE + params dari filter provinsi/kabupaten, kalau tabelnya kebagian
     kode geo (DATA_TABLE_GEO) dan filter diisi. Kabupaten menang kalau
     keduanya diisi (provinsinya sudah tersirat). "kriteria" -- khusus
     bappenas_lokus_a (dialog "Lokus Bappenas" navbar) -- filter tambahan
     ANDed di atas geo, supaya dropdown kriteria bisa memfilter preview
-    grid, bukan cuma menentukan target upload xlsx."""
+    grid, bukan cuma menentukan target upload xlsx. "provinsi_text" --
+    tabel di DATA_TABLE_TEXT_PROVINSI (kolom provinsi teks bebas, bukan
+    kode BPS) difilter ILIKE, dipakai panel "Lokasi Prioritas" mode
+    Udara/Darat/Laut."""
     clauses, params = [], []
     geo = DATA_TABLE_GEO.get(table)
     if geo:
@@ -848,6 +876,10 @@ def _data_table_geo_where(table: str, provinsi: int, kabupaten: int, kriteria: s
         elif provinsi:
             clauses.append(f"{prov_expr} = %s")
             params.append(provinsi)
+    text_col = DATA_TABLE_TEXT_PROVINSI.get(table)
+    if text_col and provinsi_text:
+        clauses.append(f'"{text_col}" ILIKE %s')
+        params.append(f"%{provinsi_text}%")
     if kriteria and table == "bappenas_lokus_a":
         clauses.append("kriteria = %s")
         params.append(kriteria)
@@ -856,10 +888,10 @@ def _data_table_geo_where(table: str, provinsi: int, kabupaten: int, kriteria: s
 
 
 @app.get("/api/data/{table}/export/xlsx")
-def data_table_export(table: str, provinsi: int = 0, kabupaten: int = 0, kriteria: str = ""):
+def data_table_export(table: str, provinsi: int = 0, kabupaten: int = 0, kriteria: str = "", provinsi_text: str = ""):
     if table not in DATA_TABLES:
         raise HTTPException(404, "Tabel tidak dikenal")
-    where, params = _data_table_geo_where(table, provinsi, kabupaten, kriteria)
+    where, params = _data_table_geo_where(table, provinsi, kabupaten, kriteria, provinsi_text)
     with db_cursor() as cur:
         columns = [c for c in _table_columns(cur, table) if c not in DATA_TABLE_SKIP_COLS]
         col_sql = ", ".join(f'"{c}"' for c in columns)
@@ -883,12 +915,12 @@ def data_table_export(table: str, provinsi: int = 0, kabupaten: int = 0, kriteri
 
 
 @app.get("/api/data/{table}")
-def data_table_rows(table: str, limit: int = 50, offset: int = 0, provinsi: int = 0, kabupaten: int = 0, kriteria: str = ""):
+def data_table_rows(table: str, limit: int = 50, offset: int = 0, provinsi: int = 0, kabupaten: int = 0, kriteria: str = "", provinsi_text: str = ""):
     if table not in DATA_TABLES:
         raise HTTPException(404, "Tabel tidak dikenal")
     limit = max(1, min(limit, 200))
     offset = max(0, offset)
-    where, params = _data_table_geo_where(table, provinsi, kabupaten, kriteria)
+    where, params = _data_table_geo_where(table, provinsi, kabupaten, kriteria, provinsi_text)
     with db_cursor() as cur:
         columns = [c for c in _table_columns(cur, table) if c not in DATA_TABLE_SKIP_COLS]
         col_sql = ", ".join(f'"{c}"' for c in columns)

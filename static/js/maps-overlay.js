@@ -77,7 +77,22 @@ const MAP_LAYER_CATEGORIES = [
     match: (p) => ["BATAS KECAMATAN", "BATAS KABUPATEN", "BATAS PROVINSI"].includes(p) },
   { id: "simpul", label: "Simpul Transportasi", icon: "bi-airplane",
     match: (p) => ["BANDARA", "PELABUHAN", "PELABUHAN LAUT", "PELABUHAN PENYEBRANGAN",
-      "KONEKTIVITAS SIMPUL TRANSPORTASI"].includes(p) },
+      "KONEKTIVITAS SIMPUL TRANSPORTASI",
+      // Ditambahkan Fase 4 (scripts/import_pelabuhan_tersus_tuks_to_postgis.py,
+      // import_pelabuhan_penyeberangan_operasi_to_postgis.py,
+      // import_terminal_tipe_a_to_postgis.py) -- lihat
+      // docs/kajian_data_baru_docs_new.md §Fase 4.
+      "PELABUHAN TERSUS/TUKS", "PELABUHAN PENYEBERANGAN OPERASI", "TERMINAL TIPE A",
+      "PELABUHAN PENUMPANG"].includes(p) },
+  // BASARNAS: bucket nasional flat (scripts/import_basarnas_to_postgis.py),
+  // layer overlay umum lepas dari IJD/usulan -- lihat
+  // docs/kajian_data_baru_docs_new.md §8.
+  { id: "sar", label: "Pencarian & Pertolongan (SAR)", icon: "bi-life-preserver",
+    match: (p) => p === "BASARNAS" },
+  // Jalur Kereta Api: bucket nasional flat (scripts/import_kereta_api_to_postgis.py)
+  // -- lihat docs/kajian_data_baru_docs_new.md §6/§Fase 3.
+  { id: "kereta-api", label: "Kereta Api", icon: "bi-train-front",
+    match: (p) => p === "JALUR KERETA API" },
   { id: "jalan", label: "Jalan", icon: "bi-signpost-2", match: () => true }, // catch-all, HARUS terakhir
 ];
 

@@ -772,7 +772,8 @@ DATA_TABLES = {
     "psc119_layanan": "Kapasitas Layanan PSC 119 per Kab/Kota (Survei Mandiri, Data Personal Diredaksi)",
     "pelabuhan_daerah": "Database Pelabuhan Daerah (Lokal, di luar cakupan BPS)",
     "basarnas_puslat_fasilitas": "Inventaris Sarana/Prasarana Puslat SDMPP BASARNAS",
-    "maskapai_organisasi": "Daftar Maskapai Dalam Negeri (Ditjen Hubud Kemenhub)",
+    "maskapai_organisasi": "Daftar Maskapai Dalam Negeri & Asing (Ditjen Hubud Kemenhub)",
+    "lalu_lintas_udara_bandara": "Lalu Lintas Udara Bulanan per Bandara (Ditjen Hubud Kemenhub)",
 }
 # kolom yang tidak ditampilkan (payload besar)
 DATA_TABLE_SKIP_COLS = {"geom_geojson", "detail_fasilitas"}

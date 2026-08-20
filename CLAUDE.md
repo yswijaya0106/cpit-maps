@@ -35,22 +35,35 @@ Requires `.env` (copy from `.env.example`):
 - `GOOGLE_MAPS_API_KEY` — mandatory. `/api/config` returns 500 without it,
   which breaks the whole frontend (the Maps JS SDK is loaded dynamically via
   that endpoint, see static/index.html).
-- `APP_USERNAME`/`APP_PASSWORD` — optional HTTP Basic Auth gate in front of
-  the entire app (static files + every `/api/*` route), enforced by the
-  `basic_auth_middleware` in app.py. **21 Aug 2026: credentials moved to a
-  `users` table** (`scripts/schema_users.sql`, role `admin`|`user`, password
-  hashed via `auth.py`'s stdlib `pbkdf2_hmac`, no new dependency) — these two
-  env vars are now only a one-time seed for the first admin account, read by
-  `_seed_initial_admin_user()` on startup when `users` is still empty.
-  Manage accounts afterward with `scripts/manage_users.py` (add/passwd/role/
-  list/remove), not `.env`. Auth is disabled (same as leaving both blank
-  used to do) whenever the `users` table is empty/unreachable — same "no
-  login prompt without explicit config" default as before. Role `user` is
-  view-only: `_require_admin()` gates `POST /api/usulan-inpres/import`
-  (403 for non-admin); the frontend hides the "Import XLSX" button for that
-  role too (`state.auth` populated from `GET /api/auth/me`,
-  `applyAuthRestrictions()` in state.js). Set both to require a browser
-  login dialog — useful for an internet-facing staging box.
+- `APP_USERNAME`/`APP_PASSWORD` — optional login gate in front of the entire
+  app (static files + every `/api/*` route). **21 Aug 2026: credentials
+  moved to a `users` table** (`scripts/schema_users.sql`, role
+  `admin`|`user`, password hashed via `auth.py`'s stdlib `pbkdf2_hmac`, no
+  new dependency) — these two env vars are now only a one-time seed for the
+  first admin account, read by `_seed_initial_admin_user()` on startup when
+  `users` is still empty. Manage accounts afterward with
+  `scripts/manage_users.py` (add/passwd/role/list/remove), not `.env`. Auth
+  is disabled (same as leaving both blank used to do) whenever the `users`
+  table is empty/unreachable — same "no login prompt without explicit
+  config" default as before. Role `user` is view-only: `_require_admin()`
+  gates `POST /api/usulan-inpres/import` (403 for non-admin); the frontend
+  hides the "Import XLSX" button for that role too (`state.auth` populated
+  from `GET /api/auth/me`, `applyAuthRestrictions()` in state.js). **Same
+  day: HTTP Basic Auth's native browser popup replaced with a custom login
+  form** (`#loginOverlay` in index.html) — `auth_middleware` in app.py
+  (renamed from `basic_auth_middleware`) now gates only `/api/*` (static
+  files, including index.html itself, are always reachable so the SPA
+  shell can load and show the form pre-auth), verifies a signed session
+  cookie (`auth.create_session_token`/`verify_session_token`, HMAC-SHA256,
+  12h TTL, `SESSION_SECRET` env var — falls back to a random per-process
+  value if unset, meaning sessions don't survive a restart unless it's
+  set) set by `POST /api/auth/login`, and deliberately omits
+  `WWW-Authenticate` on 401 so the browser's native popup doesn't layer on
+  top of the custom form. A Basic Auth header is still accepted as a
+  fallback (`_resolve_identity()`) for script/curl callers. `POST
+  /api/auth/logout` clears the cookie; `GET /api/auth/me` is exempt from
+  the gate (always answers, `{username, role, auth_required}`) so the
+  frontend can check login state before authenticating.
 - `PG_HOST/PORT/USER/PASS/DB` — PostgreSQL connection (default db
   `route_gis`). Usulan-Inpres browsing, IJD scoring, the Data viewer, chat
   DB tools, and the `Maps/` overlay layers (`map_layers`/`map_layer_meta`)

@@ -93,6 +93,12 @@
             <span class="datatable-meta" id="dataTableMeta"></span>
           </div>
           <div class="datatable-head-actions">
+            <select id="dataTableModa" class="laporan-moda-select" hidden title="Moda: IJD menjelajahi bappenas_lokus_a seperti biasa; Udara/Darat/Laut menjelajahi tabel referensi data sektor terkait, lepas dari IJD">
+              <option value="IJD" selected>IJD</option>
+              <option value="Udara">Udara</option>
+              <option value="Darat">Darat</option>
+              <option value="Laut">Laut</option>
+            </select>
             <div class="datatable-filters" id="dataTableFilters" hidden>
               <div class="maplayer-combo" id="dataTableFilterProvinsiField">
                 <button type="button" class="maplayer-combo-toggle" id="dataTableFilterProvinsiToggle">
@@ -302,6 +308,24 @@
           </div>
         </div>
         <div class="laporan-distribusi-view" id="ijdDashboardView">
+          <div class="laporan-distribusi-empty">Memuat dashboard...</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="datatable-overlay" id="usulanModaDashboardOverlay" hidden>
+      <div class="datatable-modal">
+        <div class="datatable-head">
+          <div class="datatable-head-title">
+            <h3><i class="bi bi-speedometer2"></i> Dashboard Darat/Laut/Udara &amp; Keselamatan</h3>
+            <span class="datatable-meta" id="usulanModaDashboardMeta"></span>
+          </div>
+          <div class="datatable-head-actions">
+            <button type="button" class="icon-btn" id="usulanModaDashboardClose" aria-label="Tutup"><i
+                class="bi bi-x-lg"></i></button>
+          </div>
+        </div>
+        <div class="laporan-distribusi-view" id="usulanModaDashboardView">
           <div class="laporan-distribusi-empty">Memuat dashboard...</div>
         </div>
       </div>
@@ -567,6 +591,8 @@
                 NPR</button>
               <button id="btnUsulanModaExport" class="btn btn-ghost btn-sm" hidden><i class="bi bi-download"></i>
                 Export XLSX</button>
+              <button id="btnUsulanModaDashboard" class="btn btn-ghost btn-sm" hidden><i class="bi bi-speedometer2"></i>
+                Dashboard</button>
               <input type="file" id="usulanImportFile" accept=".xlsx" hidden />
             </div>
             <div class="usulan-browse-filters">

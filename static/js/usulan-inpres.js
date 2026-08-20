@@ -252,6 +252,112 @@ function bindUsulanProvinsiCombo() {
 
 let usulanModaMarker = null;
 
+// angkutan_perintis/bps_kinerja_pelabuhan tidak punya koordinat sendiri --
+// GET /api/maps/cari-titik mencocokkan namanya (best-effort ILIKE) ke titik
+// SHP RBI yang sudah ada di map_layers (layer BANDARA / KONEKTIVITAS SIMPUL
+// TRANSPORTASI > pelabuhan), supaya moda Darat/Laut tetap bisa ditampilkan
+// di peta walau tabel sumbernya sendiri non-spasial.
+const USULAN_MODA_TITIK_JENIS = { Udara: "bandara", Laut: "pelabuhan" };
+
+// Trayek Darat (mis. "Pelabuhan Selat Lampa - Ibu Kota Kabupaten Natuna")
+// sering punya satu ujung berupa pelabuhan/bandara -- ambil fragmen itu saja
+// utk dicocokkan; ujung generik ("Ibu Kota Kabupaten X") tidak punya titik
+// yang bisa dicari.
+function extractTitikCandidateFromTrayek(nama) {
+  for (const bagian of String(nama).split(/\s*-\s*/)) {
+    if (/pelabuhan/i.test(bagian)) return { jenis: "pelabuhan", nama: bagian.trim() };
+    if (/bandara/i.test(bagian)) return { jenis: "bandara", nama: bagian.trim() };
+  }
+  return null;
+}
+
+async function cariTitikMapLayers(jenis, nama) {
+  try {
+    const res = await fetch(`/api/maps/cari-titik?jenis=${encodeURIComponent(jenis)}&nama=${encodeURIComponent(nama)}`);
+    if (!res.ok) return null;
+    const data = await res.json();
+    return data.ditemukan ? data : null;
+  } catch (err) {
+    console.error(err);
+    return null;
+  }
+}
+
+// Highlight titik SHP overlay yang cocok (dipisah dari flyToUsulanModaPoint's
+// marker generik) -- pola sama dgn showIdentifyInfo di map-tools.js
+// (overrideStyle + IDENTIFY_HIGHLIGHT_STYLE), tapi state highlight-nya
+// terpisah supaya tidak bentrok dgn tool identify peta yang mungkin lagi aktif.
+let usulanModaShpHighlight = null;
+
+function clearUsulanModaShpHighlight() {
+  if (!usulanModaShpHighlight) return;
+  state.mapLayers.active[usulanModaShpHighlight.key]?.revertStyle(usulanModaShpHighlight.feature);
+  usulanModaShpHighlight = null;
+}
+
+// Aktifkan layer overlay BANDARA/Pelabuhan Nasional (kalau belum aktif),
+// cari fitur dgn attrs.Name == namaTitik (persis, krn sudah lolos pencocokan
+// ILIKE di backend), lalu highlight + (opsional) pan ke situ. shouldPan
+// dimatikan kalau baris sudah punya lat/lon sendiri (Udara) supaya highlight
+// SHP tidak menggeser peta dari titik resmi sumber datanya.
+async function highlightUsulanModaShpFeature(provinsi, kabupaten, layer, namaTitik, shouldPan) {
+  await showMapLayer(provinsi, kabupaten, layer);
+  const key = mapLayerKey(provinsi, kabupaten, layer);
+  const dataLayer = state.mapLayers.active[key];
+  if (!dataLayer) return;
+  clearUsulanModaShpHighlight();
+
+  let found = null;
+  dataLayer.forEach((feature) => {
+    if (!found && feature.getProperty("Name") === namaTitik) found = feature;
+  });
+  if (!found) return;
+
+  dataLayer.overrideStyle(found, IDENTIFY_HIGHLIGHT_STYLE);
+  usulanModaShpHighlight = { key, feature: found };
+  if (shouldPan) {
+    let latLng = null;
+    found.getGeometry().forEachLatLng((ll) => { latLng = ll; });
+    if (latLng) {
+      state.map.panTo(latLng);
+      state.map.setZoom(13);
+    }
+  }
+}
+
+// Dipanggil setelah showUsulanModaDetail -- cari titik yang cocok di layer
+// peta SHP (BANDARA/Pelabuhan Nasional) dan highlight fiturnya di sana,
+// bukan cuma taruh marker generik. hasNativePoint = baris ini sudah punya
+// lat/lon sendiri (Udara) -- kalau begitu, pencarian ini cuma dipakai utk
+// highlight visual (peta TIDAK ikut digeser, biar tetap di koordinat resmi
+// sumber datanya yang sudah ditampilkan flyToUsulanModaPoint sebelumnya).
+async function resolveUsulanModaTitik(moda, nama, hasNativePoint) {
+  const noteEl = document.getElementById("usulanModaTitikNote");
+  let jenis = USULAN_MODA_TITIK_JENIS[moda];
+  let query = nama;
+  if (moda === "Darat") {
+    const kandidat = extractTitikCandidateFromTrayek(nama);
+    if (!kandidat) {
+      if (noteEl) noteEl.textContent = "Tidak ada ujung trayek berupa pelabuhan/bandara yang bisa dicocokkan ke peta.";
+      return;
+    }
+    jenis = kandidat.jenis;
+    query = kandidat.nama;
+  }
+  if (!jenis) return;
+
+  const hasil = await cariTitikMapLayers(jenis, query);
+  if (!hasil) {
+    if (noteEl) noteEl.textContent = "Tidak ditemukan titik yang cocok di layer peta (BANDARA/Pelabuhan Nasional).";
+    return;
+  }
+  if (!hasNativePoint) flyToUsulanModaPoint(hasil.lat, hasil.lon, nama);
+  if (noteEl) {
+    noteEl.textContent = `Titik diperkirakan dari layer peta "${hasil.nama_titik}" (pencocokan nama, bukan koordinat resmi sumber data ini).`;
+  }
+  await highlightUsulanModaShpFeature(hasil.provinsi, hasil.kabupaten, hasil.layer, hasil.nama_titik, !hasNativePoint);
+}
+
 const USULAN_MODA_FIELDS = {
   Udara: {
     nama: "nama_bandara", lat: "lat", lon: "lon",
@@ -273,6 +379,38 @@ function flyToUsulanModaPoint(lat, lon, label) {
   usulanModaMarker = new google.maps.Marker({ position: pos, map: state.map, title: label });
   state.map.panTo(pos);
   state.map.setZoom(13);
+}
+
+function prettifyColumnLabel(col) {
+  return col.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+// Tabel referensi Udara/Darat/Laut TIDAK punya endpoint detail sendiri (beda
+// dari usulan_inpres) -- baris yang diklik dari loadUsulanModaList sudah
+// bawa seluruh kolom hasil /api/data/{table}, jadi cukup dirender langsung
+// tanpa fetch ulang. Darat/Laut memang tidak punya lat/lon di sumbernya
+// (lihat schema_angkutan_perintis.sql / schema_bps_kinerja_pelabuhan.sql),
+// jadi info panel tetap tampil, hanya tanpa aksi peta.
+function showUsulanModaDetail(moda, nama, row, columns) {
+  const detailEl = document.getElementById("usulanBrowseDetail");
+  const fields = USULAN_MODA_FIELDS[moda];
+  const hasPoint = fields.lat && row[fields.lat] != null && row[fields.lon] != null;
+
+  let html = `<div class="usulan-detail-card">
+    <div class="adv-usulan-title">${escapeHtml(String(nama))}</div>
+    <table class="usulan-detail-table">`;
+  columns.forEach((c) => {
+    const value = row[c];
+    if (value === null || value === undefined || value === "") return;
+    html += `<tr><th>${escapeHtml(prettifyColumnLabel(c))}</th><td>${escapeHtml(String(value))}</td></tr>`;
+  });
+  html += `</table>`;
+  if (!hasPoint) {
+    html += `<p class="hint" id="usulanModaTitikNote">Data ini tidak memiliki koordinat pada sumbernya -- mencari titik yang cocok di layer peta (BANDARA/Pelabuhan Nasional)...</p>`;
+  }
+  html += `</div>`;
+  detailEl.innerHTML = html;
+  detailEl.scrollIntoView({ behavior: "smooth", block: "nearest" });
 }
 
 async function loadUsulanModaList(reset) {
@@ -311,21 +449,23 @@ async function loadUsulanModaList(reset) {
   } else {
     rowsObj.forEach((r) => {
       const nama = r[fields.nama] || "-";
+      const hasPoint = fields.lat && r[fields.lat] != null && r[fields.lon] != null;
       const card = document.createElement("div");
       card.className = "usulan-browse-card";
       card.innerHTML = `
         <div class="adv-usulan-head">
           <span class="adv-usulan-title">${escapeHtml(String(nama))}</span>
+          ${hasPoint ? "" : '<span class="usulan-badge usulan-badge-warn" title="Tidak ada koordinat pada sumber data">tanpa titik</span>'}
         </div>
         <div class="adv-region-meta">${fields.sub(r)}</div>
       `;
-      if (fields.lat && r[fields.lat] != null && r[fields.lon] != null) {
-        card.addEventListener("click", () => {
-          listEl.querySelectorAll(".usulan-browse-card.selected").forEach((el) => el.classList.remove("selected"));
-          card.classList.add("selected");
-          flyToUsulanModaPoint(r[fields.lat], r[fields.lon], nama);
-        });
-      }
+      card.addEventListener("click", () => {
+        listEl.querySelectorAll(".usulan-browse-card.selected").forEach((el) => el.classList.remove("selected"));
+        card.classList.add("selected");
+        showUsulanModaDetail(b.moda, nama, r, data.columns);
+        if (hasPoint) flyToUsulanModaPoint(r[fields.lat], r[fields.lon], nama);
+        resolveUsulanModaTitik(b.moda, nama, hasPoint);
+      });
       listEl.appendChild(card);
     });
   }
@@ -348,10 +488,12 @@ function usulanModaChange(moda) {
     usulanModaMarker.setMap(null);
     usulanModaMarker = null;
   }
+  clearUsulanModaShpHighlight();
 
   const isIjd = moda === "IJD";
   USULAN_IJD_ONLY_BUTTONS.forEach((id) => { document.getElementById(id).hidden = !isIjd; });
   document.getElementById("btnUsulanModaExport").hidden = isIjd;
+  document.getElementById("btnUsulanModaDashboard").hidden = isIjd;
   document.getElementById("usulanKabupatenField").hidden = !isIjd;
   document.getElementById("usulanSearchField").hidden = !isIjd;
 
@@ -1322,6 +1464,110 @@ function ijdDashboardRender(data) {
     kpis + top10Html + komposisiHtml + komposisiNprHtml + cakupanHtml +
     `<p class="hint">${escapeHtml(data.catatan)}</p>`;
 }
+
+// Dashboard ringkasan nasional Darat/Laut/Udara + Keselamatan (data
+// referensi docs/New/, lepas dari usulan_inpres/skor IJD -- beda dari
+// Dashboard Skor IJD di atas). Reuse laporanKpiTile/laporanHBar (definisi
+// di bawah, dipakai juga oleh Laporan Prioritas) supaya gaya visualnya
+// konsisten, bukan komponen baru.
+async function usulanModaDashboardOpen() {
+  const overlay = document.getElementById("usulanModaDashboardOverlay");
+  const view = document.getElementById("usulanModaDashboardView");
+  overlay.hidden = false;
+  view.innerHTML = `<div class="laporan-distribusi-empty">
+    <i class="bi bi-hourglass-split"></i> Memuat dashboard...
+    <div class="datatable-loading-bar"><span></span></div>
+  </div>`;
+  try {
+    const res = await fetch("/api/usulan-inpres/moda/dashboard");
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || "Gagal memuat dashboard");
+    usulanModaDashboardRender(data);
+  } catch (err) {
+    view.innerHTML = `<div class="laporan-distribusi-empty">${escapeHtml(String(err.message || err))}</div>`;
+  }
+}
+
+function usulanModaDashboardRender(data) {
+  document.getElementById("usulanModaDashboardMeta").textContent =
+    `${data.udara.total} bandara · ${data.laut.total_pelabuhan} pelabuhan · ${data.darat.total} trayek`;
+
+  const kpis = `<div class="laporan-kpi-row">
+    ${laporanKpiTile("Bandara Nasional", data.udara.total.toLocaleString("id-ID"), `${data.udara.dengan_koordinat} punya koordinat`)}
+    ${laporanKpiTile("Pelabuhan Tercatat", data.laut.total_pelabuhan.toLocaleString("id-ID"), `data terakhir tahun ${data.laut.tahun_terakhir}`)}
+    ${laporanKpiTile("Trayek Angkutan Perintis Darat", data.darat.total.toLocaleString("id-ID"), "2026, 5 jenis layanan")}
+    ${laporanKpiTile("Kecelakaan Lalin (2024)", (() => {
+      const th24 = data.keselamatan.tren_nasional.find((t) => t.tahun === "2024");
+      return th24 ? th24.kejadian.toLocaleString("id-ID") : "-";
+    })(), "seluruh POLDA, sumber Korlantas POLRI")}
+  </div>`;
+
+  const udaraHtml = `<div class="laporan-chart-block">
+    <div class="laporan-chart-title"><i class="bi bi-airplane"></i> Udara — Bandara per Provinsi (10 terbanyak)</div>
+    <div class="laporan-chart-sub">Hirarki: ${data.udara.per_hirarki.map((h) => `${h.label} ${h.count}`).join(" · ")}</div>
+    ${laporanHBar(data.udara.per_provinsi, {
+      valueKey: "count",
+      maxLabelFn: (it) => `${it.label}: ${it.count} bandara`,
+      barLabelFn: (it) => `${it.count}`,
+    })}
+  </div>`;
+
+  const lautHtml = `<div class="laporan-chart-block">
+    <div class="laporan-chart-title"><i class="bi bi-water"></i> Laut — Pelabuhan dengan Arus Barang Tertinggi (${data.laut.tahun_terakhir})</div>
+    <div class="laporan-chart-sub">Bongkar + muat, dalam &amp; luar negeri, satuan ton</div>
+    ${laporanHBar(data.laut.top_arus_barang, {
+      valueKey: "count",
+      maxLabelFn: (it) => `${it.label} (${it.provinsi}): ${Math.round(it.count).toLocaleString("id-ID")} ton`,
+      barLabelFn: (it) => Math.round(it.count).toLocaleString("id-ID"),
+    })}
+  </div>`;
+
+  const daratHtml = `<div class="laporan-chart-block">
+    <div class="laporan-chart-title"><i class="bi bi-truck"></i> Darat — Trayek Angkutan Perintis per Jenis Layanan</div>
+    ${laporanHBar(data.darat.per_jenis, {
+      valueKey: "count",
+      maxLabelFn: (it) => `${it.label}: ${it.count} trayek`,
+      barLabelFn: (it) => `${it.count}`,
+    })}
+  </div>`;
+
+  const trenLakaHtml = `<div class="laporan-chart-block">
+    <div class="laporan-chart-title"><i class="bi bi-exclamation-triangle"></i> Keselamatan — Tren Kecelakaan Lalu Lintas Nasional</div>
+    <div class="laporan-chart-sub">Sumber: Korlantas POLRI, seluruh POLDA. "JAN - 30 OKT 2025" belum genap 1 tahun penuh.</div>
+    ${laporanHBar(data.keselamatan.tren_nasional.map((t) => ({ label: t.tahun, count: t.kejadian, korban_md: t.korban_md })), {
+      valueKey: "count",
+      maxLabelFn: (it) => `${it.label}: ${it.count.toLocaleString("id-ID")} kejadian, ${it.korban_md.toLocaleString("id-ID")} korban meninggal`,
+      barLabelFn: (it) => it.count.toLocaleString("id-ID"),
+    })}
+  </div>`;
+
+  const topLakaHtml = `<div class="laporan-chart-block">
+    <div class="laporan-chart-title"><i class="bi bi-exclamation-triangle"></i> Keselamatan — 10 Provinsi Kejadian Terbanyak (tahun terakhir)</div>
+    ${laporanHBar(data.keselamatan.top_provinsi_kejadian, {
+      valueKey: "count",
+      maxLabelFn: (it) => `${it.label}: ${it.count.toLocaleString("id-ID")} kejadian`,
+      barLabelFn: (it) => it.count.toLocaleString("id-ID"),
+    })}
+  </div>`;
+
+  document.getElementById("usulanModaDashboardView").innerHTML =
+    kpis + udaraHtml + lautHtml + daratHtml + trenLakaHtml + topLakaHtml +
+    `<p class="hint">Sumber: tabel referensi docs/New/ (bps_data_bandara, angkutan_perintis, bps_kinerja_pelabuhan) dan anev_laka_lantas_polda — lepas dari skor IJD/usulan_inpres, murni ringkasan/sebaran data itu sendiri.</p>`;
+}
+
+function bindUsulanModaDashboard() {
+  document.getElementById("btnUsulanModaDashboard").addEventListener("click", usulanModaDashboardOpen);
+  const overlay = document.getElementById("usulanModaDashboardOverlay");
+  document.getElementById("usulanModaDashboardClose").addEventListener("click", () => (overlay.hidden = true));
+  overlay.addEventListener("click", (e) => {
+    if (e.target === overlay) overlay.hidden = true;
+  });
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && !overlay.hidden) overlay.hidden = true;
+  });
+}
+
+document.addEventListener("DOMContentLoaded", bindUsulanModaDashboard);
 
 function bindIjdDashboard() {
   document.getElementById("btnIjdDashboard").addEventListener("click", ijdDashboardOpen);

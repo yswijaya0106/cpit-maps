@@ -98,6 +98,10 @@ function showIdentifyInfo(layerName, feature, latLng) {
   // -- keduanya di-join ke tabel referensi BASARNAS yang sama.
   const namaKantorSar = feature.getProperty("nama_kantor") || feature.getProperty("Nama Kantor SAR");
   if (namaKantorSar) attachKantorSarJoin(container, namaKantorSar);
+  if (layerName.startsWith("BATAS PROVINSI::")) {
+    const namaProvinsi = feature.getProperty("PROVINSI");
+    if (namaProvinsi) attachLakaLantasJoin(container, namaProvinsi);
+  }
 
   if (!state.identifyInfoWindow) {
     state.identifyInfoWindow = new google.maps.InfoWindow();
@@ -225,6 +229,49 @@ function attachKantorSarJoin(container, namaKantor) {
   };
   sel.addEventListener("change", load);
   load();
+}
+
+/* Join layer "BATAS PROVINSI" ke anev_laka_lantas_polda (statistik
+   kecelakaan lalu lintas Korlantas POLRI per POLDA, 2020-2025) -- beda dari
+   attachKecamatanJoin/attachKantorSarJoin di atas krn cuma 1 sumber (tidak
+   perlu dropdown pilih tabel); padanan provinsi->polda-nya sendiri sudah
+   diselesaikan di backend (PROVINSI_POLDA_MAP, app.py) krn nama POLDA tidak
+   selalu sama dengan nama provinsinya (mis. DKI Jakarta -> "METRO JAYA"). */
+function attachLakaLantasJoin(container, namaProvinsi) {
+  const wrap = document.createElement("div");
+  wrap.className = "identify-join";
+  wrap.innerHTML = `
+    <div class="identify-join-head"><i class="bi bi-exclamation-triangle"></i> Kecelakaan Lalu Lintas (Korlantas POLRI)</div>
+    <div class="identify-join-body hint">Memuat...</div>`;
+  container.appendChild(wrap);
+  const bodyEl = wrap.querySelector(".identify-join-body");
+
+  (async () => {
+    try {
+      const res = await fetch(`/api/provinsi/${encodeURIComponent(namaProvinsi)}/laka-lantas`);
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || "Gagal memuat");
+      if (!data.tersedia || !data.rows.length) {
+        bodyEl.innerHTML = `<div class="hint">Data POLDA belum tersedia untuk provinsi ini.</div>`;
+        return;
+      }
+      bodyEl.className = "identify-join-body";
+      bodyEl.innerHTML = `<div class="identify-join-scroll"><table class="identify-table identify-join-table">
+        <thead><tr><th>Tahun</th><th>Kejadian</th><th>Korban MD</th><th>Korban LB</th><th>Korban LR</th><th>Kerugian (Rp)</th></tr></thead>
+        <tbody>${data.rows.map((r) => `<tr>
+          <td>${escapeHtml(String(r.tahun ?? "—"))}</td>
+          <td>${r.kejadian ?? "—"}</td>
+          <td>${r.korban_md ?? "—"}</td>
+          <td>${r.korban_lb ?? "—"}</td>
+          <td>${r.korban_lr ?? "—"}</td>
+          <td>${r.kerugian_materi != null ? formatRupiah(r.kerugian_materi) : "—"}</td>
+        </tr>`).join("")}</tbody></table></div>
+        <div class="hint">POLDA ${escapeHtml(data.polda)} · ${data.rows.length} tahun</div>`;
+    } catch (err) {
+      bodyEl.className = "identify-join-body hint";
+      bodyEl.textContent = String(err.message || err);
+    }
+  })();
 }
 
 function clearIdentifyHighlight() {

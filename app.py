@@ -3431,6 +3431,106 @@ def usulan_inpres_ijd_score_dashboard(provinsi: str = "", tahun: int = 2026):
     return jsonable_encoder(_ijd_score_dashboard(provinsi, tahun))
 
 
+# Dashboard ringkasan nasional utk tabel referensi Darat/Laut/Udara
+# (docs/New/, lihat LAPORAN_MODA_TABLE) + Keselamatan (anev_laka_lantas_polda,
+# lihat PROVINSI_POLDA_MAP di bawah) -- panel "7. Jelajahi Usulan Inpres" tab
+# "Dashboard". TIDAK terkait skor IJD/usulan_inpres (beda dari dashboard di
+# atas), murni ringkasan/sebaran atas data referensi lepas-IJD itu sendiri.
+@app.get("/api/usulan-inpres/moda/dashboard")
+def usulan_moda_dashboard():
+    with db_cursor() as cur:
+        cur.execute(
+            "SELECT COUNT(*) AS total, "
+            "COUNT(*) FILTER (WHERE lat IS NOT NULL AND lon IS NOT NULL) AS dengan_koordinat, "
+            "SUM(demand_pax) AS total_demand_pax, "
+            "SUM(kapasitas_eksisting_estimasi) AS total_kapasitas "
+            "FROM bps_data_bandara"
+        )
+        udara_summary = cur.fetchone()
+        cur.execute(
+            "SELECT COALESCE(hirarki, 'Tidak diketahui') AS label, COUNT(*) AS count "
+            "FROM bps_data_bandara GROUP BY 1 ORDER BY count DESC"
+        )
+        udara_hirarki = cur.fetchall()
+        cur.execute(
+            "SELECT COALESCE(provinsi, 'Tidak diketahui') AS label, COUNT(*) AS count "
+            "FROM bps_data_bandara GROUP BY 1 ORDER BY count DESC LIMIT 10"
+        )
+        udara_provinsi = cur.fetchall()
+
+        cur.execute("SELECT COUNT(*) AS total FROM angkutan_perintis")
+        darat_total = cur.fetchone()["total"]
+        cur.execute("SELECT jenis AS label, COUNT(*) AS count FROM angkutan_perintis GROUP BY 1 ORDER BY count DESC")
+        darat_jenis = cur.fetchall()
+        cur.execute(
+            "SELECT COALESCE(provinsi, 'Tidak diketahui') AS label, COUNT(*) AS count "
+            "FROM angkutan_perintis GROUP BY 1 ORDER BY count DESC LIMIT 10"
+        )
+        darat_provinsi = cur.fetchall()
+
+        cur.execute("SELECT COUNT(DISTINCT pelabuhan) AS total_pelabuhan, MAX(tahun) AS tahun_terakhir FROM bps_kinerja_pelabuhan")
+        laut_summary = cur.fetchone()
+        tahun_terakhir = laut_summary["tahun_terakhir"]
+        cur.execute(
+            "SELECT pelabuhan AS label, provinsi, "
+            "(COALESCE(bongkar_dn_ton, 0) + COALESCE(muat_dn_ton, 0) + COALESCE(bongkar_ln_ton, 0) + COALESCE(muat_ln_ton, 0)) AS count "
+            "FROM bps_kinerja_pelabuhan WHERE tahun = %s ORDER BY count DESC LIMIT 10",
+            (tahun_terakhir,),
+        )
+        laut_top_arus = cur.fetchall()
+        cur.execute(
+            "SELECT COALESCE(provinsi, 'Tidak diketahui') AS label, COUNT(DISTINCT pelabuhan) AS count "
+            "FROM bps_kinerja_pelabuhan GROUP BY 1 ORDER BY count DESC LIMIT 10"
+        )
+        laut_provinsi = cur.fetchall()
+
+        cur.execute(
+            "SELECT tahun, SUM(kejadian) AS kejadian, SUM(korban_md) AS korban_md, "
+            "SUM(korban_lb) AS korban_lb, SUM(korban_lr) AS korban_lr "
+            "FROM anev_laka_lantas_polda GROUP BY tahun ORDER BY tahun"
+        )
+        tren_nasional = cur.fetchall()
+        cur.execute(
+            "SELECT polda, kejadian, korban_md FROM anev_laka_lantas_polda "
+            "WHERE tahun = (SELECT MAX(tahun) FROM anev_laka_lantas_polda WHERE tahun ~ '^[0-9]{4}$') "
+            "ORDER BY kejadian DESC NULLS LAST LIMIT 10"
+        )
+        top_polda_kejadian = cur.fetchall()
+
+    polda_label = {v: k.title() for k, v in PROVINSI_POLDA_MAP.items()}
+    return {
+        "udara": {
+            "total": udara_summary["total"],
+            "dengan_koordinat": udara_summary["dengan_koordinat"],
+            "total_demand_pax": jsonable_encoder(udara_summary["total_demand_pax"]),
+            "total_kapasitas_estimasi": jsonable_encoder(udara_summary["total_kapasitas"]),
+            "per_hirarki": [dict(r) for r in udara_hirarki],
+            "per_provinsi": [dict(r) for r in udara_provinsi],
+        },
+        "darat": {
+            "total": darat_total,
+            "per_jenis": [dict(r) for r in darat_jenis],
+            "per_provinsi": [dict(r) for r in darat_provinsi],
+        },
+        "laut": {
+            "total_pelabuhan": laut_summary["total_pelabuhan"],
+            "tahun_terakhir": tahun_terakhir,
+            "top_arus_barang": [
+                {"label": r["label"], "provinsi": r["provinsi"], "count": jsonable_encoder(r["count"])}
+                for r in laut_top_arus
+            ],
+            "per_provinsi": [dict(r) for r in laut_provinsi],
+        },
+        "keselamatan": {
+            "tren_nasional": [jsonable_encoder(dict(r)) for r in tren_nasional],
+            "top_provinsi_kejadian": [
+                {"label": polda_label.get(r["polda"], r["polda"]), "count": r["kejadian"]}
+                for r in top_polda_kejadian
+            ],
+        },
+    }
+
+
 # --- Skor Prioritas Nasional (dokumen 14072026 bagian C: 70% teknokratis +
 # 10% Kementerian PU + 10% Bappenas + 10% Kemenko Infra) ---
 
@@ -7012,6 +7112,54 @@ def kantor_sar_join_data(nama_kantor: str, tabel: str = "basarnas_alut"):
     }
 
 
+# Join identify-popup layer "BATAS PROVINSI" (attrs.PROVINSI, nama provinsi
+# lengkap) ke anev_laka_lantas_polda (scripts/schema_anev_laka_lantas.sql,
+# statistik kecelakaan lalu lintas Korlantas POLRI per POLDA 2020-2025) --
+# pola sama dengan KANTOR_SAR_JOIN_TABLES di atas, tapi kuncinya BUKAN nama
+# kota melainkan nama polda, yang TIDAK selalu sama dengan nama provinsinya
+# (mis. DKI Jakarta -> "METRO JAYA", bukan "DKI"/"JAKARTA") -- makanya perlu
+# tabel padanan eksplisit, bukan strip-prefix best-effort spt
+# _kantor_sar_kota. Papua Selatan & Papua Pegunungan (provinsi DOB 2022)
+# SENGAJA tidak ada di peta ini -- anev_laka_lantas_polda belum punya baris
+# POLDA tersendiri utk keduanya di sumber datanya.
+PROVINSI_POLDA_MAP = {
+    "ACEH": "ACEH", "SUMATERA UTARA": "SUMUT", "SUMATERA BARAT": "SUMBAR",
+    "RIAU": "RIAU", "JAMBI": "JAMBI", "SUMATERA SELATAN": "SUMSEL",
+    "BENGKULU": "BENGKULU", "LAMPUNG": "LAMPUNG",
+    "KEPULAUAN BANGKA BELITUNG": "BABEL", "KEPULAUAN RIAU": "KEPRI",
+    "DAERAH KHUSUS IBUKOTA JAKARTA": "METRO JAYA", "JAWA BARAT": "JABAR",
+    "JAWA TENGAH": "JATENG", "DAERAH ISTIMEWA YOGYAKARTA": "DIY",
+    "JAWA TIMUR": "JATIM", "BANTEN": "BANTEN", "BALI": "BALI",
+    "NUSA TENGGARA BARAT": "NTB", "NUSA TENGGARA TIMUR": "NTT",
+    "KALIMANTAN BARAT": "KALBAR", "KALIMANTAN TENGAH": "KALTENG",
+    "KALIMANTAN SELATAN": "KALSEL", "KALIMANTAN TIMUR": "KALTIM",
+    "KALIMANTAN UTARA": "KALTARA", "SULAWESI UTARA": "SULUT",
+    "SULAWESI TENGAH": "SULTENG", "SULAWESI SELATAN": "SULSEL",
+    "SULAWESI TENGGARA": "SULTRA", "GORONTALO": "GORONTALO",
+    "SULAWESI BARAT": "SULBAR", "MALUKU": "MALUKU", "MALUKU UTARA": "MALUT",
+    "PAPUA": "PAPUA", "PAPUA BARAT": "PAPUA BARAT",
+    "PAPUA BARAT DAYA": "PAPUA BARAT DAYA", "PAPUA TENGAH": "PAPUA TENGAH",
+}
+
+
+@app.get("/api/provinsi/{provinsi}/laka-lantas")
+def provinsi_laka_lantas(provinsi: str):
+    polda = PROVINSI_POLDA_MAP.get(provinsi.strip().upper())
+    if not polda:
+        return {"tersedia": False, "provinsi": provinsi, "polda": None, "rows": []}
+    with db_cursor() as cur:
+        cur.execute(
+            "SELECT tahun, kejadian, korban_md, korban_lb, korban_lr, kerugian_materi "
+            "FROM anev_laka_lantas_polda WHERE polda=%s ORDER BY tahun",
+            (polda,),
+        )
+        rows = cur.fetchall()
+    return {
+        "tersedia": bool(rows), "provinsi": provinsi, "polda": polda,
+        "rows": [jsonable_encoder(dict(r)) for r in rows],
+    }
+
+
 @app.get("/api/maps/provinces")
 def maps_provinces():
     with db_cursor() as cur:
@@ -7130,6 +7278,50 @@ def maps_layer(provinsi: str, layer: str, kabupaten: str = ""):
     geojson["label"] = meta["label"] or _map_layer_label(layer)
     _map_layer_geojson_cache[key] = geojson
     return JSONResponse(content=geojson, headers=_MAP_LAYER_CACHE_HEADERS)
+
+
+# Sumber referensi Darat/Laut (angkutan_perintis, bps_kinerja_pelabuhan) TIDAK
+# punya koordinat sama sekali (lihat schema_angkutan_perintis.sql/
+# schema_bps_kinerja_pelabuhan.sql) -- panel "Jelajahi Usulan Inpres" moda
+# Darat/Laut/Udara mengisi kekosongan itu dengan mencocokkan namanya (best-
+# effort, ILIKE, semangatnya sama dengan _kantor_sar_kota di bawah) ke titik
+# SHP RBI yang sudah ada di map_layers (layer BANDARA / KONEKTIVITAS SIMPUL
+# TRANSPORTASI > pelabuhan). Hanya layer yang benar-benar punya atribut nama
+# terpakai -- "Pelabuhan Laut"/PELABUHAN_PT dilewati krn attrs-nya kosong
+# (sumber SHP itu sendiri tidak punya kolom atribut, bukan bug di sini).
+_CARI_TITIK_SOURCES = {
+    "bandara": [("BANDARA", "", "Bandara")],
+    "pelabuhan": [("KONEKTIVITAS SIMPUL TRANSPORTASI", "pelabuhan", "Pelabuhan Nasional")],
+}
+_CARI_TITIK_PREFIX_RE = re.compile(r"^(pelabuhan|bandara)\s+", re.IGNORECASE)
+
+
+@app.get("/api/maps/cari-titik")
+def maps_cari_titik(jenis: str, nama: str):
+    sources = _CARI_TITIK_SOURCES.get(jenis)
+    if not sources:
+        raise HTTPException(400, "jenis harus 'bandara' atau 'pelabuhan'")
+    inti = _CARI_TITIK_PREFIX_RE.sub("", nama.strip())
+    if not inti:
+        return {"ditemukan": False}
+    with db_cursor() as cur:
+        for provinsi, kabupaten, layer in sources:
+            cur.execute(
+                "SELECT attrs->>'Name' AS nama_titik, ST_Y(ST_PointOnSurface(geom)) AS lat, "
+                "ST_X(ST_PointOnSurface(geom)) AS lon FROM map_layers "
+                "WHERE provinsi=%s AND kabupaten=%s AND layer=%s AND attrs->>'Name' ILIKE %s "
+                "ORDER BY length(attrs->>'Name') ASC LIMIT 1",
+                (provinsi, kabupaten, layer, f"%{inti}%"),
+            )
+            row = cur.fetchone()
+            if row:
+                return {
+                    "ditemukan": True, "nama_titik": row["nama_titik"],
+                    "lat": row["lat"], "lon": row["lon"],
+                    "provinsi": provinsi, "kabupaten": kabupaten, "layer": layer,
+                    "sumber": f"{provinsi}/{layer}",
+                }
+    return {"ditemukan": False}
 
 
 def _fetch_usulan_geometry(usulan_id: int) -> dict:

@@ -93,6 +93,12 @@ const MAP_LAYER_CATEGORIES = [
   // -- lihat docs/kajian_data_baru_docs_new.md §6/§Fase 3.
   { id: "kereta-api", label: "Kereta Api", icon: "bi-train-front",
     match: (p) => p === "JALUR KERETA API" },
+  // Maskapai: bucket nasional flat (scripts/import_maskapai_organisasi_to_postgis.py),
+  // sumbernya tabel maskapai_organisasi (hasil scrape_maskapai_organisasi.py +
+  // geocode_maskapai_organisasi.py), bukan file .shp -- titik lokasi kantor
+  // pusat maskapai dalam negeri/asing yang berhasil digeokode.
+  { id: "maskapai", label: "Maskapai", icon: "bi-airplane-engines",
+    match: (p) => p === "MASKAPAI" },
   { id: "jalan", label: "Jalan", icon: "bi-signpost-2", match: () => true }, // catch-all, HARUS terakhir
 ];
 

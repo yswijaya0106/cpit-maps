@@ -31,3 +31,15 @@ CREATE TABLE IF NOT EXISTS maskapai_organisasi (
   scraped_at                       TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 ALTER TABLE maskapai_organisasi ADD COLUMN IF NOT EXISTS kategori TEXT NOT NULL DEFAULT 'negeri';
+
+-- Lat/lon + provinsi/kabupaten/kecamatan hasil Google Maps Geocoding API
+-- atas alamat_perusahaan (alamat kantor, bukan lokasi operasional
+-- bandara maskapai) -- diisi scripts/geocode_maskapai_organisasi.py.
+ALTER TABLE maskapai_organisasi ADD COLUMN IF NOT EXISTS lat DOUBLE PRECISION;
+ALTER TABLE maskapai_organisasi ADD COLUMN IF NOT EXISTS lon DOUBLE PRECISION;
+ALTER TABLE maskapai_organisasi ADD COLUMN IF NOT EXISTS geo_provinsi TEXT;
+ALTER TABLE maskapai_organisasi ADD COLUMN IF NOT EXISTS geo_kabupaten TEXT;
+ALTER TABLE maskapai_organisasi ADD COLUMN IF NOT EXISTS geo_kecamatan TEXT;
+ALTER TABLE maskapai_organisasi ADD COLUMN IF NOT EXISTS geo_formatted_address TEXT;
+ALTER TABLE maskapai_organisasi ADD COLUMN IF NOT EXISTS geo_status TEXT;
+ALTER TABLE maskapai_organisasi ADD COLUMN IF NOT EXISTS geocoded_at TIMESTAMPTZ;

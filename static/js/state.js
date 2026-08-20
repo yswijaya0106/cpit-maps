@@ -39,20 +39,31 @@ const state = {
     }],
     busy: false,
   }, // riwayat percakapan asisten Gemini
-  auth: { username: null, role: null, aktif: false }, // hasil GET /api/auth/me, lihat applyAuthRestrictions()
+  auth: { username: null, role: null, required: false }, // hasil GET /api/auth/me, lihat applyAuthRestrictions()
 };
 
 // role 'admin' vs 'user' (tabel users, lihat auth.py/_require_admin di app.py)
 // -- 'user' cuma boleh melihat data, tidak boleh import xlsx usulan IJD.
-// Kalau auth nonaktif (state.auth.aktif===false, mis. dev lokal tanpa tabel
-// users), tombol TIDAK disembunyikan -- backend juga tidak menegakkan
-// _require_admin dalam kondisi itu (lihat basic_auth_middleware), jadi UI
-// harus konsisten dgn itu.
+// Kalau auth nonaktif (state.auth.required===false, mis. dev lokal tanpa
+// tabel users), tombol TIDAK disembunyikan & form login TIDAK ditampilkan
+// -- backend juga tidak menegakkan _require_admin/auth_middleware dalam
+// kondisi itu, jadi UI harus konsisten dgn itu. Dipanggil ulang tiap kali
+// state.auth berubah (login/logout) ATAU tiap kali kode lain nge-toggle
+// .hidden tombol yg sama (mis. ganti moda Udara/Darat/Laut) supaya
+// pembatasan tidak ketiban timpa.
 function applyAuthRestrictions() {
   const btn = document.getElementById("btnUsulanImport");
-  if (!btn) return;
-  const restrict = state.auth.aktif && state.auth.role !== "admin";
-  btn.hidden = restrict;
+  if (btn) btn.hidden = state.auth.required && state.auth.role !== "admin";
+
+  const userBadge = document.getElementById("topbarUser");
+  const usernameEl = document.getElementById("topbarUsername");
+  if (userBadge) {
+    userBadge.hidden = !state.auth.username;
+    if (usernameEl) usernameEl.textContent = state.auth.username ? `${state.auth.username} (${state.auth.role})` : "";
+  }
+
+  const overlay = document.getElementById("loginOverlay");
+  if (overlay) overlay.hidden = !(state.auth.required && !state.auth.username);
 }
 
 async function initAuth() {
@@ -64,7 +75,47 @@ async function initAuth() {
   }
   applyAuthRestrictions();
 }
-document.addEventListener("DOMContentLoaded", initAuth);
+
+async function handleLoginSubmit(e) {
+  e.preventDefault();
+  const username = document.getElementById("loginUsername").value.trim();
+  const password = document.getElementById("loginPassword").value;
+  const errEl = document.getElementById("loginError");
+  const btn = document.getElementById("btnLoginSubmit");
+  errEl.hidden = true;
+  btn.disabled = true;
+  try {
+    const res = await fetch("/api/auth/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username, password }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || "Login gagal");
+    // Reload paling sederhana & aman drpd re-init manual tiap panel yg
+    // sudah terlanjur fetch data (401) sebelum login selesai.
+    location.reload();
+  } catch (err) {
+    errEl.textContent = err.message || String(err);
+    errEl.hidden = false;
+    btn.disabled = false;
+  }
+}
+
+async function handleLogout() {
+  try {
+    await fetch("/api/auth/logout", { method: "POST" });
+  } catch (err) {
+    console.error(err);
+  }
+  location.reload();
+}
+
+document.addEventListener("DOMContentLoaded", () => {
+  initAuth();
+  document.getElementById("loginForm")?.addEventListener("submit", handleLoginSubmit);
+  document.getElementById("btnLogout")?.addEventListener("click", handleLogout);
+});
 
 function toast(msg, isError = false) {
   const el = document.getElementById("toast");

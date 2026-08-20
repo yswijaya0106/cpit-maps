@@ -82,8 +82,33 @@
           <span>Lokasi Prioritas</span>
         </button>
       </div>
+      <div class="topbar-user" id="topbarUser" hidden>
+        <i class="bi bi-person-circle"></i>
+        <span id="topbarUsername"></span>
+        <button type="button" class="icon-btn" id="btnLogout" title="Keluar"><i class="bi bi-box-arrow-right"></i></button>
+      </div>
       <div class="topbar-status" id="topbarStatus">Siap</div>
     </header>
+
+    <div class="login-overlay" id="loginOverlay" hidden>
+      <form class="login-card" id="loginForm">
+        <div class="brand login-brand">
+          <span class="brand-logo"><i class="bi bi-geo-alt-fill"></i></span>
+          <span class="brand-name">The Next - <strong>SiJalan</strong></span>
+        </div>
+        <h2>Masuk</h2>
+        <label class="login-field">
+          <span>Username</span>
+          <input type="text" id="loginUsername" name="username" autocomplete="username" required autofocus />
+        </label>
+        <label class="login-field">
+          <span>Password</span>
+          <input type="password" id="loginPassword" name="password" autocomplete="current-password" required />
+        </label>
+        <div class="login-error" id="loginError" hidden></div>
+        <button type="submit" class="btn btn-primary btn-block" id="btnLoginSubmit">Masuk</button>
+      </form>
+    </div>
 
     <div class="datatable-overlay" id="dataTableOverlay" hidden>
       <div class="datatable-modal">

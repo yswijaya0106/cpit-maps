@@ -135,10 +135,62 @@ async def _seed_initial_admin_user():
         print(f"  [auth] gagal setup tabel users (auth nonaktif sampai DB siap): {e}")
 
 
+def _lookup_user_role(username: str, password: str):
+    """None kalau username/password salah, else role ('admin'|'user')."""
+    if not username:
+        return None
+    try:
+        with db_cursor() as cur:
+            cur.execute("SELECT password_hash, role FROM users WHERE username=%s", (username,))
+            row = cur.fetchone()
+    except Exception:
+        return None
+    if row and auth.verify_password(password, row["password_hash"]):
+        return row["role"]
+    return None
+
+
+def _resolve_identity(request: Request):
+    """None kalau tidak ada sesi/kredensial valid, else {"username","role"}.
+    Cek cookie sesi (dari form login, GET .../auth/login) dulu, fallback ke
+    header Basic Auth (kompatibilitas script/tool yang lama pakai curl -u,
+    lihat docs/deployment_production.md contoh curl) -- keduanya diverifikasi
+    thd tabel users yang sama, cuma beda cara bawa kredensialnya."""
+    token = request.cookies.get("session")
+    if token:
+        identity = auth.verify_session_token(token)
+        if identity:
+            return identity
+
+    auth_header = request.headers.get("authorization", "")
+    if auth_header.startswith("Basic "):
+        try:
+            import base64
+            decoded = base64.b64decode(auth_header[6:]).decode("utf-8")
+            username, _, password = decoded.partition(":")
+        except Exception:
+            return None
+        role = _lookup_user_role(username, password)
+        if role:
+            return {"username": username, "role": role}
+
+    return None
+
+
+# Path yang TIDAK digerbang meski tabel users terisi -- file statis (shell
+# SPA + form login-nya sendiri harus bisa dimuat sebelum login) dan endpoint
+# login/status itu sendiri (kalau ikut digerbang, mustahil login pertama
+# kali). Endpoint API lain SEMUA butuh sesi valid.
+_AUTH_EXEMPT_PATHS = {"/api/auth/login", "/api/auth/me"}
+
+
 @app.middleware("http")
-async def basic_auth_middleware(request: Request, call_next):
-    """Gerbang HTTP Basic Auth untuk seluruh aplikasi (statis + /api/*),
-    diverifikasi terhadap tabel users (bukan lagi 1 kredensial tunggal).
+async def auth_middleware(request: Request, call_next):
+    """Gerbang login utk seluruh /api/* (statis TIDAK digerbang -- lihat
+    _AUTH_EXEMPT_PATHS), diverifikasi terhadap tabel users. Form login
+    kustom (bukan lagi popup Basic Auth bawaan browser) tersimpan sesi
+    lewat cookie ber-tanda-tangan (auth.create_session_token) yang diset
+    POST /api/auth/login.
 
     Nonaktif otomatis kalau tabel users kosong/tidak ada (mis. DB belum
     terhubung, atau instalasi baru tanpa APP_USERNAME/PASSWORD di .env utk
@@ -147,6 +199,10 @@ async def basic_auth_middleware(request: Request, call_next):
     berubah. Route handler yang butuh role tertentu (mis. admin-only) baca
     request.state.role, diisi di sini saat auth berhasil.
     """
+    path = request.url.path
+    if not path.startswith("/api/") or path in _AUTH_EXEMPT_PATHS:
+        return await call_next(request)
+
     try:
         with db_cursor() as cur:
             cur.execute("SELECT 1 FROM users LIMIT 1")
@@ -157,38 +213,24 @@ async def basic_auth_middleware(request: Request, call_next):
     if not any_user:
         return await call_next(request)
 
-    auth_header = request.headers.get("authorization", "")
-    username = password = ""
-    if auth_header.startswith("Basic "):
-        try:
-            import base64
-            decoded = base64.b64decode(auth_header[6:]).decode("utf-8")
-            username, _, password = decoded.partition(":")
-        except Exception:
-            username, password = "", ""
+    identity = _resolve_identity(request)
+    if identity:
+        request.state.username = identity["username"]
+        request.state.role = identity["role"]
+        return await call_next(request)
 
-    if username:
-        try:
-            with db_cursor() as cur:
-                cur.execute("SELECT password_hash, role FROM users WHERE username=%s", (username,))
-                row = cur.fetchone()
-        except Exception:
-            row = None
-        if row and auth.verify_password(password, row["password_hash"]):
-            request.state.username = username
-            request.state.role = row["role"]
-            return await call_next(request)
-
-    return Response(
-        status_code=401,
-        headers={"WWW-Authenticate": 'Basic realm="The Next - SiJalan"'},
-    )
+    # SENGAJA tanpa header WWW-Authenticate (beda dari basic_auth_middleware
+    # lama) -- kalau ada, browser memunculkan popup login bawaan di ATAS
+    # form login kustom kita, dua UI login tumpang tindih. Tanpa header itu,
+    # fetch() di frontend cukup dapat status 401 polos, ditangani JS (lihat
+    # applyAuthRestrictions/initAuth di state.js) dgn menampilkan form kita.
+    return JSONResponse(status_code=401, content={"detail": "Belum login"})
 
 
 def _require_admin(request: Request):
     """Dipanggil di awal route yang cuma boleh diakses role admin (mis.
     import xlsx usulan IJD) -- 403 kalau bukan admin. Kalau auth nonaktif
-    (tabel users kosong, lihat basic_auth_middleware), request.state.role
+    (tabel users kosong, lihat auth_middleware), request.state.role
     tidak pernah di-set -- getattr default None LOLOS di sini dgn sengaja,
     supaya dev lokal tanpa auth tidak ikut terkunci."""
     role = getattr(request.state, "role", None)
@@ -196,11 +238,52 @@ def _require_admin(request: Request):
         raise HTTPException(403, "Hanya admin yang bisa melakukan aksi ini")
 
 
+class LoginRequest(BaseModel):
+    username: str
+    password: str
+
+
+_SESSION_COOKIE_KW = {
+    "key": "session",
+    "httponly": True,
+    "samesite": "lax",
+    "max_age": auth.SESSION_TTL_SECONDS,
+    # secure=False sengaja -- app ini juga dipakai lewat http:// polos di
+    # jaringan internal (lihat docs/deployment_production.md), bukan cuma
+    # https. Kalau di-deploy di belakang TLS publik, aktifkan secure=True.
+}
+
+
+@app.post("/api/auth/login")
+def auth_login(payload: LoginRequest, response: Response):
+    role = _lookup_user_role(payload.username, payload.password)
+    if not role:
+        raise HTTPException(401, "Username atau password salah")
+    token = auth.create_session_token(payload.username, role)
+    response.set_cookie(value=token, **_SESSION_COOKIE_KW)
+    return {"username": payload.username, "role": role}
+
+
+@app.post("/api/auth/logout")
+def auth_logout(response: Response):
+    response.delete_cookie("session")
+    return {"ok": True}
+
+
 @app.get("/api/auth/me")
 def auth_me(request: Request):
-    username = getattr(request.state, "username", None)
-    role = getattr(request.state, "role", None)
-    return {"username": username, "role": role, "auth_aktif": username is not None}
+    try:
+        with db_cursor() as cur:
+            cur.execute("SELECT 1 FROM users LIMIT 1")
+            auth_required = cur.fetchone() is not None
+    except Exception:
+        auth_required = False
+    identity = _resolve_identity(request) if auth_required else None
+    return {
+        "username": identity["username"] if identity else None,
+        "role": identity["role"] if identity else None,
+        "auth_required": auth_required,
+    }
 
 
 class Segment(BaseModel):

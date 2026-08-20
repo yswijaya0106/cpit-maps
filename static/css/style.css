@@ -146,9 +146,9 @@ html, body {
 
 .topbar-user {
   display: flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--text-dim);
-  padding: 0 4px;
+  padding: 0 4px; white-space: nowrap;
 }
-.topbar-user .icon-btn { width: 28px; height: 28px; }
+.topbar-user .icon-btn { display: flex; width: 28px; height: 28px; flex: 0 0 auto; }
 .datatable-modal {
   display: flex; flex-direction: column; width: min(1280px, 96vw);
   height: min(82vh, 900px); background: var(--bg);
@@ -1183,6 +1183,19 @@ td.checklist-cell .ijd-badge { margin-right: 4px; }
   vertical-align: top; white-space: nowrap;
 }
 .usulan-detail-table td { padding: 3px 0; }
+
+.usulan-kemenhub-enrichment details { margin-top: 8px; font-size: 12px; }
+.usulan-kemenhub-enrichment summary {
+  cursor: pointer; color: var(--text-dim); font-weight: 500; padding: 4px 0;
+}
+.usulan-kemenhub-list { list-style: none; margin: 4px 0 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.usulan-kemenhub-list li { padding: 4px 6px; border-radius: 4px; background: var(--panel-alt, rgba(255,255,255,.03)); }
+.usulan-kemenhub-galeri {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(80px, 1fr)); gap: 6px; margin-top: 4px;
+}
+.usulan-kemenhub-galeri img {
+  width: 100%; aspect-ratio: 4/3; object-fit: cover; border-radius: 4px; border: 1px solid var(--border);
+}
 
 .usulan-ijd-score {
   border-top: 1px dashed var(--border); padding-top: 10px; margin-top: 2px;

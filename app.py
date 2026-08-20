@@ -6946,6 +6946,72 @@ def kecamatan_join_data(kode_kecamatan: int, tabel: str = "kecamatan_data_turuna
     }
 
 
+# Join identify-popup titik Kantor SAR/Pos SAR (layer map_layers, lihat
+# scripts/import_basarnas_to_postgis.py) ke 3 tabel referensi BASARNAS
+# (ALUT, Rescuer/Potensi, Ops SAR) -- pola sama dengan
+# KECAMATAN_JOIN_TABLES/kecamatan_join_data di atas, tapi kuncinya BUKAN
+# kode angka bersih spt kode_kecamatan: cuma nama kota, dan penulisannya
+# TIDAK seragam antar sumber (diverifikasi manual):
+#   map_layers.attrs "Nama Kantor SAR"/nama_kantor: "Kantor Pencarian dan
+#     Pertolongan Ambon" (title case, prefix lengkap)
+#   basarnas_alut.kantor_sar: "AMBON" (upper, cuma nama kota)
+#   basarnas_rescuer_potensi.satuan_kerja: "Ambon" (title case, cuma nama kota)
+#   basarnas_ops_sar.kantor_sar: "KANTOR PENCARIAN DAN PERTOLONGAN AMBON"
+#     (upper, prefix lengkap, kadang spasi ganda -- lihat "...  JAKARTA")
+# _kantor_sar_kota() mengekstrak nama kota dari prefix "Kantor Pencarian
+# dan Pertolongan " (kalau ada), lalu tiap query di bawah ILIKE/ILIKE %..%
+# sesuai formatnya -- best-effort text match, TIDAK dijamin 100% akurat
+# utk kantor dengan nama kota yang ambigu, sama semangatnya dgn fuzzy-match
+# lain di kodebase ini (mis. build_wilayah_mapping.py).
+KANTOR_SAR_JOIN_TABLES = {
+    "basarnas_alut": "Inventaris ALUT (Alat Utama)",
+    "basarnas_rescuer_potensi": "Komposisi Tenaga & Potensi SAR",
+    "basarnas_ops_sar": "Insiden Operasi SAR (2021-2025)",
+}
+_KANTOR_SAR_PREFIX_RE = re.compile(r"^kantor\s+pencarian\s+dan\s+pertolongan\s+", re.IGNORECASE)
+
+
+def _kantor_sar_kota(nama_kantor: str) -> str:
+    return _KANTOR_SAR_PREFIX_RE.sub("", nama_kantor.strip()).strip()
+
+
+@app.get("/api/kantor-sar/data")
+def kantor_sar_join_data(nama_kantor: str, tabel: str = "basarnas_alut"):
+    if tabel not in KANTOR_SAR_JOIN_TABLES:
+        raise HTTPException(400, "Tabel tidak dikenal untuk join Kantor SAR")
+    kota = _kantor_sar_kota(nama_kantor)
+    with db_cursor() as cur:
+        if tabel == "basarnas_alut":
+            cur.execute(
+                "SELECT matra, kendaraan, plat_lambung, merk_type, tahun, kondisi_kategori, keterangan "
+                "FROM basarnas_alut WHERE kantor_sar ILIKE %s ORDER BY matra, kendaraan LIMIT 100",
+                (kota,),
+            )
+        elif tabel == "basarnas_rescuer_potensi":
+            cur.execute(
+                "SELECT satuan_kerja, tenaga_rescuer, tenaga_abk, tenaga_operator_komunikasi, tenaga_medis, "
+                "tenaga_total, potensi_literasi, potensi_terlatih, potensi_kompeten, potensi_total, grand_total "
+                "FROM basarnas_rescuer_potensi WHERE satuan_kerja ILIKE %s LIMIT 20",
+                (kota,),
+            )
+        else:  # basarnas_ops_sar
+            cur.execute(
+                "SELECT tahun_sumber, jenis_kecelakaan, sub_jenis_kecelakaan, waktu_kejadian, korban, "
+                "selamat, meninggal_dunia, dalam_pencarian_hilang FROM basarnas_ops_sar "
+                "WHERE kantor_sar ILIKE %s ORDER BY waktu_kejadian DESC NULLS LAST LIMIT 50",
+                (f"%{kota}%",),
+            )
+        rows = cur.fetchall()
+    columns = [c for c in (rows[0].keys() if rows else []) if c not in DATA_TABLE_SKIP_COLS]
+    return {
+        "tabel": tabel,
+        "label": KANTOR_SAR_JOIN_TABLES[tabel],
+        "tabel_tersedia": [{"tabel": k, "label": v} for k, v in KANTOR_SAR_JOIN_TABLES.items()],
+        "columns": columns,
+        "rows": [[jsonable_encoder(r[c]) for c in columns] for r in rows],
+    }
+
+
 @app.get("/api/maps/provinces")
 def maps_provinces():
     with db_cursor() as cur:

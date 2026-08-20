@@ -93,6 +93,11 @@ function showIdentifyInfo(layerName, feature, latLng) {
   `;
   const kodeKec = feature.getProperty("KODE_KECAMATAN");
   if (kodeKec) attachKecamatanJoin(container, kodeKec);
+  // Kantor SAR punya nama_kantor langsung; Pos SAR simpan nama kantor
+  // induknya di "Nama Kantor SAR" (lihat scripts/import_basarnas_to_postgis.py)
+  // -- keduanya di-join ke tabel referensi BASARNAS yang sama.
+  const namaKantorSar = feature.getProperty("nama_kantor") || feature.getProperty("Nama Kantor SAR");
+  if (namaKantorSar) attachKantorSarJoin(container, namaKantorSar);
 
   if (!state.identifyInfoWindow) {
     state.identifyInfoWindow = new google.maps.InfoWindow();
@@ -156,6 +161,63 @@ function attachKecamatanJoin(container, kodeKec) {
           ).join("")}</tbody></table></div>
           <div class="hint">${data.rows.length} baris</div>`;
       }
+    } catch (err) {
+      bodyEl.className = "identify-join-body hint";
+      bodyEl.textContent = String(err.message || err);
+    }
+  };
+  sel.addEventListener("change", load);
+  load();
+}
+
+/* Join titik Kantor SAR/Pos SAR (BASARNAS) ke tabel referensi ALUT/Rescuer-
+   Potensi/Ops SAR -- pola sama dengan attachKecamatanJoin, tapi kuncinya
+   nama kota (best-effort text match, lihat _kantor_sar_kota di app.py),
+   bukan kode angka. TIDAK terkait usulan_inpres/IJD. */
+function attachKantorSarJoin(container, namaKantor) {
+  const wrap = document.createElement("div");
+  wrap.className = "identify-join";
+  wrap.innerHTML = `
+    <div class="identify-join-head">
+      <i class="bi bi-table"></i> Data database:
+      <select class="identify-join-select"></select>
+    </div>
+    <div class="identify-join-body hint">Memuat...</div>`;
+  container.appendChild(wrap);
+  const sel = wrap.querySelector("select");
+  const bodyEl = wrap.querySelector(".identify-join-body");
+
+  const load = async () => {
+    bodyEl.className = "identify-join-body hint";
+    bodyEl.textContent = "Memuat...";
+    try {
+      const tabel = sel.value ? `&tabel=${encodeURIComponent(sel.value)}` : "";
+      const res = await fetch(`/api/kantor-sar/data?nama_kantor=${encodeURIComponent(namaKantor)}${tabel}`);
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || "Gagal memuat");
+      if (!sel.options.length) {
+        data.tabel_tersedia.forEach((t) => {
+          const opt = document.createElement("option");
+          opt.value = t.tabel;
+          opt.textContent = t.label;
+          opt.selected = t.tabel === data.tabel;
+          sel.appendChild(opt);
+        });
+      }
+      bodyEl.className = "identify-join-body";
+      if (!data.rows.length) {
+        bodyEl.innerHTML = `<div class="hint">Tidak ada baris di tabel ini untuk kantor SAR ini.</div>`;
+        return;
+      }
+      const boolCols = data.columns.map(isBoolDbCol);
+      const joinCell = (v, j) =>
+        boolCols[j] && (v === 0 || v === 1 || v === true || v === false) ? boolCellHtml(v) : escapeHtml(String(v ?? "—"));
+      bodyEl.innerHTML = `<div class="identify-join-scroll"><table class="identify-table identify-join-table">
+        <thead><tr>${data.columns.map((c) => `<th>${escapeHtml(c)}</th>`).join("")}</tr></thead>
+        <tbody>${data.rows.map((r) =>
+          `<tr>${r.map((v, j) => `<td>${joinCell(v, j)}</td>`).join("")}</tr>`
+        ).join("")}</tbody></table></div>
+        <div class="hint">${data.rows.length} baris</div>`;
     } catch (err) {
       bodyEl.className = "identify-join-body hint";
       bodyEl.textContent = String(err.message || err);

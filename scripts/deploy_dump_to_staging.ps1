@@ -22,6 +22,11 @@ param(
     [string]$SshKey = "C:\Users\wilda\.ssh\gcp_id_rsa",
     [string]$RemoteHost = "baramij@34.128.69.157",
     [string]$RemoteRepoDir = "~/analytic-maps",
+    # restore_staging_dump.sh (default) utk dump PENUH (route_gis_*.dump) --
+    # database target harus kosong/belum ada skema. Pakai
+    # restore_gap_docs_new_update.sh utk dump gap-only (gap_docs_new_update.dump)
+    # -- database target HARUS SUDAH punya skema map_layers/map_layer_meta dkk.
+    [string]$RestoreScript = "restore_staging_dump.sh",
     [switch]$SkipConfirm
 )
 
@@ -67,8 +72,8 @@ if ($LASTEXITCODE -ne 0) {
     exit $LASTEXITCODE
 }
 
-Write-Host "`n[2/2] Restore via ssh (menjalankan scripts/restore_staging_dump.sh di repo staging)..."
-$remoteCmd = "cd $RemoteRepoDir && git pull && bash scripts/restore_staging_dump.sh --yes ~/$RemoteDumpName && rm -f ~/$RemoteDumpName"
+Write-Host "`n[2/2] Restore via ssh (menjalankan scripts/$RestoreScript di repo staging)..."
+$remoteCmd = "cd $RemoteRepoDir && git pull && bash scripts/$RestoreScript --yes ~/$RemoteDumpName && rm -f ~/$RemoteDumpName"
 & ssh -i $SshKey $RemoteHost $remoteCmd
 if ($LASTEXITCODE -ne 0) {
     Write-Error "Restore di staging gagal (exit $LASTEXITCODE). File dump masih ada di ~/$RemoteDumpName di server utk investigasi manual."

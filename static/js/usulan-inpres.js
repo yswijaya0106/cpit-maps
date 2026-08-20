@@ -1531,6 +1531,29 @@ function usulanModaDashboardRender(data) {
     })}
   </div>`;
 
+  const daratKemacetanHtml = `<div class="laporan-chart-block">
+    <div class="laporan-chart-title"><i class="bi bi-signpost-split"></i> Darat — 10 Ruas Jalan Nasional Terpadat (VCR, LHR 2024)</div>
+    <div class="laporan-chart-sub">
+      VCR (Volume/Capacity Ratio) rata-rata nasional: ${Number(data.darat.kemacetan.avg_vcr || 0).toFixed(2)} ·
+      ${data.darat.kemacetan.ruas_padat.toLocaleString("id-ID")} dari ${data.darat.kemacetan.total_ruas.toLocaleString("id-ID")} ruas VCR ≥ 0.8 (padat)
+    </div>
+    ${laporanHBar(data.darat.kemacetan.top_vcr, {
+      valueKey: "count",
+      maxLabelFn: (it) => `${it.label}: VCR ${Number(it.count).toFixed(2)}, AADT ${Number(it.aadt_total || 0).toLocaleString("id-ID")} kend/hari`,
+      barLabelFn: (it) => Number(it.count).toFixed(2),
+    })}
+  </div>`;
+
+  const lautTrenHtml = `<div class="laporan-chart-block">
+    <div class="laporan-chart-title"><i class="bi bi-graph-up"></i> Laut — Tren Arus Barang per Tahun (seluruh pelabuhan tercatat)</div>
+    <div class="laporan-chart-sub">Bongkar + muat, dalam &amp; luar negeri, satuan ton</div>
+    ${laporanHBar(data.laut.tren_tahun.map((t) => ({ label: t.tahun, arus_barang_ton: t.arus_barang_ton, arus_penumpang: t.arus_penumpang })), {
+      valueKey: "arus_barang_ton",
+      maxLabelFn: (it) => `${it.label}: ${Math.round(it.arus_barang_ton).toLocaleString("id-ID")} ton, ${Math.round(it.arus_penumpang).toLocaleString("id-ID")} penumpang`,
+      barLabelFn: (it) => Math.round(it.arus_barang_ton).toLocaleString("id-ID"),
+    })}
+  </div>`;
+
   const trenLakaHtml = `<div class="laporan-chart-block">
     <div class="laporan-chart-title"><i class="bi bi-exclamation-triangle"></i> Keselamatan — Tren Kecelakaan Lalu Lintas Nasional</div>
     <div class="laporan-chart-sub">Sumber: Korlantas POLRI, seluruh POLDA. "JAN - 30 OKT 2025" belum genap 1 tahun penuh.</div>
@@ -1551,8 +1574,8 @@ function usulanModaDashboardRender(data) {
   </div>`;
 
   document.getElementById("usulanModaDashboardView").innerHTML =
-    kpis + udaraHtml + lautHtml + daratHtml + trenLakaHtml + topLakaHtml +
-    `<p class="hint">Sumber: tabel referensi docs/New/ (bps_data_bandara, angkutan_perintis, bps_kinerja_pelabuhan) dan anev_laka_lantas_polda — lepas dari skor IJD/usulan_inpres, murni ringkasan/sebaran data itu sendiri.</p>`;
+    kpis + udaraHtml + lautHtml + lautTrenHtml + daratHtml + daratKemacetanHtml + trenLakaHtml + topLakaHtml +
+    `<p class="hint">Sumber: tabel referensi docs/New/ (bps_data_bandara, angkutan_perintis, bps_kinerja_pelabuhan, bps_lhr_ruas_nasional) dan anev_laka_lantas_polda — lepas dari skor IJD/usulan_inpres, murni ringkasan/sebaran data itu sendiri.</p>`;
 }
 
 function bindUsulanModaDashboard() {

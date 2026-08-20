@@ -3470,6 +3470,18 @@ def usulan_moda_dashboard():
             "FROM angkutan_perintis GROUP BY 1 ORDER BY count DESC LIMIT 10"
         )
         darat_provinsi = cur.fetchall()
+        cur.execute(
+            "SELECT COUNT(*) AS total_ruas, AVG(vcr) AS avg_vcr, "
+            "COUNT(*) FILTER (WHERE vcr >= 0.8) AS ruas_padat "
+            "FROM bps_lhr_ruas_nasional WHERE vcr IS NOT NULL"
+        )
+        darat_kemacetan = cur.fetchone()
+        cur.execute(
+            "SELECT linkname AS label, vcr AS count, aadt_total "
+            "FROM bps_lhr_ruas_nasional WHERE vcr IS NOT NULL "
+            "ORDER BY vcr DESC LIMIT 10"
+        )
+        darat_top_vcr = cur.fetchall()
 
         cur.execute("SELECT COUNT(DISTINCT pelabuhan) AS total_pelabuhan, MAX(tahun) AS tahun_terakhir FROM bps_kinerja_pelabuhan")
         laut_summary = cur.fetchone()
@@ -3486,6 +3498,13 @@ def usulan_moda_dashboard():
             "FROM bps_kinerja_pelabuhan GROUP BY 1 ORDER BY count DESC LIMIT 10"
         )
         laut_provinsi = cur.fetchall()
+        cur.execute(
+            "SELECT tahun, "
+            "SUM(COALESCE(bongkar_dn_ton, 0) + COALESCE(muat_dn_ton, 0) + COALESCE(bongkar_ln_ton, 0) + COALESCE(muat_ln_ton, 0)) AS arus_barang_ton, "
+            "SUM(COALESCE(penumpang_datang_dn, 0) + COALESCE(penumpang_berangkat_dn, 0) + COALESCE(penumpang_datang_ln, 0) + COALESCE(penumpang_berangkat_ln, 0)) AS arus_penumpang "
+            "FROM bps_kinerja_pelabuhan GROUP BY tahun ORDER BY tahun"
+        )
+        laut_tren_tahun = cur.fetchall()
 
         cur.execute(
             "SELECT tahun, SUM(kejadian) AS kejadian, SUM(korban_md) AS korban_md, "
@@ -3514,6 +3533,15 @@ def usulan_moda_dashboard():
             "total": darat_total,
             "per_jenis": [dict(r) for r in darat_jenis],
             "per_provinsi": [dict(r) for r in darat_provinsi],
+            "kemacetan": {
+                "total_ruas": darat_kemacetan["total_ruas"],
+                "avg_vcr": jsonable_encoder(darat_kemacetan["avg_vcr"]),
+                "ruas_padat": darat_kemacetan["ruas_padat"],
+                "top_vcr": [
+                    {"label": r["label"], "count": jsonable_encoder(r["count"]), "aadt_total": r["aadt_total"]}
+                    for r in darat_top_vcr
+                ],
+            },
         },
         "laut": {
             "total_pelabuhan": laut_summary["total_pelabuhan"],
@@ -3523,6 +3551,7 @@ def usulan_moda_dashboard():
                 for r in laut_top_arus
             ],
             "per_provinsi": [dict(r) for r in laut_provinsi],
+            "tren_tahun": [jsonable_encoder(dict(r)) for r in laut_tren_tahun],
         },
         "keselamatan": {
             "tren_nasional": [jsonable_encoder(dict(r)) for r in tren_nasional],

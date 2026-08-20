@@ -151,29 +151,20 @@ def _lookup_user_role(username: str, password: str):
 
 
 def _resolve_identity(request: Request):
-    """None kalau tidak ada sesi/kredensial valid, else {"username","role"}.
-    Cek cookie sesi (dari form login, GET .../auth/login) dulu, fallback ke
-    header Basic Auth (kompatibilitas script/tool yang lama pakai curl -u,
-    lihat docs/deployment_production.md contoh curl) -- keduanya diverifikasi
-    thd tabel users yang sama, cuma beda cara bawa kredensialnya."""
+    """None kalau tidak ada sesi valid, else {"username","role"}. CUMA cookie
+    sesi (dari form login, POST /api/auth/login) -- Basic Auth header
+    SENGAJA TIDAK didukung lagi (dicoba sbg fallback saat pertama pindah ke
+    form login, 21 Aug 2026, lalu dicabut hari yang sama): browser yang
+    pernah diberi kredensial Basic Auth (mis. dari popup lama sebelum ada
+    form ini) MENYIMPAN & mengirim ulang header itu otomatis di request
+    berikutnya tanpa diminta -- itu bikin logout kelihatan "tidak berfungsi"
+    (cookie sesi kehapus, tapi browser diam-diam login lagi lewat Basic Auth
+    yang ke-cache). Kalau butuh akses via script/curl, POST /api/auth/login
+    dulu (simpan cookie-nya, mis. curl -c cookies.txt -b cookies.txt) --
+    bukan lagi curl -u user:pass."""
     token = request.cookies.get("session")
     if token:
-        identity = auth.verify_session_token(token)
-        if identity:
-            return identity
-
-    auth_header = request.headers.get("authorization", "")
-    if auth_header.startswith("Basic "):
-        try:
-            import base64
-            decoded = base64.b64decode(auth_header[6:]).decode("utf-8")
-            username, _, password = decoded.partition(":")
-        except Exception:
-            return None
-        role = _lookup_user_role(username, password)
-        if role:
-            return {"username": username, "role": role}
-
+        return auth.verify_session_token(token)
     return None
 
 

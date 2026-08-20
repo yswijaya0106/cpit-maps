@@ -271,7 +271,10 @@ def auth_logout(response: Response):
 
 
 @app.get("/api/auth/me")
-def auth_me(request: Request):
+def auth_me(request: Request, response: Response):
+    # Status login TIDAK BOLEH ke-cache browser -- kalau ke-cache, logout
+    # (baru habis reload) bisa kelihatan "nyangkut" balikin sesi lama.
+    response.headers["Cache-Control"] = "no-store"
     try:
         with db_cursor() as cur:
             cur.execute("SELECT 1 FROM users LIMIT 1")

@@ -68,7 +68,10 @@ function applyAuthRestrictions() {
 
 async function initAuth() {
   try {
-    const res = await fetch("/api/auth/me");
+    // cache: "no-store" -- GET biasa bisa disajikan browser dari cache HTTP
+    // walau habis location.reload(), bikin status login kelihatan "nyangkut"
+    // (mis. setelah logout, /api/auth/me masih balikin sesi lama).
+    const res = await fetch("/api/auth/me", { cache: "no-store" });
     if (res.ok) state.auth = await res.json();
   } catch (err) {
     console.error(err);

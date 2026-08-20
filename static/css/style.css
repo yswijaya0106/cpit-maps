@@ -1193,7 +1193,14 @@ td.checklist-cell .ijd-badge { margin-right: 4px; }
   cursor: pointer; color: var(--text-dim); font-weight: 500; padding: 4px 0;
 }
 .usulan-kemenhub-list { list-style: none; margin: 4px 0 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
-.usulan-kemenhub-list li { padding: 4px 6px; border-radius: 4px; background: var(--panel-alt, rgba(255,255,255,.03)); }
+/* color eksplisit (bukan cuma inherit) -- renderBandaraKemenhubEnrichment
+   dipakai juga di dalam popup identify peta (.identify-info di style.css
+   ini sendiri paksa color:#223 gelap utk latar putih InfoWindow Google
+   Maps), sementara background di sini sengaja gelap (var(--panel-alt))
+   spy konsisten sbg "kartu" baik di panel gelap maupun popup putih --
+   tanpa override ini teksnya ikut warisan #223 gelap di atas kotak gelap
+   = tak kelihatan (temuan user 21 Agu 2026). */
+.usulan-kemenhub-list li { padding: 4px 6px; border-radius: 4px; background: var(--panel-alt, rgba(255,255,255,.03)); color: var(--text, #e8ecf7); }
 .usulan-kemenhub-galeri {
   display: grid; grid-template-columns: repeat(auto-fill, minmax(80px, 1fr)); gap: 6px; margin-top: 4px;
 }

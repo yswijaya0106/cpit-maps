@@ -14,7 +14,14 @@ Tabel referensi non-spasial murni, ditampilkan lewat "Data" viewer
 Idempotent: UPSERT per linkid (ON CONFLICT DO UPDATE), aman dijalankan
 ulang.
 
+Kolom provinsi/kabupaten/kecamatan (opsional) diambil dari header sheet yang
+sama kalau scripts/lhr_spatial_join.py sudah pernah dijalankan thd file ini
+(ditulis di baris 1, posisi kolom dicari by nama header, bukan indeks tetap
+-- lihat _find_enrichment_cols). Kalau belum, ketiga kolom itu tetap NULL
+(atau nilai lama dipertahankan via COALESCE saat re-run, tidak ditimpa NULL).
+
 Usage (venv aktif):
+    python scripts/lhr_spatial_join.py       # sekali, isi kolom Provinsi/Kabupaten/Kecamatan di xlsx
     python scripts/import_lhr_ruas_nasional.py
 """
 import io
@@ -56,9 +63,28 @@ def _num(v):
         return None
 
 
+def _str(v):
+    if v is None:
+        return None
+    v = str(v).strip()
+    return v or None
+
+
+# Provinsi/Kabupaten/Kecamatan ditulis scripts/lhr_spatial_join.py sbg kolom
+# baru di baris header (row 1), posisi TIDAK tetap (tergantung ws.max_column
+# saat script itu jalan) -- dicari by nama header, bukan indeks hardcode.
+# Kosong (None, None, None) kalau lhr_spatial_join.py belum pernah dijalankan
+# thd file ini -- enrichment-nya opsional, import tetap jalan tanpanya.
+def _find_enrichment_cols(ws):
+    header_row = next(ws.iter_rows(min_row=1, max_row=1, values_only=True))
+    header = {str(v).strip(): i for i, v in enumerate(header_row) if v}
+    return header.get("Provinsi"), header.get("Kabupaten/Kota"), header.get("Kecamatan")
+
+
 def _load_rows():
     wb = openpyxl.load_workbook(XLSX_PATH, data_only=True, read_only=True)
     ws = wb["Per Ruas"]
+    col_provinsi, col_kabupaten, col_kecamatan = _find_enrichment_cols(ws)
     rows = []
     for row in ws.iter_rows(min_row=4, values_only=True):
         linkid = row[COL_LINKID]
@@ -76,6 +102,9 @@ def _load_rows():
             _num(row[COL_VOLUME]),
             _num(row[COL_CAPACITY]),
             _num(row[COL_VCR]),
+            _str(row[col_provinsi]) if col_provinsi is not None and col_provinsi < len(row) else None,
+            _str(row[col_kabupaten]) if col_kabupaten is not None and col_kabupaten < len(row) else None,
+            _str(row[col_kecamatan]) if col_kecamatan is not None and col_kecamatan < len(row) else None,
         ))
     return rows
 
@@ -98,8 +127,8 @@ def main():
                    (linkid, linkname, lintas, panjang_sk_km, tahun_data, aadt_total,
                     aadt_veh1, aadt_veh2, aadt_veh3, aadt_veh4, aadt_veh5a, aadt_veh5b,
                     aadt_veh6a, aadt_veh6b, aadt_veh7a, aadt_veh7b, aadt_veh7c, aadt_veh8,
-                    volume, capacity, vcr)
-               VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    volume, capacity, vcr, provinsi, kabupaten, kecamatan)
+               VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                ON CONFLICT (linkid) DO UPDATE SET
                    linkname=EXCLUDED.linkname, lintas=EXCLUDED.lintas,
                    panjang_sk_km=EXCLUDED.panjang_sk_km, tahun_data=EXCLUDED.tahun_data,
@@ -111,11 +140,16 @@ def main():
                    aadt_veh7a=EXCLUDED.aadt_veh7a, aadt_veh7b=EXCLUDED.aadt_veh7b,
                    aadt_veh7c=EXCLUDED.aadt_veh7c, aadt_veh8=EXCLUDED.aadt_veh8,
                    volume=EXCLUDED.volume, capacity=EXCLUDED.capacity, vcr=EXCLUDED.vcr,
+                   provinsi=COALESCE(EXCLUDED.provinsi, bps_lhr_ruas_nasional.provinsi),
+                   kabupaten=COALESCE(EXCLUDED.kabupaten, bps_lhr_ruas_nasional.kabupaten),
+                   kecamatan=COALESCE(EXCLUDED.kecamatan, bps_lhr_ruas_nasional.kecamatan),
                    imported_at=now()""",
             rows,
         )
 
-    print(f"\nSelesai: {len(rows)} baris LHR di-upsert ke bps_lhr_ruas_nasional.")
+    n_enriched = sum(1 for r in rows if r[21] is not None)
+    print(f"\nSelesai: {len(rows)} baris LHR di-upsert ke bps_lhr_ruas_nasional "
+          f"({n_enriched} punya provinsi/kabupaten/kecamatan dari lhr_spatial_join.py).")
 
 
 if __name__ == "__main__":

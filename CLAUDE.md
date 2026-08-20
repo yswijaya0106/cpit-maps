@@ -751,9 +751,10 @@ scripts/tables/layers out to staging.
   source has no dedicated POLDA rows for them yet.
 - **`GET /api/usulan-inpres/moda/dashboard`** — read-only aggregation
   behind the "Dashboard" button in the Darat/Laut/Udara browse panel:
-  bandara counts (Udara), trayek + LHR/VCR congestion (Darat), pelabuhan
-  counts (Laut), and the national accident trend — no IJD scoring
-  involved.
+  bandara counts + demand_pax vs kapasitas_eksisting_estimasi ratio (Udara),
+  trayek + LHR/VCR congestion (Darat), pelabuhan counts + yearly
+  cargo/passenger trend + `pelabuhan_daerah` kondisi/kewenangan breakdown
+  (Laut), and the national accident trend — no IJD scoring involved.
 - New reference tables (all non-spatial except the `map_layers` overlay
   noted above), one importer each in `scripts/import_*.py` with a matching
   `scripts/schema_*.sql`: `bps_data_bandara` (Udara, per-airport

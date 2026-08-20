@@ -38,3 +38,14 @@ CREATE TABLE IF NOT EXISTS bps_lhr_ruas_nasional (
   vcr           NUMERIC(6, 3),
   imported_at   TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- provinsi/kabupaten/kecamatan: hasil spatial join ad-hoc
+-- (scripts/lhr_spatial_join.py) ruas ini terhadap BATAS KECAMATAN, ditulis
+-- lebih dulu sbg kolom baru di sheet "Per Ruas" xlsx sumber, lalu diimpor
+-- ke sini oleh import_lhr_ruas_nasional.py. Bisa berisi lebih dari satu
+-- nilai per kolom (dipisah "; ") kalau satu ruas melintasi >1 wilayah --
+-- ADD COLUMN IF NOT EXISTS supaya aman utk instalasi yang sudah punya
+-- tabel ini dari sebelum kolom ini ada.
+ALTER TABLE bps_lhr_ruas_nasional ADD COLUMN IF NOT EXISTS provinsi TEXT;
+ALTER TABLE bps_lhr_ruas_nasional ADD COLUMN IF NOT EXISTS kabupaten TEXT;
+ALTER TABLE bps_lhr_ruas_nasional ADD COLUMN IF NOT EXISTS kecamatan TEXT;

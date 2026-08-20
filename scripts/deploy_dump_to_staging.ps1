@@ -9,7 +9,7 @@
 # Usage:
 #   .\scripts\deploy_dump_to_staging.ps1                                   # dump terbaru di backups\
 #   .\scripts\deploy_dump_to_staging.ps1 -DumpPath backups\route_gis_20260820.dump
-#   .\scripts\deploy_dump_to_staging.ps1 -RemoteRepoDir /home/baramij/analytic-maps
+#   .\scripts\deploy_dump_to_staging.ps1 -RemoteRepoDir /opt/analytic-maps   # default, confirmed 20 Aug 2026
 #
 # Prasyarat di server staging: repo sudah di-clone/di-pull (punya
 # scripts/restore_staging_dump.sh dan .env dgn PG_* terisi), PostgreSQL
@@ -21,7 +21,7 @@ param(
     [string]$DumpPath = "",
     [string]$SshKey = "C:\Users\wilda\.ssh\gcp_id_rsa",
     [string]$RemoteHost = "baramij@34.128.69.157",
-    [string]$RemoteRepoDir = "~/analytic-maps",
+    [string]$RemoteRepoDir = "/opt/analytic-maps",
     # restore_staging_dump.sh (default) utk dump PENUH (route_gis_*.dump) --
     # database target harus kosong/belum ada skema. Pakai
     # restore_gap_docs_new_update.sh utk dump gap-only (gap_docs_new_update.dump)

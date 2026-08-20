@@ -549,6 +549,12 @@
           <section class="panel" id="usulanBrowsePanel">
             <h2 class="panel-title">7. Jelajahi Usulan Inpres Jalan/Jembatan</h2>
             <div class="usulan-io-row">
+              <select id="usulanModa" class="laporan-moda-select" title="Moda: IJD menjelajahi usulan_inpres seperti biasa; Udara/Darat/Laut menjelajahi tabel referensi data sektor terkait, lepas dari IJD">
+                <option value="IJD" selected>IJD</option>
+                <option value="Udara">Udara</option>
+                <option value="Darat">Darat</option>
+                <option value="Laut">Laut</option>
+              </select>
               <button id="btnUsulanImport" class="btn btn-ghost btn-sm"><i class="bi bi-upload"></i> Import
                 XLSX</button>
               <button id="btnUsulanExport" class="btn btn-ghost btn-sm"><i class="bi bi-download"></i> Export
@@ -559,6 +565,8 @@
                 Skor IJD</button>
               <button id="btnUsulanExportNpr" class="btn btn-ghost btn-sm"><i class="bi bi-graph-up-arrow"></i> Preview
                 NPR</button>
+              <button id="btnUsulanModaExport" class="btn btn-ghost btn-sm" hidden><i class="bi bi-download"></i>
+                Export XLSX</button>
               <input type="file" id="usulanImportFile" accept=".xlsx" hidden />
             </div>
             <div class="usulan-browse-filters">
@@ -582,7 +590,7 @@
                   <div class="usulan-combo-option selected" data-value="">Semua Kabupaten/Kota</div>
                 </div>
               </div>
-              <div class="usulan-filter-field">
+              <div class="usulan-filter-field" id="usulanSearchField">
                 <i class="bi bi-search"></i>
                 <input type="text" id="usulanSearchInput" placeholder="Cari nama ruas, kegiatan, atau kode ruas..."
                   autocomplete="off" />

@@ -17,7 +17,7 @@ const state = {
   activeField: null,   // "origin" | "destination" | <waypoint index> | null — which field the next map click should fill
   usulanPolylines: [], // overlay layer: geometri usulan Inpres yang ditampilkan di peta
   usulanBounds: null,  // akumulasi bounds semua usulan yang sudah ditampilkan, supaya klik berikutnya tidak "menyembunyikan" yang sebelumnya
-  usulanBrowse: { provinsi: "", kabupaten_kota: "", q: "", offset: 0, limit: 50, total: 0 },
+  usulanBrowse: { provinsi: "", kabupaten_kota: "", q: "", offset: 0, limit: 50, total: 0, moda: "IJD" },
   browseUsulanPolylines: [], // geometri usulan yang sedang dilihat di panel "Jelajahi Usulan Inpres"
   mapLayers: { active: {}, colors: {}, opacity: {}, labels: {}, meta: {} },
   // overlay peta referensi (SHP) dari folder Maps/ — bisa multi-provinsi/kabupaten aktif

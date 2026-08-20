@@ -225,13 +225,138 @@ function bindUsulanComboField(fieldId, toggleId, panelId, labelId, onSelect) {
 function bindUsulanProvinsiCombo() {
   bindUsulanComboField("usulanProvinsiField", "usulanProvinsiToggle", "usulanProvinsiPanel", "usulanProvinsiLabel", (value) => {
     state.usulanBrowse.provinsi = value;
-    loadUsulanKabupatenOptions(value);
-    loadUsulanBrowseList(true);
+    if (state.usulanBrowse.moda === "IJD") {
+      loadUsulanKabupatenOptions(value);
+      loadUsulanBrowseList(true);
+    } else {
+      loadUsulanModaList(true);
+    }
   });
   bindUsulanComboField("usulanKabupatenField", "usulanKabupatenToggle", "usulanKabupatenPanel", "usulanKabupatenLabel", (value) => {
     state.usulanBrowse.kabupaten_kota = value;
     loadUsulanBrowseList(true);
   });
+}
+
+/* --- Mode Udara/Darat/Laut: panel "7. Jelajahi Usulan Inpres" beralih
+   menjelajahi tabel referensi lepas-IJD (docs/kajian_data_baru_docs_new.md)
+   alih-alih usulan_inpres -- reuse LAPORAN_MODA_TABLE (sama persis dgn
+   moda di modal "Lokasi Prioritas"). Kolom provinsi tabel-tabel ini teks
+   bebas (bukan kode BPS), difilter via /api/data/{table}?provinsi_text=
+   (ILIKE, lihat DATA_TABLE_TEXT_PROVINSI di app.py) -- combo provinsi yang
+   sama dipakai ulang (nilai teks nama provinsi dari usulan_inpres cukup
+   dekat utk ILIKE, bukan exact-match kode). Kabupaten & search box
+   disembunyikan utk moda ini -- kabupaten/wilayah tiap tabel beda makna
+   per baris (lihat schema_angkutan_perintis.sql), tidak bisa difilter
+   konsisten spt kabupaten_kota IJD. --------------------------------- */
+
+let usulanModaMarker = null;
+
+const USULAN_MODA_FIELDS = {
+  Udara: {
+    nama: "nama_bandara", lat: "lat", lon: "lon",
+    sub: (r) => `${escapeHtml(r.kabupaten || "-")}, ${escapeHtml(r.provinsi || "-")} · Hirarki ${escapeHtml(r.hirarki || "-")} · ${escapeHtml(r.status || "-")}`,
+  },
+  Darat: {
+    nama: "nama_trayek",
+    sub: (r) => `${escapeHtml(r.provinsi || "-")} · ${escapeHtml(r.jenis || "-")} · ${r.jarak ?? "-"} ${escapeHtml(r.satuan_jarak || "")}`,
+  },
+  Laut: {
+    nama: "pelabuhan",
+    sub: (r) => `${escapeHtml(r.provinsi || "-")} · Tahun ${escapeHtml(String(r.tahun ?? "-"))}`,
+  },
+};
+
+function flyToUsulanModaPoint(lat, lon, label) {
+  if (usulanModaMarker) usulanModaMarker.setMap(null);
+  const pos = { lat: Number(lat), lng: Number(lon) };
+  usulanModaMarker = new google.maps.Marker({ position: pos, map: state.map, title: label });
+  state.map.panTo(pos);
+  state.map.setZoom(13);
+}
+
+async function loadUsulanModaList(reset) {
+  const listEl = document.getElementById("usulanBrowseList");
+  const moreWrap = document.getElementById("usulanBrowseMore");
+  const b = state.usulanBrowse;
+  const table = LAPORAN_MODA_TABLE[b.moda];
+  const fields = USULAN_MODA_FIELDS[b.moda];
+
+  if (reset) {
+    b.offset = 0;
+    listEl.innerHTML = `<div class="adv-loading">Memuat data...</div>`;
+  }
+
+  const params = new URLSearchParams({ limit: b.limit, offset: b.offset });
+  if (b.provinsi) params.set("provinsi_text", b.provinsi);
+
+  let data;
+  try {
+    const res = await fetch(`/api/data/${table}?${params}`);
+    if (!res.ok) throw new Error(await res.text());
+    data = await res.json();
+  } catch (err) {
+    console.error(err);
+    listEl.innerHTML = `<div class="adv-error">Gagal memuat data: ${escapeHtml(String(err))}</div>`;
+    return;
+  }
+
+  b.total = data.total;
+  if (reset) listEl.innerHTML = "";
+
+  const rowsObj = data.rows.map((r) => Object.fromEntries(data.columns.map((c, i) => [c, r[i]])));
+
+  if (!rowsObj.length && reset) {
+    listEl.innerHTML = `<div class="adv-error">Tidak ada data yang cocok dengan filter ini.</div>`;
+  } else {
+    rowsObj.forEach((r) => {
+      const nama = r[fields.nama] || "-";
+      const card = document.createElement("div");
+      card.className = "usulan-browse-card";
+      card.innerHTML = `
+        <div class="adv-usulan-head">
+          <span class="adv-usulan-title">${escapeHtml(String(nama))}</span>
+        </div>
+        <div class="adv-region-meta">${fields.sub(r)}</div>
+      `;
+      if (fields.lat && r[fields.lat] != null && r[fields.lon] != null) {
+        card.addEventListener("click", () => {
+          listEl.querySelectorAll(".usulan-browse-card.selected").forEach((el) => el.classList.remove("selected"));
+          card.classList.add("selected");
+          flyToUsulanModaPoint(r[fields.lat], r[fields.lon], nama);
+        });
+      }
+      listEl.appendChild(card);
+    });
+  }
+
+  const loaded = b.offset + rowsObj.length;
+  moreWrap.hidden = loaded >= b.total;
+  b.offset = loaded;
+}
+
+const USULAN_IJD_ONLY_BUTTONS = [
+  "btnUsulanImport", "btnUsulanExport", "btnUsulanExportIjdScore", "btnIjdDashboard", "btnUsulanExportNpr",
+];
+
+function usulanModaChange(moda) {
+  state.usulanBrowse.moda = moda;
+  state.usulanBrowse.offset = 0;
+  clearBrowseUsulanPolylines();
+  document.getElementById("usulanBrowseDetail").innerHTML = "";
+  if (usulanModaMarker) {
+    usulanModaMarker.setMap(null);
+    usulanModaMarker = null;
+  }
+
+  const isIjd = moda === "IJD";
+  USULAN_IJD_ONLY_BUTTONS.forEach((id) => { document.getElementById(id).hidden = !isIjd; });
+  document.getElementById("btnUsulanModaExport").hidden = isIjd;
+  document.getElementById("usulanKabupatenField").hidden = !isIjd;
+  document.getElementById("usulanSearchField").hidden = !isIjd;
+
+  if (isIjd) loadUsulanBrowseList(true);
+  else loadUsulanModaList(true);
 }
 
 async function loadUsulanBrowseList(reset) {
@@ -1758,5 +1883,16 @@ function bindUsulanBrowse() {
     }, 400);
   });
 
-  document.getElementById("btnUsulanLoadMore").addEventListener("click", () => loadUsulanBrowseList(false));
+  document.getElementById("btnUsulanLoadMore").addEventListener("click", () => {
+    if (state.usulanBrowse.moda === "IJD") loadUsulanBrowseList(false);
+    else loadUsulanModaList(false);
+  });
+
+  document.getElementById("usulanModa").addEventListener("change", (e) => usulanModaChange(e.target.value));
+  document.getElementById("btnUsulanModaExport").addEventListener("click", () => {
+    const table = LAPORAN_MODA_TABLE[state.usulanBrowse.moda];
+    const params = new URLSearchParams();
+    if (state.usulanBrowse.provinsi) params.set("provinsi_text", state.usulanBrowse.provinsi);
+    window.location.href = `/api/data/${table}/export/xlsx?${params}`;
+  });
 }

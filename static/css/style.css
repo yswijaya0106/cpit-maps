@@ -16,6 +16,8 @@
 
 * { box-sizing: border-box; }
 
+select option, select optgroup { background: var(--panel-alt); color: var(--text); }
+
 .btn i, .fab i, .icon-btn i, .mode-btn i, .route-card-meta i, .hover-info-row i,
 .wp-actions i, .adv-btn-row i { vertical-align: -1px; }
 .btn .bi + span, .btn i + span { margin-left: 2px; }

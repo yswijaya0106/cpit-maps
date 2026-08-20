@@ -1140,6 +1140,10 @@ td.checklist-cell .ijd-badge { margin-right: 4px; }
 }
 .usulan-filter-field select { cursor: pointer; }
 .usulan-filter-field input::placeholder { color: var(--text-dim); }
+/* display:flex di atas menimpa [hidden] bawaan browser -- tanpa aturan ini
+   kabupaten/search field tetap tampil walau usulanModaChange() sudah set
+   .hidden=true saat moda != IJD, sama pola dgn .datatable-overlay[hidden]. */
+.usulan-filter-field[hidden] { display: none; }
 
 .usulan-combo { position: relative; padding-right: 6px; }
 .usulan-combo-toggle {
@@ -1196,6 +1200,17 @@ td.checklist-cell .ijd-badge { margin-right: 4px; }
 .usulan-kemenhub-galeri img {
   width: 100%; aspect-ratio: 4/3; object-fit: cover; border-radius: 4px; border: 1px solid var(--border);
 }
+
+.lalu-lintas-table-wrap { overflow-x: auto; border: 1px solid var(--border); border-radius: 8px; margin-top: 4px; }
+.lalu-lintas-table { width: 100%; border-collapse: collapse; font-size: 12.5px; white-space: nowrap; }
+.lalu-lintas-table th, .lalu-lintas-table td { padding: 7px 12px; text-align: left; }
+.lalu-lintas-table thead th {
+  position: sticky; top: 0; background: var(--panel); color: var(--text-dim);
+  font-weight: 600; border-bottom: 1px solid var(--border); z-index: 1;
+}
+.lalu-lintas-table tbody tr:nth-child(even) { background: rgba(255,255,255,.02); }
+.lalu-lintas-table tbody tr:hover { background: rgba(79,124,255,.08); }
+.lalu-lintas-table td:first-child, .lalu-lintas-table th:first-child { font-weight: 600; }
 
 .usulan-ijd-score {
   border-top: 1px dashed var(--border); padding-top: 10px; margin-top: 2px;

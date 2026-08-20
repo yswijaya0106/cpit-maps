@@ -44,3 +44,13 @@ CREATE TABLE IF NOT EXISTS bps_data_bandara (
   kode_kabupaten                INTEGER,    -- KD
   imported_at                   TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- Referensi silang (name-match, bukan penggabungan/penimpaan) ke
+-- bandara_kemenhub (hasil scrape hubud.kemenhub.go.id, 596 bandara,
+-- lebih luas & live) -- dipakai panel detail bandara utk menampilkan
+-- rute/fasilitas/foto/lalu-lintas dari sumber itu tanpa mengubah struktur
+-- bps_data_bandara yang sudah dipakai skoring/wilayah lain (kode_provinsi/
+-- kode_kabupaten resmi BPS TIDAK ada di bandara_kemenhub). Diisi
+-- scripts/match_bps_data_bandara_kemenhub.py.
+ALTER TABLE bps_data_bandara ADD COLUMN IF NOT EXISTS bandara_kemenhub_id INTEGER REFERENCES bandara_kemenhub (bandara_id);
+ALTER TABLE bps_data_bandara ADD COLUMN IF NOT EXISTS match_skor NUMERIC(4, 3);   -- rasio kemiripan nama (difflib), 0-1 -- referensi konfiden match

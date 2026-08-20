@@ -102,6 +102,20 @@ function showIdentifyInfo(layerName, feature, latLng) {
     const namaProvinsi = feature.getProperty("PROVINSI");
     if (namaProvinsi) attachLakaLantasJoin(container, namaProvinsi);
   }
+  // Layer "Bandara Kemenhub" (native, titik = baris bandara_kemenhub
+  // sendiri) punya "Bandara ID" persis -- exact match, GET
+  // /api/bandara-kemenhub/{id}. Layer "Bandara"/"Bandara(1)" (SHP RBI lama,
+  // titik terpisah tanpa ID ini) fallback ke padanan nama best-effort,
+  // GET /api/maps/bandara-kemenhub-by-nama.
+  if (mapLayerRawName(layerName).startsWith("Bandara")) {
+    const bandaraId = feature.getProperty("Bandara ID");
+    const namaBandara = feature.getProperty("Name");
+    if (bandaraId != null) {
+      attachBandaraKemenhubJoin(container, `/api/bandara-kemenhub/${encodeURIComponent(bandaraId)}`);
+    } else if (namaBandara) {
+      attachBandaraKemenhubJoin(container, `/api/maps/bandara-kemenhub-by-nama?nama=${encodeURIComponent(namaBandara)}`);
+    }
+  }
 
   if (!state.identifyInfoWindow) {
     state.identifyInfoWindow = new google.maps.InfoWindow();
@@ -267,6 +281,39 @@ function attachLakaLantasJoin(container, namaProvinsi) {
           <td>${r.kerugian_materi != null ? formatRupiah(r.kerugian_materi) : "—"}</td>
         </tr>`).join("")}</tbody></table></div>
         <div class="hint">POLDA ${escapeHtml(data.polda)} · ${data.rows.length} tahun</div>`;
+    } catch (err) {
+      bodyEl.className = "identify-join-body hint";
+      bodyEl.textContent = String(err.message || err);
+    }
+  })();
+}
+
+/* Join layer overlay "Bandara"/"Bandara(1)" (SHP RBI, map_layers) ke
+   bandara_kemenhub (596 bandara, live scrape hubud.kemenhub.go.id, lihat
+   scripts/scrape_bandara_kemenhub.py) -- name-match best-effort via
+   GET /api/maps/bandara-kemenhub-by-nama, pola sama dgn
+   attachLakaLantasJoin (1 sumber, tanpa dropdown pilih tabel). Isi lebih
+   kaya dari sekadar tabel kolom=nilai (rute/fasilitas/terdekat/galeri),
+   jadi dirender custom, bukan reuse identify-table generik. */
+function attachBandaraKemenhubJoin(container, fetchUrl) {
+  const wrap = document.createElement("div");
+  wrap.className = "identify-join";
+  wrap.innerHTML = `
+    <div class="identify-join-head"><i class="bi bi-airplane"></i> Data Bandara (hubud.kemenhub.go.id)</div>
+    <div class="identify-join-body hint">Memuat...</div>`;
+  container.appendChild(wrap);
+  const bodyEl = wrap.querySelector(".identify-join-body");
+
+  (async () => {
+    try {
+      const res = await fetch(fetchUrl);
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || "Gagal memuat");
+      bodyEl.className = "identify-join-body";
+      // Reuse renderer yang sama dgn panel "Jelajahi Usulan Inpres" (moda
+      // Udara, static/js/usulan-inpres.js) -- semua tab (rute/terdekat/
+      // fasilitas/galeri) sekaligus, bukan versi ringkas terpisah.
+      renderBandaraKemenhubEnrichment(bodyEl, data);
     } catch (err) {
       bodyEl.className = "identify-join-body hint";
       bodyEl.textContent = String(err.message || err);

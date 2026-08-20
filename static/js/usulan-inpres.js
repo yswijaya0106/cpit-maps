@@ -391,6 +391,11 @@ function prettifyColumnLabel(col) {
 // tanpa fetch ulang. Darat/Laut memang tidak punya lat/lon di sumbernya
 // (lihat schema_angkutan_perintis.sql / schema_bps_kinerja_pelabuhan.sql),
 // jadi info panel tetap tampil, hanya tanpa aksi peta.
+// Kolom internal (bukan atribut sumber) -- disembunyikan dari dump kolom
+// mentah krn ditampilkan lewat bagian pengayaan Bandara Kemenhub di bawah,
+// bukan sbg baris tabel biasa.
+const USULAN_MODA_HIDDEN_COLS = new Set(["bandara_kemenhub_id", "match_skor"]);
+
 function showUsulanModaDetail(moda, nama, row, columns) {
   const detailEl = document.getElementById("usulanBrowseDetail");
   const fields = USULAN_MODA_FIELDS[moda];
@@ -400,6 +405,7 @@ function showUsulanModaDetail(moda, nama, row, columns) {
     <div class="adv-usulan-title">${escapeHtml(String(nama))}</div>
     <table class="usulan-detail-table">`;
   columns.forEach((c) => {
+    if (USULAN_MODA_HIDDEN_COLS.has(c)) return;
     const value = row[c];
     if (value === null || value === undefined || value === "") return;
     html += `<tr><th>${escapeHtml(prettifyColumnLabel(c))}</th><td>${escapeHtml(String(value))}</td></tr>`;
@@ -408,9 +414,117 @@ function showUsulanModaDetail(moda, nama, row, columns) {
   if (!hasPoint) {
     html += `<p class="hint" id="usulanModaTitikNote">Data ini tidak memiliki koordinat pada sumbernya -- mencari titik yang cocok di layer peta (BANDARA/Pelabuhan Nasional)...</p>`;
   }
+  html += `<div id="usulanModaKemenhubEnrichment"></div>`;
   html += `</div>`;
   detailEl.innerHTML = html;
   detailEl.scrollIntoView({ behavior: "smooth", block: "nearest" });
+
+  if (moda === "Udara" && row.bandara_kemenhub_id) {
+    loadBandaraKemenhubEnrichment(row.bandara_kemenhub_id);
+  }
+}
+
+// Data pengayaan (rute/fasilitas/bandara terdekat/galeri) dari
+// bandara_kemenhub (live scrape hubud.kemenhub.go.id), dimuat lewat
+// GET /api/bandara-kemenhub/{id} saat baris bps_data_bandara yang diklik
+// sudah punya bandara_kemenhub_id (name-match, lihat
+// scripts/match_bps_data_bandara_kemenhub.py). Tabel sumbernya beda dari
+// bps_data_bandara -- ini murni tambahan, bukan pengganti kolom di atas.
+async function loadBandaraKemenhubEnrichment(bandaraKemenhubId) {
+  const wrap = document.getElementById("usulanModaKemenhubEnrichment");
+  if (!wrap) return;
+  wrap.innerHTML = `<p class="hint"><i class="bi bi-hourglass-split"></i> Memuat data tambahan (rute/fasilitas/foto)...</p>`;
+  try {
+    const res = await fetch(`/api/bandara-kemenhub/${bandaraKemenhubId}`);
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || "Gagal memuat data tambahan");
+    renderBandaraKemenhubEnrichment(wrap, data);
+  } catch (err) {
+    wrap.innerHTML = `<p class="hint">Data tambahan tidak tersedia: ${escapeHtml(String(err.message || err))}</p>`;
+  }
+}
+
+function renderBandaraKemenhubEnrichment(wrap, data) {
+  const { bandara, rute, terdekat, fasilitas } = data;
+  const domestik = rute.filter((r) => r.tipe === "domestik");
+  const internasional = rute.filter((r) => r.tipe === "internasional");
+
+  let html = `<div class="usulan-kemenhub-enrichment">
+    <div class="adv-usulan-title" style="margin-top:1rem">Data Tambahan (hubud.kemenhub.go.id)</div>`;
+
+  // Field Data Umum yang belum tentu sudah tampil di tabel atribut layer
+  // pemicunya (lengkap kalau dari layer "Bandara Kemenhub" native, tapi
+  // TIDAK ada di layer "Bandara" SHP lama yang cuma name-match) --
+  // ditampilkan di sini juga supaya konsisten dari jalur manapun.
+  const dataUmumExtra = [
+    ["Kelurahan/Desa", bandara.kelurahan_desa],
+    ["Alamat Bandara", bandara.alamat_bandara],
+    ["Airnav Indonesia", bandara.airnav_info],
+    ["Status BLU", bandara.status_blu],
+    ["Dokumen Pendukung", bandara.dokumen_pendukung],
+  ].filter(([, v]) => v && v !== "-");
+  if (dataUmumExtra.length) {
+    html += `<table class="usulan-detail-table">${dataUmumExtra.map(([k, v]) =>
+      `<tr><th>${escapeHtml(k)}</th><td>${escapeHtml(String(v))}</td></tr>`
+    ).join("")}</table>`;
+  }
+
+  if (bandara.lalu_lintas_tahun) {
+    html += `<p class="hint">Lalu Lintas Udara ${bandara.lalu_lintas_tahun}: `
+      + `${(bandara.lalu_lintas_pesawat ?? "-").toLocaleString?.("id-ID") ?? bandara.lalu_lintas_pesawat ?? "-"} pesawat, `
+      + `${(bandara.lalu_lintas_penumpang ?? "-").toLocaleString?.("id-ID") ?? bandara.lalu_lintas_penumpang ?? "-"} penumpang, `
+      + `${(bandara.lalu_lintas_kargo_kg ?? "-").toLocaleString?.("id-ID") ?? bandara.lalu_lintas_kargo_kg ?? "-"} kg kargo</p>`;
+  }
+  html += `<button type="button" class="btn btn-ghost btn-sm usulan-kemenhub-lalulintas-btn" `
+    + `data-bandara-id="${bandara.bandara_id}" data-nama="${escapeHtml(bandara.nama_bandara || "")}">`
+    + `<i class="bi bi-bar-chart-line"></i> Lalu Lintas Udara Bulanan</button>`;
+
+  if (domestik.length || internasional.length) {
+    html += `<details open><summary>Rute (${rute.length})</summary><ul class="usulan-kemenhub-list">`;
+    [...domestik, ...internasional].forEach((r) => {
+      html += `<li>${escapeHtml(r.tujuan || "-")} — ${escapeHtml(r.maskapai || "-")}`
+        + ` <span class="hint">(${escapeHtml(r.pesawat || "-")}, ${escapeHtml(r.frekuensi || "-")}${r.tipe === "internasional" ? ", internasional" : ""})</span></li>`;
+    });
+    html += `</ul></details>`;
+  }
+
+  if (terdekat.length) {
+    html += `<details><summary>Bandar Udara Terdekat (${terdekat.length})</summary><ul class="usulan-kemenhub-list">`;
+    terdekat.slice(0, 10).forEach((t) => {
+      html += `<li>${escapeHtml(t.nama_terdekat || "-")} — ${t.jarak_km ?? "-"} km</li>`;
+    });
+    html += `</ul></details>`;
+  }
+
+  if (fasilitas.length) {
+    html += `<details><summary>Fasilitas (${fasilitas.length})</summary><ul class="usulan-kemenhub-list">`;
+    fasilitas.forEach((f) => {
+      const atribut = Object.entries(f.atribut || {}).map(([k, v]) => `${escapeHtml(k)}: ${escapeHtml(String(v))}`).join(" · ");
+      html += `<li><strong>${escapeHtml(f.jenis_fasilitas || "-")}</strong>${f.nama_item && f.nama_item !== f.jenis_fasilitas ? " — " + escapeHtml(f.nama_item) : ""}`
+        + (atribut ? ` <span class="hint">(${atribut})</span>` : "") + `</li>`;
+    });
+    html += `</ul></details>`;
+  }
+
+  if (bandara.transportasi_darat && bandara.transportasi_darat.length) {
+    html += `<details><summary>Transportasi (${bandara.transportasi_darat.length})</summary><ul class="usulan-kemenhub-list">`;
+    bandara.transportasi_darat.forEach((moda) => {
+      html += `<li>${escapeHtml(moda)}</li>`;
+    });
+    html += `</ul></details>`;
+  }
+
+  if (bandara.galeri_urls && bandara.galeri_urls.length) {
+    html += `<details><summary>Galeri (${bandara.galeri_urls.length})</summary><div class="usulan-kemenhub-galeri">`;
+    bandara.galeri_urls.forEach((url) => {
+      html += `<a href="${escapeHtml(url)}" target="_blank" rel="noopener"><img src="${escapeHtml(url)}" loading="lazy" alt=""></a>`;
+    });
+    html += `</div></details>`;
+  }
+
+  html += `<p class="hint">Sumber: <a href="${escapeHtml(bandara.detail_url || "")}" target="_blank" rel="noopener">hubud.kemenhub.go.id</a>, data referensi lepas dari IJD/usulan_inpres.</p>`;
+  html += `</div>`;
+  wrap.innerHTML = html;
 }
 
 async function loadUsulanModaList(reset) {
@@ -1623,6 +1737,103 @@ function bindUsulanModaDashboard() {
 }
 
 document.addEventListener("DOMContentLoaded", bindUsulanModaDashboard);
+
+// Dialog "Lalu Lintas Udara Bulanan" per bandara -- data jauh lebih detail
+// (bulanan, domestik/internasional terpisah, 8 metrik datang/berangkat)
+// drpd snapshot 1 tahun di renderBandaraKemenhubEnrichment. Tombol pemicunya
+// dirender berulang kali di tempat berbeda (panel "Jelajahi" & popup
+// identify peta, lihat renderBandaraKemenhubEnrichment) -- pakai event
+// delegation di document supaya tidak perlu bind ulang tiap render.
+async function openBandaraLaluLintasDialog(bandaraId, namaBandara) {
+  const overlay = document.getElementById("bandaraLaluLintasOverlay");
+  const view = document.getElementById("bandaraLaluLintasView");
+  document.getElementById("bandaraLaluLintasMeta").textContent = namaBandara || "";
+  overlay.hidden = false;
+  view.innerHTML = `<div class="laporan-distribusi-empty">
+    <i class="bi bi-hourglass-split"></i> Memuat...
+    <div class="datatable-loading-bar"><span></span></div>
+  </div>`;
+  try {
+    const res = await fetch(`/api/bandara-kemenhub/${bandaraId}/lalu-lintas`);
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || "Gagal memuat");
+    renderBandaraLaluLintasDialog(view, data);
+  } catch (err) {
+    view.innerHTML = `<div class="laporan-distribusi-empty">${escapeHtml(String(err.message || err))}</div>`;
+  }
+}
+
+const BULAN_ID = ["Jan", "Feb", "Mar", "Apr", "Mei", "Jun", "Jul", "Agu", "Sep", "Okt", "Nov", "Des"];
+
+function formatPeriodeBulan(periode) {
+  const [tahun, bulan] = String(periode).split("-");
+  return `${BULAN_ID[Number(bulan) - 1] || bulan} ${tahun}`;
+}
+
+function renderBandaraLaluLintasDialog(view, data) {
+  if (!data.iata) {
+    view.innerHTML = `<div class="laporan-distribusi-empty">Bandara ini tidak punya kode IATA -- data lalu lintas bulanan tidak tersedia (sumbernya dikunci per kode IATA).</div>`;
+    return;
+  }
+  if (!data.rows.length) {
+    view.innerHTML = `<div class="laporan-distribusi-empty">Belum ada data lalu lintas bulanan tercatat untuk IATA ${escapeHtml(data.iata)}.</div>`;
+    return;
+  }
+  const fmt = (v) => (v ?? 0).toLocaleString("id-ID");
+  const dv = (a, b) => `${fmt(a)} / ${fmt(b)}`;
+
+  const totalPesawat = data.rows.reduce((s, r) => s + (r.pesawat_datang ?? 0) + (r.pesawat_berangkat ?? 0), 0);
+  const totalPenumpang = data.rows.reduce((s, r) => s + (r.penumpang_datang ?? 0) + (r.penumpang_berangkat ?? 0), 0);
+  const totalKargo = data.rows.reduce((s, r) => s + (r.kargo_kg_datang ?? 0) + (r.kargo_kg_berangkat ?? 0), 0);
+  const periodeUnik = new Set(data.rows.map((r) => r.periode));
+
+  const kpis = `<div class="laporan-kpi-row">
+    ${laporanKpiTile("Total Pergerakan Pesawat", totalPesawat.toLocaleString("id-ID"), `${periodeUnik.size} bulan tercatat`)}
+    ${laporanKpiTile("Total Penumpang", totalPenumpang.toLocaleString("id-ID"), "datang + berangkat")}
+    ${laporanKpiTile("Total Kargo", `${totalKargo.toLocaleString("id-ID")} kg`, "datang + berangkat")}
+  </div>`;
+
+  const rows = data.rows.map((r) => `<tr>
+    <td>${escapeHtml(formatPeriodeBulan(r.periode))}</td>
+    <td>${escapeHtml(r.kategori)}</td>
+    <td>${dv(r.pesawat_datang, r.pesawat_berangkat)}</td>
+    <td>${dv(r.penumpang_datang, r.penumpang_berangkat)}</td>
+    <td>${dv(r.kargo_kg_datang, r.kargo_kg_berangkat)}</td>
+    <td>${dv(r.bagasi_kg_datang, r.bagasi_kg_berangkat)}</td>
+    <td>${dv(r.pos_kg_datang, r.pos_kg_berangkat)}</td>
+  </tr>`).join("");
+
+  view.innerHTML = `
+    ${kpis}
+    <p class="hint">IATA ${escapeHtml(data.iata)} · ${data.rows.length} baris (bulan × kategori) · kolom bernilai ganda dibaca "Datang / Berangkat"</p>
+    <div class="lalu-lintas-table-wrap"><table class="lalu-lintas-table">
+      <thead><tr>
+        <th>Periode</th><th>Kategori</th>
+        <th>Pesawat</th><th>Penumpang</th>
+        <th>Kargo (kg)</th><th>Bagasi (kg)</th><th>Pos (kg)</th>
+      </tr></thead>
+      <tbody>${rows}</tbody>
+    </table></div>
+    <p class="hint">Sumber: hubud.kemenhub.go.id, lepas dari skor IJD/usulan_inpres.</p>`;
+}
+
+function bindBandaraLaluLintasDialog() {
+  const overlay = document.getElementById("bandaraLaluLintasOverlay");
+  document.getElementById("bandaraLaluLintasClose").addEventListener("click", () => (overlay.hidden = true));
+  overlay.addEventListener("click", (e) => {
+    if (e.target === overlay) overlay.hidden = true;
+  });
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && !overlay.hidden) overlay.hidden = true;
+  });
+  document.addEventListener("click", (e) => {
+    const btn = e.target.closest(".usulan-kemenhub-lalulintas-btn");
+    if (!btn) return;
+    openBandaraLaluLintasDialog(btn.dataset.bandaraId, btn.dataset.nama);
+  });
+}
+
+document.addEventListener("DOMContentLoaded", bindBandaraLaluLintasDialog);
 
 function bindIjdDashboard() {
   document.getElementById("btnIjdDashboard").addEventListener("click", ijdDashboardOpen);

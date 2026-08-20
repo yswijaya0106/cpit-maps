@@ -7545,6 +7545,108 @@ def maps_cari_titik(jenis: str, nama: str):
     return {"ditemukan": False}
 
 
+def _bandara_kemenhub_payload(cur, bandara_id: int) -> dict | None:
+    cur.execute("SELECT * FROM bandara_kemenhub WHERE bandara_id = %s", (bandara_id,))
+    bandara = cur.fetchone()
+    if not bandara:
+        return None
+    cur.execute(
+        "SELECT tipe, tujuan, maskapai, pesawat, frekuensi FROM bandara_kemenhub_rute "
+        "WHERE bandara_id = %s ORDER BY tipe, tujuan", (bandara_id,),
+    )
+    rute = cur.fetchall()
+    cur.execute(
+        "SELECT nama_terdekat, jarak_km, bandara_terdekat_id FROM bandara_kemenhub_terdekat "
+        "WHERE bandara_id = %s ORDER BY jarak_km", (bandara_id,),
+    )
+    terdekat = cur.fetchall()
+    cur.execute(
+        "SELECT kategori, jenis_fasilitas, nama_item, atribut FROM bandara_kemenhub_fasilitas "
+        "WHERE bandara_id = %s ORDER BY kategori, jenis_fasilitas", (bandara_id,),
+    )
+    fasilitas = cur.fetchall()
+    return {
+        "bandara": jsonable_encoder(dict(bandara)),
+        "rute": [dict(r) for r in rute],
+        "terdekat": [dict(r) for r in terdekat],
+        "fasilitas": [jsonable_encoder(dict(r)) for r in fasilitas],
+    }
+
+
+@app.get("/api/bandara-kemenhub/{bandara_id}")
+def bandara_kemenhub_detail(bandara_id: int):
+    """Data pengayaan (rute/fasilitas/bandara terdekat/galeri) dari hasil
+    scrape hubud.kemenhub.go.id -- dipakai panel detail Udara di "Jelajahi
+    Usulan Inpres" saat baris bps_data_bandara yang diklik sudah punya
+    bandara_kemenhub_id (hasil name-match, lihat
+    scripts/match_bps_data_bandara_kemenhub.py). TIDAK terkait
+    usulan_inpres/IJD."""
+    with db_cursor() as cur:
+        payload = _bandara_kemenhub_payload(cur, bandara_id)
+    if not payload:
+        raise HTTPException(404, "Bandara tidak ditemukan")
+    return payload
+
+
+@app.get("/api/maps/bandara-kemenhub-by-nama")
+def bandara_kemenhub_by_nama(nama: str):
+    """Padanan attachBandaraKemenhubJoin di identify popup layer overlay
+    "BANDARA" (SHP RBI, map_layers, attrs.Name) -- name-match best-effort
+    (ILIKE) ke bandara_kemenhub, BUKAN join berbasis kode spt
+    kecamatan_join_data. Sumber peta ini beda tanggal/vintage dari
+    bandara_kemenhub (live scrape) jadi penamaan bisa sedikit beda
+    (mis. "Soekarno Hatta" vs "Soekarno-Hatta") -- best-match terpendek
+    yg cocok, pola sama dgn maps_cari_titik."""
+    inti = _CARI_TITIK_PREFIX_RE.sub("", nama.strip())
+    if not inti:
+        raise HTTPException(404, "Tidak ditemukan padanan di bandara_kemenhub")
+    with db_cursor() as cur:
+        cur.execute(
+            "SELECT bandara_id FROM bandara_kemenhub WHERE nama_bandara ILIKE %s "
+            "ORDER BY length(nama_bandara) ASC LIMIT 1",
+            (f"%{inti}%",),
+        )
+        row = cur.fetchone()
+        if not row:
+            raise HTTPException(404, "Tidak ditemukan padanan di bandara_kemenhub")
+        payload = _bandara_kemenhub_payload(cur, row["bandara_id"])
+    return payload
+
+
+@app.get("/api/bandara-kemenhub/{bandara_id}/lalu-lintas")
+def bandara_kemenhub_lalu_lintas(bandara_id: int):
+    """Statistik lalu lintas udara BULANAN per bandara (pesawat/penumpang/
+    kargo/bagasi/pos, datang & berangkat, domestik/internasional) dari
+    lalu_lintas_udara_bandara (scripts/scrape_lalu_lintas_udara_bandara.py)
+    -- jauh lebih detail dari lalu_lintas_tahun/_pesawat/_penumpang/_kargo_kg
+    di bandara_kemenhub sendiri (cuma snapshot 1 tahun terakhir dari tab
+    Data Umum). Di-join via IATA (kolom kode_bandara di sumbernya = kode
+    IATA persis, diverifikasi 20 Agu 2026), BUKAN bandara_id -- bandara
+    tanpa IATA (banyak landasan perintis kecil) tidak akan punya data di
+    sini sama sekali. TIDAK terkait usulan_inpres/IJD."""
+    with db_cursor() as cur:
+        cur.execute("SELECT nama_bandara, iata FROM bandara_kemenhub WHERE bandara_id = %s", (bandara_id,))
+        bandara = cur.fetchone()
+        if not bandara:
+            raise HTTPException(404, "Bandara tidak ditemukan")
+        if not bandara["iata"] or bandara["iata"] == "-":
+            return {"nama_bandara": bandara["nama_bandara"], "iata": None, "rows": []}
+        cur.execute(
+            "SELECT periode, kategori, pesawat_datang, pesawat_berangkat, "
+            "penumpang_datang, penumpang_berangkat, penumpang_transit_datang, penumpang_transit_berangkat, "
+            "kargo_kg_datang, kargo_kg_berangkat, bagasi_kg_datang, bagasi_kg_berangkat, "
+            "pos_kg_datang, pos_kg_berangkat "
+            "FROM lalu_lintas_udara_bandara WHERE kode_bandara = %s ORDER BY periode, kategori",
+            (bandara["iata"],),
+        )
+        rows = cur.fetchall()
+    return {
+        "nama_bandara": bandara["nama_bandara"],
+        "iata": bandara["iata"],
+        "rows": [jsonable_encoder(dict(r)) for r in rows],
+    }
+
+
 def _fetch_usulan_geometry(usulan_id: int) -> dict:
     with db_cursor() as cur:
         cur.execute(

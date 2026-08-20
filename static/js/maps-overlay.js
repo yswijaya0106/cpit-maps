@@ -99,6 +99,14 @@ const MAP_LAYER_CATEGORIES = [
   // pusat maskapai dalam negeri/asing yang berhasil digeokode.
   { id: "maskapai", label: "Maskapai", icon: "bi-airplane-engines",
     match: (p) => p === "MASKAPAI" },
+  // Bandara Kemenhub: bucket nasional flat (scripts/import_bandara_kemenhub_to_postgis.py),
+  // sumbernya tabel bandara_kemenhub (live scrape hubud.kemenhub.go.id, 596
+  // bandara) -- TERPISAH dari layer "Bandara" SHP RBI lama (masih di kategori
+  // "Simpul Transportasi" di atas, tidak ditimpa). Identify popup-nya
+  // menampilkan rute/fasilitas/terdekat/galeri lewat join exact-match
+  // "Bandara ID" (attachBandaraKemenhubJoin, static/js/map-tools.js).
+  { id: "bandara-kemenhub", label: "Bandara (Live, Kemenhub)", icon: "bi-airplane-fill",
+    match: (p) => p === "BANDARA KEMENHUB" },
   { id: "jalan", label: "Jalan", icon: "bi-signpost-2", match: () => true }, // catch-all, HARUS terakhir
 ];
 

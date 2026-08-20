@@ -1,8 +1,9 @@
 # -*- coding: utf-8 -*-
-"""Scrape daftar Maskapai Dalam Negeri (kode organisasi 121-xxx) dari situs
-resmi Ditjen Perhubungan Udara Kemenhub
-(https://hubud.kemenhub.go.id/maskapai-organisasi, halaman ?page_negeri=1..11)
-+ halaman detail tiap maskapai, simpan ke tabel maskapai_organisasi. Lihat
+"""Scrape daftar maskapai dari situs resmi Ditjen Perhubungan Udara Kemenhub
+(https://hubud.kemenhub.go.id/maskapai-organisasi), kedua kategori: "Maskapai
+Dalam Negeri" (param page_negeri, kode 121-xxx/135-xxx/AOC-xxx) dan "Maskapai
+Asing" (param page_asing, kode 129-xxx) + halaman detail tiap maskapai,
+simpan ke tabel maskapai_organisasi. Lihat
 scripts/schema_maskapai_organisasi.sql. TIDAK terkait usulan_inpres/IJD.
 
 Bukan file lokal (xlsx/PDF) spt import_*.py lain -- ini live scraping,
@@ -13,8 +14,9 @@ Idempotent: UPSERT per kode_organisasi (ON CONFLICT DO UPDATE), aman
 dijalankan ulang -- jalankan lagi kapan saja utk menyegarkan data.
 
 Usage (venv aktif):
-    python scripts/scrape_maskapai_organisasi.py
-    python scripts/scrape_maskapai_organisasi.py --max-page 11   # default
+    python scripts/scrape_maskapai_organisasi.py                    # negeri (1-11) + asing (1-6)
+    python scripts/scrape_maskapai_organisasi.py --kategori negeri  # cuma satu kategori
+    python scripts/scrape_maskapai_organisasi.py --kategori asing --max-page 6
 """
 import argparse
 import io
@@ -38,6 +40,12 @@ SCHEMA_PATH = Path(__file__).resolve().parent / "schema_maskapai_organisasi.sql"
 REQUEST_DELAY = 0.4
 REQUEST_TIMEOUT = 20
 
+# kategori -> (param query, id kontainer div, default halaman terakhir)
+KATEGORI = {
+    "negeri": ("page_negeri", "content-maskapai-negeri", 11),
+    "asing": ("page_asing", "content-maskapai-asing", 6),
+}
+
 
 def _clean_text(v):
     if v is None:
@@ -53,9 +61,9 @@ def _fetch(url, params=None):
     return resp.text
 
 
-def _parse_listing(html):
+def _parse_listing(html, container_id):
     soup = BeautifulSoup(html, "html.parser")
-    container = soup.find(id="content-maskapai-negeri")
+    container = soup.find(id=container_id)
     if not container:
         return []
     rows = []
@@ -90,30 +98,24 @@ def _parse_detail(html):
     return data
 
 
-def main():
-    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--max-page", type=int, default=11, help="halaman terakhir page_negeri (default 11)")
-    args = ap.parse_args()
-
-    with pg_cursor() as cur:
-        cur.execute(SCHEMA_PATH.read_text(encoding="utf-8"))
-
+def _scrape_kategori(kategori, max_page):
+    param_name, container_id, _ = KATEGORI[kategori]
     listing_rows = []
-    for page in range(1, args.max_page + 1):
-        print(f"Mengambil daftar halaman {page}/{args.max_page}...")
-        params = {"page_negeri": page} if page > 1 else None
+    for page in range(1, max_page + 1):
+        print(f"[{kategori}] Mengambil daftar halaman {page}/{max_page}...")
+        params = {param_name: page} if page > 1 else None
         html = _fetch(BASE_URL, params=params)
-        rows = _parse_listing(html)
+        rows = _parse_listing(html, container_id)
         if not rows:
             print(f"  (kosong, berhenti di halaman {page})")
             break
         listing_rows.extend(rows)
         time.sleep(REQUEST_DELAY)
-    print(f"Total {len(listing_rows)} maskapai ditemukan di daftar.\n")
+    print(f"[{kategori}] Total {len(listing_rows)} maskapai ditemukan di daftar.\n")
 
     saved = 0
     for i, (kode, nama, telepon_listing, detail_url) in enumerate(listing_rows, start=1):
-        print(f"[{i}/{len(listing_rows)}] {kode} {nama}...")
+        print(f"[{kategori} {i}/{len(listing_rows)}] {kode} {nama}...")
         try:
             detail_html = _fetch(detail_url)
             detail = _parse_detail(detail_html)
@@ -125,11 +127,12 @@ def main():
         with pg_cursor() as cur:
             cur.execute(
                 """INSERT INTO maskapai_organisasi
-                       (kode_organisasi, nama_maskapai, telepon_listing, nama_perusahaan,
+                       (kode_organisasi, kategori, nama_maskapai, telepon_listing, nama_perusahaan,
                         dba_name, alamat_perusahaan, telepon, fax, email,
                         perpanjangan_terakhir_sertifikat, status_operasi, detail_url)
-                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                    ON CONFLICT (kode_organisasi) DO UPDATE SET
+                       kategori=EXCLUDED.kategori,
                        nama_maskapai=EXCLUDED.nama_maskapai,
                        telepon_listing=EXCLUDED.telepon_listing,
                        nama_perusahaan=EXCLUDED.nama_perusahaan,
@@ -140,7 +143,7 @@ def main():
                        status_operasi=EXCLUDED.status_operasi,
                        detail_url=EXCLUDED.detail_url, scraped_at=now()""",
                 (
-                    kode, nama, telepon_listing,
+                    kode, kategori, nama, telepon_listing,
                     detail.get("Nama Perusahaan"),
                     detail.get("Doing Business as (Dba. Name)"),
                     detail.get("Alamat Perusahaan"),
@@ -154,7 +157,27 @@ def main():
             )
         saved += 1
 
-    print(f"\nSelesai: {saved} maskapai di-upsert ke maskapai_organisasi.")
+    return saved
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--kategori", choices=["negeri", "asing", "semua"], default="semua",
+                     help="default: semua (negeri + asing)")
+    ap.add_argument("--max-page", type=int, default=None,
+                     help="override halaman terakhir (default per kategori: negeri=11, asing=6)")
+    args = ap.parse_args()
+
+    with pg_cursor() as cur:
+        cur.execute(SCHEMA_PATH.read_text(encoding="utf-8"))
+
+    kategoris = ["negeri", "asing"] if args.kategori == "semua" else [args.kategori]
+    total_saved = 0
+    for kat in kategoris:
+        max_page = args.max_page if args.max_page is not None else KATEGORI[kat][2]
+        total_saved += _scrape_kategori(kat, max_page)
+
+    print(f"\nSelesai: {total_saved} maskapai di-upsert ke maskapai_organisasi.")
 
 
 if __name__ == "__main__":

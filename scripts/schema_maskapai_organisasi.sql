@@ -1,7 +1,9 @@
 -- Daftar maskapai (Air Operator Certificate) dari situs resmi Ditjen
 -- Perhubungan Udara Kemenhub (https://hubud.kemenhub.go.id/maskapai-organisasi),
--- kategori "Maskapai Dalam Negeri" (kode organisasi 121-xxx). Sumber web,
--- bukan xlsx/PDF -- diisi lewat scraping, bukan import file lokal.
+-- kedua kategori di situs itu: "Maskapai Dalam Negeri" (kode 121-xxx/135-xxx/
+-- AOC-xxx, param page_negeri) dan "Maskapai Asing" (kode 129-xxx, param
+-- page_asing) -- dibedakan lewat kolom kategori. Sumber web, bukan
+-- xlsx/PDF -- diisi lewat scraping, bukan import file lokal.
 -- TIDAK terkait usulan_inpres/IJD.
 --
 -- Kolom telepon/fax/email dari halaman detail bisa berisi lebih dari satu
@@ -14,6 +16,7 @@
 
 CREATE TABLE IF NOT EXISTS maskapai_organisasi (
   kode_organisasi                  TEXT PRIMARY KEY,
+  kategori                         TEXT NOT NULL DEFAULT 'negeri',  -- 'negeri' | 'asing'
   nama_maskapai                    TEXT NOT NULL,
   telepon_listing                  TEXT,
   nama_perusahaan                  TEXT,
@@ -27,3 +30,4 @@ CREATE TABLE IF NOT EXISTS maskapai_organisasi (
   detail_url                       TEXT,
   scraped_at                       TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+ALTER TABLE maskapai_organisasi ADD COLUMN IF NOT EXISTS kategori TEXT NOT NULL DEFAULT 'negeri';

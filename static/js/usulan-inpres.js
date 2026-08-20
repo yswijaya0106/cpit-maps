@@ -1500,6 +1500,11 @@ function usulanModaDashboardRender(data) {
       const th24 = data.keselamatan.tren_nasional.find((t) => t.tahun === "2024");
       return th24 ? th24.kejadian.toLocaleString("id-ID") : "-";
     })(), "seluruh POLDA, sumber Korlantas POLRI")}
+    ${laporanKpiTile("Demand vs Kapasitas Bandara", (() => {
+      const demand = data.udara.total_demand_pax, kap = data.udara.total_kapasitas_estimasi;
+      if (!demand || !kap) return "-";
+      return `${Math.round(demand / kap * 100)}%`;
+    })(), `${Math.round((data.udara.total_demand_pax || 0) / 1e6)}jt demand / ${Math.round((data.udara.total_kapasitas_estimasi || 0) / 1e6)}jt kapasitas eksisting`)}
   </div>`;
 
   const udaraHtml = `<div class="laporan-chart-block">
@@ -1520,6 +1525,22 @@ function usulanModaDashboardRender(data) {
       maxLabelFn: (it) => `${it.label} (${it.provinsi}): ${Math.round(it.count).toLocaleString("id-ID")} ton`,
       barLabelFn: (it) => Math.round(it.count).toLocaleString("id-ID"),
     })}
+  </div>`;
+
+  const pd = data.laut.pelabuhan_daerah;
+  const pdRusak = pd.per_kondisi.filter((k) => /rusak/i.test(k.label)).reduce((s, k) => s + k.count, 0);
+  const pelabuhanDaerahHtml = `<div class="laporan-chart-block">
+    <div class="laporan-chart-title"><i class="bi bi-signpost"></i> Laut — Kondisi Pelabuhan Daerah (Lokal, di luar cakupan BPS)</div>
+    <div class="laporan-chart-sub">
+      ${pd.total.toLocaleString("id-ID")} pelabuhan tercatat, ${pd.dengan_koordinat.toLocaleString("id-ID")} punya koordinat ·
+      ${pdRusak.toLocaleString("id-ID")} dari ${pd.total.toLocaleString("id-ID")} kondisi rusak (${Math.round(pdRusak / pd.total * 100)}%)
+    </div>
+    ${laporanHBar(pd.per_kondisi, {
+      valueKey: "count",
+      maxLabelFn: (it) => `${it.label}: ${it.count} pelabuhan`,
+      barLabelFn: (it) => `${it.count}`,
+    })}
+    <div class="laporan-chart-sub" style="margin-top:8px">Kewenangan: ${pd.per_kewenangan.map((k) => `${k.label} ${k.count}`).join(" · ")}</div>
   </div>`;
 
   const daratHtml = `<div class="laporan-chart-block">
@@ -1574,8 +1595,8 @@ function usulanModaDashboardRender(data) {
   </div>`;
 
   document.getElementById("usulanModaDashboardView").innerHTML =
-    kpis + udaraHtml + lautHtml + lautTrenHtml + daratHtml + daratKemacetanHtml + trenLakaHtml + topLakaHtml +
-    `<p class="hint">Sumber: tabel referensi docs/New/ (bps_data_bandara, angkutan_perintis, bps_kinerja_pelabuhan, bps_lhr_ruas_nasional) dan anev_laka_lantas_polda — lepas dari skor IJD/usulan_inpres, murni ringkasan/sebaran data itu sendiri.</p>`;
+    kpis + udaraHtml + lautHtml + lautTrenHtml + pelabuhanDaerahHtml + daratHtml + daratKemacetanHtml + trenLakaHtml + topLakaHtml +
+    `<p class="hint">Sumber: tabel referensi docs/New/ (bps_data_bandara, angkutan_perintis, bps_kinerja_pelabuhan, bps_lhr_ruas_nasional, pelabuhan_daerah) dan anev_laka_lantas_polda — lepas dari skor IJD/usulan_inpres, murni ringkasan/sebaran data itu sendiri.</p>`;
 }
 
 function bindUsulanModaDashboard() {

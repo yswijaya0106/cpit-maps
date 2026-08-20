@@ -3507,6 +3507,22 @@ def usulan_moda_dashboard():
         laut_tren_tahun = cur.fetchall()
 
         cur.execute(
+            "SELECT COUNT(*) AS total, COUNT(*) FILTER (WHERE lat IS NOT NULL AND lon IS NOT NULL) AS dengan_koordinat "
+            "FROM pelabuhan_daerah"
+        )
+        pelabuhan_daerah_summary = cur.fetchone()
+        cur.execute(
+            "SELECT COALESCE(kondisi_pelabuhan, 'Tidak diketahui') AS label, COUNT(*) AS count "
+            "FROM pelabuhan_daerah GROUP BY 1 ORDER BY count DESC"
+        )
+        pelabuhan_daerah_kondisi = cur.fetchall()
+        cur.execute(
+            "SELECT COALESCE(kewenangan, 'Tidak diketahui') AS label, COUNT(*) AS count "
+            "FROM pelabuhan_daerah GROUP BY 1 ORDER BY count DESC"
+        )
+        pelabuhan_daerah_kewenangan = cur.fetchall()
+
+        cur.execute(
             "SELECT tahun, SUM(kejadian) AS kejadian, SUM(korban_md) AS korban_md, "
             "SUM(korban_lb) AS korban_lb, SUM(korban_lr) AS korban_lr "
             "FROM anev_laka_lantas_polda GROUP BY tahun ORDER BY tahun"
@@ -3552,6 +3568,12 @@ def usulan_moda_dashboard():
             ],
             "per_provinsi": [dict(r) for r in laut_provinsi],
             "tren_tahun": [jsonable_encoder(dict(r)) for r in laut_tren_tahun],
+            "pelabuhan_daerah": {
+                "total": pelabuhan_daerah_summary["total"],
+                "dengan_koordinat": pelabuhan_daerah_summary["dengan_koordinat"],
+                "per_kondisi": [dict(r) for r in pelabuhan_daerah_kondisi],
+                "per_kewenangan": [dict(r) for r in pelabuhan_daerah_kewenangan],
+            },
         },
         "keselamatan": {
             "tren_nasional": [jsonable_encoder(dict(r)) for r in tren_nasional],

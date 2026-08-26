@@ -35,6 +35,30 @@ function mapLayerPreviewColor(layerName) {
   return MAP_LAYER_PALETTE[hash % MAP_LAYER_PALETTE.length];
 }
 
+// Warna per kategori "STATUS OPERASI" utk layer "Stasiun Kereta Api" (dari
+// scripts/import_kereta_api_kmz_to_postgis.py) -- meniru legenda kategori
+// warna ikon Google My Maps sumbernya (dicocokkan lewat styleUrl vs field
+// STATUS OPERASI tiap placemark saat impor), bukan warna acak. Dipakai baik
+// oleh applyLayerStyle (warna titik di peta) maupun legend (sub-daftar
+// kategori di bawah nama layer).
+const STASIUN_STATUS_COLORS = {
+  "Beroperasi": "#0288D1",
+  "Tidak Beroperasi": "#C2185B",
+  "Sedang Dibangun": "#673AB7",
+  "Beroperasi dan Sedang dikembangkan": "#558B2F",
+  "Beroperasi LRT Jabodebek": "#EC407A",
+  "Beroperasi MRT": "#212121",
+  "Beroperasi LRT Jakarta": "#FF7043",
+  "Beroperasi KCJB": "#E53935",
+};
+const STASIUN_STATUS_DEFAULT_COLOR = "#90a4ae"; // status lain/kosong ("Other / No data")
+const STASIUN_STATUS_FIELD = "STATUS OPERASI";
+const STASIUN_LAYER_NAME = "Stasiun Kereta Api";
+
+function stasiunStatusColor(status) {
+  return STASIUN_STATUS_COLORS[status] || STASIUN_STATUS_DEFAULT_COLOR;
+}
+
 /* Kunci komposit provinsi+kabupaten+layer -- lihat catatan di state.js.
    Fungsi kecil di bawah dipakai di sini dan map-tools.js (legend/seleksi/
    identify) untuk menerjemahkan layerKey balik ke nama layer mentah
@@ -89,10 +113,15 @@ const MAP_LAYER_CATEGORIES = [
   // docs/kajian_data_baru_docs_new.md §8.
   { id: "sar", label: "Pencarian & Pertolongan (SAR)", icon: "bi-life-preserver",
     match: (p) => p === "BASARNAS" },
-  // Jalur Kereta Api: bucket nasional flat (scripts/import_kereta_api_to_postgis.py)
-  // -- lihat docs/kajian_data_baru_docs_new.md §6/§Fase 3.
+  // Jalur Kereta Api: dua bucket nasional flat berbeda sumber --
+  // "JALUR KERETA API" dari scripts/import_kereta_api_to_postgis.py (SHP
+  // Rel KA_2022 + BTP, lihat docs/kajian_data_baru_docs_new.md §6/§Fase 3)
+  // dan "KERETA API" dari scripts/import_kereta_api_kmz_to_postgis.py (KMZ
+  // Google My Maps "Peta Jalur Kereta Api" -- tambahan stasiun/jembatan/
+  // jalur perkotaan yang tidak ada di sumber SHP). Digabung ke kategori yang
+  // sama supaya user tidak perlu tahu ada 2 sumber terpisah.
   { id: "kereta-api", label: "Kereta Api", icon: "bi-train-front",
-    match: (p) => p === "JALUR KERETA API" },
+    match: (p) => p === "JALUR KERETA API" || p === "KERETA API" },
   // Maskapai: bucket nasional flat (scripts/import_maskapai_organisasi_to_postgis.py),
   // sumbernya tabel maskapai_organisasi (hasil scrape_maskapai_organisasi.py +
   // geocode_maskapai_organisasi.py), bukan file .shp -- titik lokasi kantor
@@ -603,11 +632,14 @@ function applyLayerStyle(key) {
     }
     const type = feature.getGeometry().getType();
     if (type === "Point" || type === "MultiPoint") {
+      const pointColor = mapLayerRawName(key) === STASIUN_LAYER_NAME
+        ? stasiunStatusColor(feature.getProperty(STASIUN_STATUS_FIELD))
+        : color;
       return {
         icon: {
           path: google.maps.SymbolPath.CIRCLE,
           scale: 4,
-          fillColor: color,
+          fillColor: pointColor,
           fillOpacity: 0.9 * opacity,
           strokeColor: "#0f1420",
           strokeWeight: 1,

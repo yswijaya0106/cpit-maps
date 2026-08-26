@@ -753,6 +753,9 @@ td.checklist-cell .ijd-badge { margin-right: 4px; }
   font-size: 11px; cursor: pointer; padding: 3px; line-height: 1; border-radius: 5px;
 }
 .map-legend-item-remove:hover { color: var(--danger); background: rgba(255,92,124,.12); }
+.map-legend-subitems { display: flex; flex-direction: column; gap: 4px; padding: 2px 0 4px 18px; }
+.map-legend-subitem { display: flex; align-items: center; gap: 8px; font-size: 11px; color: var(--text-dim); }
+.map-legend-subitem-label { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 .map-measure-result {
   position: absolute; top: 14px; left: 50%; transform: translateX(-50%); z-index: 6;

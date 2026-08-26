@@ -482,5 +482,20 @@ function updateMapLegend() {
       <button type="button" class="map-legend-item-remove" data-key="${escapeHtml(key)}" title="Matikan layer ini"><i class="bi bi-x-lg"></i></button>
     `;
     listEl.appendChild(row);
+    // Layer "Stasiun Kereta Api" punya banyak warna sekaligus (per STATUS
+    // OPERASI, lihat STASIUN_STATUS_COLORS di maps-overlay.js) -- satu swatch
+    // polos di atas tidak cukup mewakilinya, jadi tambahkan sub-daftar
+    // kategori di bawahnya, meniru legenda sumber Google My Maps-nya.
+    if (raw === STASIUN_LAYER_NAME) {
+      const sub = document.createElement("div");
+      sub.className = "map-legend-subitems";
+      sub.innerHTML = Object.entries(STASIUN_STATUS_COLORS).map(([status, c]) => `
+        <div class="map-legend-subitem">
+          <span class="maplayer-swatch" style="background:${c}"></span>
+          <span class="map-legend-subitem-label">${escapeHtml(status)}</span>
+        </div>
+      `).join("");
+      listEl.appendChild(sub);
+    }
   });
 }

@@ -69,6 +69,18 @@ function onFeatureClick(layerName, feature, latLng) {
 
 const IDENTIFY_HIGHLIGHT_STYLE = { strokeColor: "#22d3a5", strokeWeight: 4, strokeOpacity: 1, fillOpacity: 0.5, zIndex: 100 };
 
+// Beberapa sumber (mis. KML KAI) menyimpan deskripsi sebagai satu string
+// dengan literal "<br>" sebagai pemisah baris -- escape dulu isinya lalu
+// ganti pemisah itu jadi <br> sungguhan, supaya tidak tampil sebagai teks
+// mentah "&lt;br&gt;" di popup identify.
+function formatIdentifyValue(raw) {
+  return raw
+    .split(/<br\s*\/?>/i)
+    .map((part) => escapeHtml(part.trim()))
+    .filter((part) => part !== "")
+    .join("<br>");
+}
+
 function showIdentifyInfo(layerName, feature, latLng) {
   clearIdentifyHighlight();
   state.mapLayers.active[layerName]?.overrideStyle(feature, IDENTIFY_HIGHLIGHT_STYLE);
@@ -77,7 +89,7 @@ function showIdentifyInfo(layerName, feature, latLng) {
   const rows = [];
   feature.forEachProperty((value, key) => {
     if (value === null || value === undefined || value === "") return;
-    rows.push(`<tr><th>${escapeHtml(key)}</th><td>${escapeHtml(String(value))}</td></tr>`);
+    rows.push(`<tr><th>${escapeHtml(key)}</th><td>${formatIdentifyValue(String(value))}</td></tr>`);
   });
   const body = rows.length
     ? `<table class="identify-table">${rows.join("")}</table>`

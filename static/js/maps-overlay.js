@@ -496,8 +496,6 @@ async function showMapLayer(provinsi, kabupaten, layer) {
       return;
     }
 
-    const wasEmpty = Object.keys(state.mapLayers.active).length === 0;
-
     const data = new google.maps.Data({ map: state.map });
     data.addGeoJson(geojson);
     data.addListener("click", (e) => {
@@ -525,15 +523,6 @@ async function showMapLayer(provinsi, kabupaten, layer) {
     applyLayerStyle(key);
     if (provinsi === "BATAS KECAMATAN") updateKecamatanLintasan();
     updateMapLegend();
-
-    // Data ini biasanya di luar jendela peta yang sedang tampil (peta default
-    // di Jakarta) — arahkan peta ke sana saat layer pertama diaktifkan, agar
-    // pengguna langsung melihat hasilnya alih-alih mengira show/hide tidak jalan.
-    if (wasEmpty) {
-      const bounds = new google.maps.LatLngBounds();
-      data.forEach((feature) => feature.getGeometry().forEachLatLng((latLng) => bounds.extend(latLng)));
-      fitBoundsCapped(bounds);
-    }
   } catch (err) {
     console.error(err);
     toast("Gagal memuat layer peta", true);

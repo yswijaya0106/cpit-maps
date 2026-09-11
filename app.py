@@ -8412,9 +8412,7 @@ def pelabuhan_urgensi_preview(provinsi: List[str] = Query(default=[])):
     hasil = _pelabuhan_urgensi_bulk_rows(provinsi or None)
     out = [_pelabuhan_urgensi_row_detail(h["row"], h["skor"]) for h in hasil]
     return {"rows": out,
-            "catatan": ("Skor Urgensitas Penanganan Pelabuhan -- DRAF Fase 1 (5 dari 7 parameter kerangka; bobot "
-                        "placeholder sama rata, BELUM resmi). Lihat "
-                        "docs/kajian_implementasi_skor_urgensi_pelabuhan_laut.md.")}
+            "catatan": ("Skor Urgensitas Penanganan Pelabuhan")}
 
 
 PELABUHAN_URGENSI_EXPORT_KOLOM = [

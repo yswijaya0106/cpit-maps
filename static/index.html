@@ -320,6 +320,29 @@
       </div>
     </div>
 
+    <div class="datatable-overlay" id="pelabuhanUrgensiOverlay" hidden>
+      <div class="datatable-modal">
+        <div class="datatable-head">
+          <div class="datatable-head-title">
+            <h3><i class="bi bi-signpost-split"></i> Skor Urgensitas Penanganan Pelabuhan (DRAF)</h3>
+            <span class="datatable-meta" id="pelabuhanUrgensiMeta"></span>
+          </div>
+          <div class="datatable-head-actions">
+            <select id="pelabuhanUrgensiProvinsi" class="laporan-moda-select" title="Filter provinsi">
+              <option value="">Semua provinsi</option>
+            </select>
+            <button type="button" class="btn btn-primary btn-sm" id="pelabuhanUrgensiExport">
+              <i class="bi bi-file-earmark-excel"></i> Export Excel
+            </button>
+            <button type="button" class="icon-btn" id="pelabuhanUrgensiClose" aria-label="Tutup"><i
+                class="bi bi-x-lg"></i></button>
+          </div>
+        </div>
+        <div class="hint" id="pelabuhanUrgensiCatatan" style="padding: 8px 16px;"></div>
+        <div class="datatable-scroll" id="pelabuhanUrgensiScroll"></div>
+      </div>
+    </div>
+
     <div class="datatable-overlay" id="ijdDashboardOverlay" hidden>
       <div class="datatable-modal">
         <div class="datatable-head">
@@ -636,6 +659,9 @@
                 Export XLSX</button>
               <button id="btnUsulanModaDashboard" class="btn btn-ghost btn-sm" hidden><i class="bi bi-speedometer2"></i>
                 Dashboard</button>
+              <button id="btnUrgensiPelabuhan" class="btn btn-ghost btn-sm" hidden
+                title="Skor Urgensitas Penanganan Pelabuhan (DRAF, kerangka lAUT) — bobot placeholder, belum resmi">
+                <i class="bi bi-signpost-split"></i> Urgensi Pelabuhan</button>
               <input type="file" id="usulanImportFile" accept=".xlsx" hidden />
             </div>
             <div class="usulan-browse-filters">
@@ -780,6 +806,7 @@
   <script src="/js/route-list.js"></script>
   <script src="/js/analysis.js"></script>
   <script src="/js/usulan-inpres.js"></script>
+  <script src="/js/pelabuhan-urgensi.js"></script>
   <script src="/js/chat.js"></script>
   <script src="/js/export.js"></script>
   <script src="/js/main.js"></script>

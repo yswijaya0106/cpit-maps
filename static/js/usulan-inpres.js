@@ -619,6 +619,7 @@ function usulanModaChange(moda) {
   applyAuthRestrictions(); // di atas baris sebelumnya: role non-admin tetap tidak lihat tombol Import
   document.getElementById("btnUsulanModaExport").hidden = isIjd;
   document.getElementById("btnUsulanModaDashboard").hidden = isIjd;
+  document.getElementById("btnUrgensiPelabuhan").hidden = moda !== "Laut";
   document.getElementById("usulanKabupatenField").hidden = !isIjd;
   document.getElementById("usulanSearchInput").placeholder = USULAN_MODA_SEARCH_PLACEHOLDER[moda] || "Cari...";
 

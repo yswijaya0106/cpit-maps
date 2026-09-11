@@ -8149,6 +8149,12 @@ PELABUHAN_URGENSI_BOBOT = {p: 1.0 / len(PELABUHAN_URGENSI_PARAM) for p in PELABU
 # (PENDUDUK_RADIUS_KM di spatial_join_pelabuhan_urgensi.py, 93/60/40) --
 # lihat catatan ambiguitas di kajian §1, belum dikonfirmasi mana yang benar.
 PELABUHAN_AMBANG_KEDEKATAN_KM = {"PP": 93, "PR": 37, "PL": 10}
+# Radius parameter #6 Jumlah Penduduk -- SAMA PERSIS dgn PENDUDUK_RADIUS_KM
+# di scripts/spatial_join_pelabuhan_urgensi.py (dipakai saat precompute
+# penduduk_radius_total/_wilayah_json); disalin ke sini HANYA utk label
+# tampilan (kolom "Radius Penduduk (km)" di preview/export), tidak dipakai
+# utk hitung ulang apa pun -- nilai sesungguhnya sudah di kolom DB.
+PENDUDUK_RADIUS_KM = {"PP": 93, "PR": 60, "PL": 40}
 
 
 def _pelabuhan_urgensi_bulk_ctx():
@@ -8362,19 +8368,78 @@ def _pelabuhan_urgensi_bulk_rows(provinsi: Optional[List[str]] = None):
     return [{"row": row, "skor": _compute_pelabuhan_urgensi_score(row, ctx)} for row in rows]
 
 
+def _pelabuhan_urgensi_row_detail(r, s):
+    """Baris ringkas + SELURUH nilai mentah per parameter (nama pelabuhan
+    terdekat, ambang, program 3TP, wilayah tercakup penduduk, rincian
+    kondisi jalan, dst) -- dipakai bareng oleh preview (tabel UI) dan
+    export xlsx supaya kedua tempat selalu tampilkan detail yang sama,
+    tidak ada yang "lebih ringkas" dari yang lain."""
+    k = s["komponen"]
+    kd = k["kedekatan"]["nilai_mentah"]
+    tp = k["tiga_tp"]["nilai_mentah"]
+    ks = k["kawasan_strategis"]["nilai_mentah"]
+    pd = k["penduduk"]["nilai_mentah"]
+    ak = k["akses"]["nilai_mentah"]
+    wilayah = pd.get("wilayah") or []
+    return {
+        "id": r["id"], "nama_pelabuhan": r["nama_pelabuhan"], "provinsi": r["provinsi"],
+        "kabupaten_kota": r["kabupaten_kota"], "hirarki_kode": r["hirarki_kode"],
+        "kedekatan_pelabuhan_terdekat": kd.get("pelabuhan_terdekat"),
+        "kedekatan_jarak_km": kd.get("jarak_km"),
+        "kedekatan_ambang_km": PELABUHAN_AMBANG_KEDEKATAN_KM.get(r["hirarki_kode"]),
+        "kedekatan_skor": k["kedekatan"]["skor_0_10"],
+        "tiga_tp_kategori": tp.get("kategori"),
+        "tiga_tp_program": "\n".join(tp.get("program") or []) if tp.get("program") else None,
+        "tiga_tp_skor": k["tiga_tp"]["skor_0_10"],
+        "ripn": ks.get("ripn"), "psn": ks.get("psn"),
+        "kawasan_strategis_skor": k["kawasan_strategis"]["skor_0_10"],
+        "penduduk_radius_km": PENDUDUK_RADIUS_KM.get(r["hirarki_kode"]),
+        "penduduk_wilayah_tercakup": "\n".join(f"{w['nama']} : {w['penduduk']:,}".replace(",", ".") for w in wilayah) if wilayah else None,
+        "penduduk_total": pd.get("penduduk_radius_total"),
+        "penduduk_skor": k["penduduk"]["skor_0_10"],
+        "akses_ruas": ak.get("ruas"), "akses_jarak_ruas_km": ak.get("jarak_ruas_km"),
+        "akses_kondisi_baik_km": r["ruas_ijd_kondisi_baik_km"], "akses_kondisi_sedang_km": r["ruas_ijd_kondisi_sedang_km"],
+        "akses_kondisi_ringan_km": r["ruas_ijd_kondisi_ringan_km"], "akses_kondisi_berat_km": r["ruas_ijd_kondisi_berat_km"],
+        "akses_pct_mantap": ak.get("pct_mantap"), "akses_lebar_jalan_m": ak.get("lebar_jalan_m"),
+        "akses_skor_kemantapan": ak.get("skor_kemantapan_0_5"), "akses_skor_lebar": ak.get("skor_lebar_0_5"),
+        "akses_skor": k["akses"]["skor_0_10"],
+        "kelengkapan": s["kelengkapan"], "skor_total_0_100": s["skor_total_0_100"],
+    }
+
+
 @app.get("/api/pelabuhan/urgensi-score/preview")
 def pelabuhan_urgensi_preview(provinsi: List[str] = Query(default=[])):
     hasil = _pelabuhan_urgensi_bulk_rows(provinsi or None)
-    out = []
-    for h in hasil:
-        r, s = h["row"], h["skor"]
-        out.append({"id": r["id"], "nama_pelabuhan": r["nama_pelabuhan"], "provinsi": r["provinsi"],
-                     "kabupaten_kota": r["kabupaten_kota"], "hirarki_kode": r["hirarki_kode"],
-                     "skor_total_0_100": s["skor_total_0_100"], "kelengkapan": s["kelengkapan"]})
+    out = [_pelabuhan_urgensi_row_detail(h["row"], h["skor"]) for h in hasil]
     return {"rows": out,
             "catatan": ("Skor Urgensitas Penanganan Pelabuhan -- DRAF Fase 1 (5 dari 7 parameter kerangka; bobot "
                         "placeholder sama rata, BELUM resmi). Lihat "
                         "docs/kajian_implementasi_skor_urgensi_pelabuhan_laut.md.")}
+
+
+PELABUHAN_URGENSI_EXPORT_KOLOM = [
+    # (header, key di _pelabuhan_urgensi_row_detail)
+    ("Nama Pelabuhan", "nama_pelabuhan"), ("Provinsi", "provinsi"), ("Kab/Kota", "kabupaten_kota"),
+    ("Hirarki", "hirarki_kode"),
+    ("Pelabuhan Sehirarki Terdekat", "kedekatan_pelabuhan_terdekat"),
+    ("Jarak ke Pelabuhan Terdekat (km)", "kedekatan_jarak_km"),
+    ("Ambang \"Sudah Terlayani\" Hirarki Ini (km)", "kedekatan_ambang_km"),
+    ("Skor Kedekatan (0-10)", "kedekatan_skor"),
+    ("Klasifikasi 3TP (Kabupaten)", "tiga_tp_kategori"), ("Program/Status 3TP", "tiga_tp_program"),
+    ("Skor 3TP (0-10)", "tiga_tp_skor"),
+    ("RIPN", "ripn"), ("Status PSN (belum tersedia sumbernya)", "psn"),
+    ("Skor Kawasan Strategis (0-5, RIPN saja)", "kawasan_strategis_skor"),
+    ("Radius Penduduk (km)", "penduduk_radius_km"), ("Wilayah Tercakup (kab/kota atau kecamatan)", "penduduk_wilayah_tercakup"),
+    ("Total Penduduk dalam Radius", "penduduk_total"), ("Skor Penduduk (0-10)", "penduduk_skor"),
+    ("Ruas Usulan IJD Terdekat", "akses_ruas"), ("Jarak ke Ruas (km)", "akses_jarak_ruas_km"),
+    ("Kondisi Baik (km)", "akses_kondisi_baik_km"), ("Kondisi Sedang (km)", "akses_kondisi_sedang_km"),
+    ("Kondisi Ringan (km)", "akses_kondisi_ringan_km"), ("Kondisi Berat (km)", "akses_kondisi_berat_km"),
+    ("% Mantap Ruas", "akses_pct_mantap"), ("Lebar Jalan Ruas (m)", "akses_lebar_jalan_m"),
+    ("Skor Kemantapan (0-5)", "akses_skor_kemantapan"), ("Skor Lebar Jalan (0-5)", "akses_skor_lebar"),
+    ("Skor Akses (0-10)", "akses_skor"),
+    ("Kelengkapan Data (dari 5 parameter)", "kelengkapan"),
+    ("Skor Total Urgensi (0-100, bobot PLACEHOLDER -- belum resmi)", "skor_total_0_100"),
+]
 
 
 @app.get("/api/pelabuhan/urgensi-score/export/xlsx")
@@ -8382,37 +8447,37 @@ def pelabuhan_urgensi_export_xlsx(provinsi: List[str] = Query(default=[])):
     from openpyxl.styles import Alignment, Font, PatternFill
 
     hasil = _pelabuhan_urgensi_bulk_rows(provinsi or None)
+    baris = [_pelabuhan_urgensi_row_detail(h["row"], h["skor"]) for h in hasil]
 
-    headers = ["No", "Nama Pelabuhan", "Provinsi", "Kab/Kota", "Hirarki",
-               "Jarak ke Pelabuhan Sehirarki Terdekat (km)", "Skor Kedekatan (0-10)",
-               "Klasifikasi 3TP (Kabupaten)", "Skor 3TP (0-10)",
-               "RIPN", "Skor Kawasan Strategis (0-5, RIPN saja -- PSN belum tersedia)",
-               "Penduduk dalam Radius", "Skor Penduduk (0-10)",
-               "Ruas IJD Terdekat", "Jarak ke Ruas (km)", "% Mantap Ruas", "Lebar Jalan Ruas (m)",
-               "Skor Akses (0-10)", "Kelengkapan Data (dari 5 parameter)",
-               "Skor Total Urgensi (0-100, bobot PLACEHOLDER -- belum resmi)"]
+    headers = ["No"] + [h for h, _ in PELABUHAN_URGENSI_EXPORT_KOLOM]
+
+    # Kolom yang isinya daftar multi-baris ("Nama : Angka" per baris, lihat
+    # _pelabuhan_urgensi_row_detail) -- perlu wrap_text + kolom lebih lebar
+    # + tinggi baris menyesuaikan, supaya rinciannya kebaca utuh di Excel
+    # (bukan satu baris panjang terpotong).
+    KOLOM_MULTI_BARIS = {"tiga_tp_program", "penduduk_wilayah_tercakup"}
+    kolom_index = {key: i for i, (_, key) in enumerate(PELABUHAN_URGENSI_EXPORT_KOLOM, start=2)}  # +1 utk "No"
 
     wb = openpyxl.Workbook()
     ws = wb.active
     ws.title = "Urgensi Pelabuhan (Draf)"
     ws.append(headers)
 
-    for i, h in enumerate(hasil, start=1):
-        r, s = h["row"], h["skor"]
-        k = s["komponen"]
-        ws.append([
-            i, r["nama_pelabuhan"], r["provinsi"], r["kabupaten_kota"], r["hirarki_kode"],
-            k["kedekatan"]["nilai_mentah"].get("jarak_km"), k["kedekatan"]["skor_0_10"],
-            k["tiga_tp"]["nilai_mentah"].get("kategori"), k["tiga_tp"]["skor_0_10"],
-            r["ripn"], k["kawasan_strategis"]["skor_0_10"],
-            k["penduduk"]["nilai_mentah"].get("penduduk_radius_total"), k["penduduk"]["skor_0_10"],
-            k["akses"]["nilai_mentah"].get("ruas") or "Tidak ada dalam radius",
-            k["akses"]["nilai_mentah"].get("jarak_ruas_km"),
-            k["akses"]["nilai_mentah"].get("pct_mantap"),
-            k["akses"]["nilai_mentah"].get("lebar_jalan_m"),
-            k["akses"]["skor_0_10"],
-            s["kelengkapan"], s["skor_total_0_100"],
-        ])
+    wrap = Alignment(horizontal="left", vertical="top", wrap_text=True)
+    for i, d in enumerate(baris, start=1):
+        nilai = dict(d)
+        if nilai.get("akses_ruas") is None:
+            nilai["akses_ruas"] = "Tidak ada dalam radius"
+        row_idx = i + 1
+        ws.append([i] + [nilai.get(key) for _, key in PELABUHAN_URGENSI_EXPORT_KOLOM])
+        maks_baris = 1
+        for key in KOLOM_MULTI_BARIS:
+            v = nilai.get(key)
+            if v:
+                ws.cell(row=row_idx, column=kolom_index[key]).alignment = wrap
+                maks_baris = max(maks_baris, min(v.count("\n") + 1, 12))
+        if maks_baris > 1:
+            ws.row_dimensions[row_idx].height = 14 * maks_baris
 
     for col in range(1, len(headers) + 1):
         cell = ws.cell(row=1, column=col)
@@ -8423,6 +8488,8 @@ def pelabuhan_urgensi_export_xlsx(provinsi: List[str] = Query(default=[])):
     ws.row_dimensions[1].height = 45
     for col in range(1, len(headers) + 1):
         ws.column_dimensions[openpyxl.utils.get_column_letter(col)].width = 16
+    for key in KOLOM_MULTI_BARIS:
+        ws.column_dimensions[openpyxl.utils.get_column_letter(kolom_index[key])].width = 34
 
     buf = io.BytesIO()
     wb.save(buf)

@@ -48,10 +48,32 @@
 -- data operasional di atas (ops SAR, rescuer/potensi, wilayah tanggung jawab)
 -- direkam di granularitas KANTOR, tidak per Pos -- bukan bug/kelalaian join,
 -- memang tidak ada datanya di level itu.
-CREATE TABLE IF NOT EXISTS basarnas_analisis_kantor (
-  no                                  INTEGER PRIMARY KEY,
-  lokasi                              TEXT NOT NULL,
-  status                              TEXT NOT NULL,   -- 'Kantor Pencarian dan Pertolongan' | 'Pos Pencarian dan Pertolongan'
+--
+-- tahun_data (ditambahkan 11 Sep 2026, filter "per tahun" di viewer "Data"):
+-- NULL = baris gabungan 5 tahun (2021-2025, perilaku asli tabel ini);
+-- 2021/2022/.../2025 = baris tambahan per kantor, metrik operasional
+-- (waktu respon/jenis kejadian/korban/rasio/jarak tempuh) dihitung HANYA
+-- dari basarnas_ops_sar tahun itu saja (rata_rata_operasi_per_tahun jadi
+-- jumlah operasi TAHUN itu, bukan dibagi 5 lagi). Provinsi/luas wilayah
+-- kerja/jumlah tenaga aktif/status TIDAK per-tahun (snapshot saat ini) --
+-- nilainya sama persis di semua baris tahun_data milik kantor yang sama,
+-- cuma diulang supaya tetap 1 baris flat per filter tahun. Baris Pos SAR
+-- tidak pernah dapat baris per-tahun (tetap cuma 1 baris, tahun_data NULL)
+-- -- tidak ada data operasional di granularitas itu sama sekali.
+--
+-- Tabel ini sepenuhnya dimiliki & di-refresh penuh oleh
+-- scripts/build_basarnas_analisis_kantor.py (DELETE+reinsert tiap run,
+-- tidak ada FK dari tabel lain ke sini) -- DROP+CREATE dipakai di bawah,
+-- bukan ALTER TABLE ADD COLUMN, supaya perubahan skema (kolom tahun_data +
+-- PK dari "no" jadi "id") tidak perlu migrasi manual tiap kali skema
+-- berubah.
+DROP TABLE IF EXISTS basarnas_analisis_kantor;
+CREATE TABLE basarnas_analisis_kantor (
+  id                                   BIGSERIAL PRIMARY KEY,
+  no                                   INTEGER NOT NULL,   -- nomor urut kantor/pos, SAMA di semua baris tahun_data-nya
+  tahun_data                           SMALLINT,           -- NULL = gabungan 2021-2025, lihat catatan di atas
+  lokasi                               TEXT NOT NULL,
+  status                               TEXT NOT NULL,   -- 'Kantor Pencarian dan Pertolongan' | 'Pos Pencarian dan Pertolongan'
   kantor_induk                        TEXT,             -- diisi utk baris Pos: nama Kantor SAR induknya
   provinsi                            TEXT,             -- turunan spasial, lihat catatan di atas
   luas_cakupan_wilayah_kerja_km2      NUMERIC(12, 2),
@@ -67,3 +89,4 @@ CREATE TABLE IF NOT EXISTS basarnas_analisis_kantor (
   jumlah_tenaga_aktif                 INTEGER,
   dibangun_at                         TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+CREATE INDEX idx_basarnas_analisis_kantor_tahun ON basarnas_analisis_kantor (tahun_data);

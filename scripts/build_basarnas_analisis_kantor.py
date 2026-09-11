@@ -19,8 +19,15 @@ ditemukan saat verifikasi (lihat _NAMA_ALIAS di bawah). Wilayah tanggung
 jawab (poligon) di-join by call_sign, bukan nama -- lebih presisi & memang
 tersedia di kedua sumber.
 
-Idempotent: DELETE + reinsert penuh (47 kantor + N pos, kecil, tidak ada
-alasan utk upsert per-baris). Jalankan ulang setelah reimport salah satu
+Setiap Kantor SAR menghasilkan 6 baris (1 gabungan 2021-2025 + 1 per tahun
+2021/2022/2023/2024/2025, kolom tahun_data) supaya viewer "Data" bisa
+filter per tahun (GET /api/data/basarnas_analisis_kantor?tahun=2024) --
+lihat catatan tahun_data di schema_basarnas_analisis_kantor.sql. Baris Pos
+SAR tetap 1 baris (tahun_data NULL), tidak ada data operasional per-tahun
+di granularitas itu.
+
+Idempotent: DROP+CREATE (via schema file) + reinsert penuh, kecil, tidak
+ada alasan utk upsert per-baris. Jalankan ulang setelah reimport salah satu
 sumber di atas (mis. basarnas_ops_sar tahun baru).
 
 Usage (venv aktif):
@@ -40,6 +47,7 @@ from db import db_cursor as pg_cursor  # noqa: E402
 SCHEMA_PATH = Path(__file__).resolve().parent / "schema_basarnas_analisis_kantor.sql"
 
 TAHUN_SUMBER_N = 5  # basarnas_ops_sar mencakup persis 2021-2025
+TAHUN_RANGE = (2021, 2022, 2023, 2024, 2025)
 
 _NAMA_ALIAS = {"PANGKAL PINANG": "PANGKALPINANG"}
 
@@ -98,16 +106,20 @@ def main():
         cur.execute("SELECT satuan_kerja, tenaga_total FROM basarnas_rescuer_potensi")
         tenaga_by_kota = {norm(r["satuan_kerja"]): r["tenaga_total"] for r in cur.fetchall()}
 
-        def ops_agg(kota_norm, lon, lat):
+        def ops_agg(kota_norm, lon, lat, tahun=None):
             """Semua metrik turunan basarnas_ops_sar utk satu kantor sekaligus,
-            supaya cuma 1 query per kantor (bukan 5)."""
+            supaya cuma 1 query per kantor (bukan 5). tahun=None -> gabungan
+            2021-2025 (perilaku asli); tahun=<int> -> hanya insiden tahun itu,
+            dipakai buat baris per-tahun (filter "Tahun" di viewer Data)."""
+            tahun_clause = "AND tahun_sumber = %s" if tahun else ""
+            tahun_params = (tahun,) if tahun else ()
             cur.execute(
                 "SELECT jenis_kecelakaan, selamat, meninggal_dunia, dalam_pencarian_hilang, "
                 "waktu_lapor, waktu_tiba, lon AS ilon, lat AS ilat "
-                "FROM basarnas_ops_sar WHERE upper(regexp_replace(kantor_sar, "
+                "FROM basarnas_ops_sar WHERE (upper(regexp_replace(kantor_sar, "
                 "'^KANTOR (PENCARIAN DAN PERTOLONGAN|SAR)\\s+', '', 'i')) = %s "
-                "OR upper(regexp_replace(kantor_sar, '\\s+', ' ', 'g')) LIKE %s",
-                (kota_norm, f"%{kota_norm}%"),
+                f"OR upper(regexp_replace(kantor_sar, '\\s+', ' ', 'g')) LIKE %s) {tahun_clause}",
+                (kota_norm, f"%{kota_norm}%") + tahun_params,
             )
             rows = cur.fetchall()
             if not rows:
@@ -134,8 +146,8 @@ def main():
                 ") AS median_menit FROM basarnas_ops_sar "
                 "WHERE upper(regexp_replace(kantor_sar, "
                 "'^KANTOR (PENCARIAN DAN PERTOLONGAN|SAR)\\s+', '', 'i')) = %s "
-                "AND waktu_lapor IS NOT NULL AND waktu_tiba IS NOT NULL AND waktu_tiba >= waktu_lapor",
-                (kota_norm,),
+                f"AND waktu_lapor IS NOT NULL AND waktu_tiba IS NOT NULL AND waktu_tiba >= waktu_lapor {tahun_clause}",
+                (kota_norm,) + tahun_params,
             )
             median_row = cur.fetchone()
             median_menit = median_row["median_menit"] if median_row else None
@@ -147,8 +159,8 @@ def main():
                     "geography(ST_SetSRID(ST_MakePoint(lon,lat),4326)))) AS d "
                     "FROM basarnas_ops_sar WHERE upper(regexp_replace(kantor_sar, "
                     "'^KANTOR (PENCARIAN DAN PERTOLONGAN|SAR)\\s+', '', 'i')) = %s "
-                    "AND lon IS NOT NULL AND lat IS NOT NULL",
-                    (float(lon), float(lat), kota_norm),
+                    f"AND lon IS NOT NULL AND lat IS NOT NULL {tahun_clause}",
+                    (float(lon), float(lat), kota_norm) + tahun_params,
                 )
                 d = cur.fetchone()
                 max_jarak_m = d["d"] if d else None
@@ -160,7 +172,8 @@ def main():
                 "korban_selamat_5_tahun": selamat,
                 "korban_meninggal_dunia_5_tahun": md,
                 "korban_hilang_5_tahun": hilang,
-                "rata_rata_operasi_per_tahun": round(len(rows) / TAHUN_SUMBER_N, 1),
+                # tahun tertentu -> jumlah operasi TAHUN itu (bukan dibagi 5 lagi).
+                "rata_rata_operasi_per_tahun": len(rows) if tahun else round(len(rows) / TAHUN_SUMBER_N, 1),
                 "rata_rata_rasio_keberhasilan_persen": round(selamat / korban_total * 100, 1) if korban_total else None,
                 "waktu_respon_rata_rata_menit": round(float(median_menit), 1) if median_menit is not None else None,
                 "jarak_tempuh_terjauh_km": round(max_jarak_m / 1000, 1) if max_jarak_m is not None else None,
@@ -173,21 +186,24 @@ def main():
             provinsi = resolve_provinsi(r["lon"], r["lat"])
             luas = luas_by_callsign.get(r["call_sign"])
             tenaga = tenaga_by_kota.get(kota_norm)
-            metrics = ops_agg(kota_norm, r["lon"], r["lat"])
-            out.append({
+            base = {
                 "no": no, "lokasi": r["nama"], "status": "Kantor Pencarian dan Pertolongan",
                 "kantor_induk": None, "provinsi": provinsi,
                 "luas_cakupan_wilayah_kerja_km2": round(luas, 2) if luas is not None else None,
                 "termasuk_wilayah_rawan_bencana": None,
                 "jumlah_tenaga_aktif": tenaga,
-                **metrics,
-            })
+            }
+            # Baris gabungan (tahun_data NULL, perilaku asli) + 1 baris per
+            # tahun sumber (2021-2025) supaya viewer Data bisa filter "Tahun".
+            for tahun in (None,) + TAHUN_RANGE:
+                metrics = ops_agg(kota_norm, r["lon"], r["lat"], tahun=tahun)
+                out.append({"tahun_data": tahun, **base, **metrics})
             no += 1
 
         for r in pos_rows:
             provinsi = resolve_provinsi(r["lon"], r["lat"])
             out.append({
-                "no": no, "lokasi": r["nama"], "status": "Pos Pencarian dan Pertolongan",
+                "no": no, "tahun_data": None, "lokasi": r["nama"], "status": "Pos Pencarian dan Pertolongan",
                 "kantor_induk": r["kantor_induk"], "provinsi": provinsi,
                 "luas_cakupan_wilayah_kerja_km2": None, "termasuk_wilayah_rawan_bencana": None,
                 "jumlah_tenaga_aktif": None,
@@ -195,7 +211,7 @@ def main():
             no += 1
 
         cols = [
-            "no", "lokasi", "status", "kantor_induk", "provinsi",
+            "no", "tahun_data", "lokasi", "status", "kantor_induk", "provinsi",
             "luas_cakupan_wilayah_kerja_km2", "termasuk_wilayah_rawan_bencana",
             "waktu_respon_rata_rata_menit", "jenis_kejadian_terbanyak_5_tahun",
             "korban_selamat_5_tahun", "korban_meninggal_dunia_5_tahun", "korban_hilang_5_tahun",
@@ -204,7 +220,6 @@ def main():
         ]
         records = [tuple(row.get(c) for c in cols) for row in out]
 
-        cur.execute("DELETE FROM basarnas_analisis_kantor")
         col_sql = ", ".join(cols)
         ph_sql = ", ".join(["%s"] * len(cols))
         cur.executemany(
@@ -214,7 +229,10 @@ def main():
 
     n_kantor = len(kantor_rows)
     n_pos = len(pos_rows)
-    print(f"Selesai: {n_kantor} Kantor SAR + {n_pos} Pos SAR ({n_kantor + n_pos} baris) diisi ke basarnas_analisis_kantor.")
+    print(
+        f"Selesai: {n_kantor} Kantor SAR x {1 + len(TAHUN_RANGE)} baris (gabungan + per tahun) "
+        f"+ {n_pos} Pos SAR = {len(records)} baris diisi ke basarnas_analisis_kantor."
+    )
 
 
 if __name__ == "__main__":

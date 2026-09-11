@@ -11,6 +11,8 @@ const dataViewer = {
   geo: false,       // tabel aktif bisa difilter provinsi/kabupaten?
   provinsi: "",     // kode_provinsi terpilih ("" = semua)
   kabupaten: "",    // kode_kabupaten terpilih ("" = semua)
+  hasTahun: false,  // tabel aktif punya filter "Tahun" (DATA_TABLE_YEAR_COL di app.py)?
+  tahun: "",        // tahun terpilih ("" = baris gabungan/default, lihat app.py)
   geoProvinces: null, // cache /api/data/geo/provinces (sama utk semua tabel)
   bappenasKriteria: null, // cache /api/bappenas-lokus-a/kriteria
   importKriteria: "", // kriteria terpilih di panel import (khusus tabel bappenas_lokus_a)
@@ -79,6 +81,10 @@ async function dataViewerOpen(tableName) {
   dataViewer.provinsi = "";
   dataViewer.kabupaten = "";
   dataViewer.moda = "IJD";
+  dataViewer.hasTahun = !!(t && t.has_tahun);
+  dataViewer.tahun = "";
+  document.getElementById("dataTableFilterTahun").hidden = !dataViewer.hasTahun;
+  document.getElementById("dataTableFilterTahun").value = "";
   document.getElementById("dataTableOverlay").hidden = false;
   await dataViewerSetupFilters();
   dataViewerSetupImport();
@@ -272,6 +278,7 @@ async function dataViewerFetchPage() {
         params.set("kriteria", dataViewer.importKriteria);
       }
     }
+    if (dataViewer.hasTahun && dataViewer.tahun) params.set("tahun", dataViewer.tahun);
     const res = await fetch(`/api/data/${table}?${params}`);
     const data = await res.json();
     if (!res.ok) throw new Error(data.detail || "Gagal memuat data");
@@ -375,11 +382,18 @@ function bindDataViewer() {
         params.set("kriteria", dataViewer.importKriteria);
       }
     }
+    if (dataViewer.hasTahun && dataViewer.tahun) params.set("tahun", dataViewer.tahun);
     const qs = params.toString();
     window.location.href = `/api/data/${table}/export/xlsx${qs ? `?${qs}` : ""}`;
   });
 
   document.getElementById("dataTableModa").addEventListener("change", (e) => dataViewerModaChange(e.target.value));
+
+  document.getElementById("dataTableFilterTahun").addEventListener("change", (e) => {
+    dataViewer.tahun = e.target.value;
+    dataViewer.offset = 0;
+    if (dataViewer.table) dataViewerFetchPage();
+  });
 
   bindDataViewerGeoFilters();
   bindDataViewerImport();

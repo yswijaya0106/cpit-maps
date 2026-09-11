@@ -910,6 +910,16 @@ DATA_TABLE_SEARCH_COL = {
     "angkutan_perintis": "nama_trayek",
 }
 
+# Tabel dengan kolom "tahun" filterable di viewer "Data" (dropdown "Tahun",
+# lihat static/js/data-viewer.js dataViewerSetupFilters). Tanpa "tahun" di
+# query string -> WHERE <kolom> IS NULL (baris gabungan/default, bukan
+# semua baris tercampur) -- lihat catatan tahun_data di
+# schema_basarnas_analisis_kantor.sql utk kenapa NULL = gabungan, bukan
+# "tanpa filter".
+DATA_TABLE_YEAR_COL = {
+    "basarnas_analisis_kantor": "tahun_data",
+}
+
 
 def _table_columns(cur, table: str) -> list:
     """Nama kolom tabel sesuai urutan asli -- pengganti `SHOW COLUMNS FROM`
@@ -941,9 +951,18 @@ def data_tables():
         for name, label in DATA_TABLES.items():
             if name not in existing:
                 continue  # tabel belum dibuat — sembunyikan dari daftar
-            cur.execute(f'SELECT COUNT(*) AS n FROM "{name}"')
+            year_col = DATA_TABLE_YEAR_COL.get(name)
+            # Kalau tabelnya punya filter tahun, hitung sesuai TAMPILAN
+            # DEFAULT (kolom tahun IS NULL) supaya angka di daftar menu
+            # "Data" cocok dgn yg langsung terlihat saat dibuka, bukan
+            # total semua baris termasuk duplikat per-tahun.
+            where = f'WHERE "{year_col}" IS NULL' if year_col else ""
+            cur.execute(f'SELECT COUNT(*) AS n FROM "{name}" {where}')
             total = cur.fetchone()["n"]
-            out.append({"name": name, "label": label, "total": total, "geo": name in DATA_TABLE_GEO})
+            out.append({
+                "name": name, "label": label, "total": total, "geo": name in DATA_TABLE_GEO,
+                "has_tahun": bool(year_col),
+            })
     return out
 
 
@@ -1028,7 +1047,7 @@ def bappenas_lokus_a_import(kriteria: str, file: UploadFile = File(...)):
     return {"kriteria": kriteria, "filename": file.filename, "total": len(rows), "match_kabupaten": n_match}
 
 
-def _data_table_geo_where(table: str, provinsi: int, kabupaten: int, kriteria: str = "", provinsi_text: str = "", q: str = ""):
+def _data_table_geo_where(table: str, provinsi: int, kabupaten: int, kriteria: str = "", provinsi_text: str = "", q: str = "", tahun: str = ""):
     """WHERE + params dari filter provinsi/kabupaten, kalau tabelnya kebagian
     kode geo (DATA_TABLE_GEO) dan filter diisi. Kabupaten menang kalau
     keduanya diisi (provinsinya sudah tersirat). "kriteria" -- khusus
@@ -1038,7 +1057,9 @@ def _data_table_geo_where(table: str, provinsi: int, kabupaten: int, kriteria: s
     tabel di DATA_TABLE_TEXT_PROVINSI (kolom provinsi teks bebas, bukan
     kode BPS) difilter ILIKE, dipakai panel "Lokasi Prioritas" mode
     Udara/Darat/Laut. "q" -- pencarian teks bebas pada kolom nama
-    (DATA_TABLE_SEARCH_COL), tabel yg tidak terdaftar di sana mengabaikan q."""
+    (DATA_TABLE_SEARCH_COL), tabel yg tidak terdaftar di sana mengabaikan q.
+    "tahun" -- tabel di DATA_TABLE_YEAR_COL: kosong -> kolom tahunnya IS NULL
+    (baris gabungan/default), diisi -> kolom tahunnya = nilai itu persis."""
     clauses, params = [], []
     geo = DATA_TABLE_GEO.get(table)
     if geo:
@@ -1060,15 +1081,22 @@ def _data_table_geo_where(table: str, provinsi: int, kabupaten: int, kriteria: s
     if search_col and q:
         clauses.append(f'"{search_col}" ILIKE %s')
         params.append(f"%{q}%")
+    year_col = DATA_TABLE_YEAR_COL.get(table)
+    if year_col:
+        if tahun:
+            clauses.append(f'"{year_col}" = %s')
+            params.append(tahun)
+        else:
+            clauses.append(f'"{year_col}" IS NULL')
     where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
     return where, params
 
 
 @app.get("/api/data/{table}/export/xlsx")
-def data_table_export(table: str, provinsi: int = 0, kabupaten: int = 0, kriteria: str = "", provinsi_text: str = "", q: str = ""):
+def data_table_export(table: str, provinsi: int = 0, kabupaten: int = 0, kriteria: str = "", provinsi_text: str = "", q: str = "", tahun: str = ""):
     if table not in DATA_TABLES:
         raise HTTPException(404, "Tabel tidak dikenal")
-    where, params = _data_table_geo_where(table, provinsi, kabupaten, kriteria, provinsi_text, q)
+    where, params = _data_table_geo_where(table, provinsi, kabupaten, kriteria, provinsi_text, q, tahun)
     with db_cursor() as cur:
         columns = [c for c in _table_columns(cur, table) if c not in DATA_TABLE_SKIP_COLS]
         col_sql = ", ".join(f'"{c}"' for c in columns)
@@ -1092,12 +1120,12 @@ def data_table_export(table: str, provinsi: int = 0, kabupaten: int = 0, kriteri
 
 
 @app.get("/api/data/{table}")
-def data_table_rows(table: str, limit: int = 50, offset: int = 0, provinsi: int = 0, kabupaten: int = 0, kriteria: str = "", provinsi_text: str = "", q: str = ""):
+def data_table_rows(table: str, limit: int = 50, offset: int = 0, provinsi: int = 0, kabupaten: int = 0, kriteria: str = "", provinsi_text: str = "", q: str = "", tahun: str = ""):
     if table not in DATA_TABLES:
         raise HTTPException(404, "Tabel tidak dikenal")
     limit = max(1, min(limit, 200))
     offset = max(0, offset)
-    where, params = _data_table_geo_where(table, provinsi, kabupaten, kriteria, provinsi_text, q)
+    where, params = _data_table_geo_where(table, provinsi, kabupaten, kriteria, provinsi_text, q, tahun)
     with db_cursor() as cur:
         columns = [c for c in _table_columns(cur, table) if c not in DATA_TABLE_SKIP_COLS]
         col_sql = ", ".join(f'"{c}"' for c in columns)
@@ -8458,7 +8486,7 @@ def pelabuhan_urgensi_export_xlsx(provinsi: List[str] = Query(default=[])):
 
     wb = openpyxl.Workbook()
     ws = wb.active
-    ws.title = "Urgensi Pelabuhan (Draf)"
+    ws.title = "Urgensi Pelabuhan"
     ws.append(headers)
 
     wrap = Alignment(horizontal="left", vertical="top", wrap_text=True)

@@ -49,12 +49,11 @@ function setMapTool(tool) {
 
   const hints = {
     "add-point": "Klik peta (termasuk di atas layer overlay) untuk mengisi Origin/Tujuan/Waypoint",
-    identify: "Klik fitur pada layer overlay aktif untuk melihat atributnya",
     select: "Klik fitur untuk memilih, Shift+klik untuk memilih lebih dari satu",
     "measure-distance": "Klik titik-titik di peta untuk mengukur jarak, lalu klik \"Selesai\"",
     "measure-area": "Klik titik-titik di peta untuk mengukur luas area, lalu klik \"Selesai\"",
   };
-  setStatus(tool ? hints[tool] : "Peta siap");
+  setStatus(tool ? (hints[tool] || "") : "Peta siap");
 }
 
 /* ---------- Identify (klik fitur layer overlay -> tampilkan atribut) ---------- */

@@ -131,7 +131,13 @@ const MAP_LAYER_CATEGORIES = [
     // railway_crossing_tahap_to_postgis.py), 136 titik rencana penanganan
     // JPL bertahap (Tahap I/II/III) -- lihat docs/kajian_data_baru_11092026.md
     // §3, digabung ke kategori Kereta Api yang sama spt "KERETA API" di atas.
-    match: (p) => p === "JALUR KERETA API" || p === "KERETA API" || p === "PERLINTASAN SEBIDANG KA" },
+    // "TITIK POTONG JALAN-REL KA": bucket nasional flat (scripts/import_
+    // titik_potong_jalan_rel.py), titik potong geometris jalan Nasional/
+    // Provinsi/Kabupaten-Kota x rel KA (scripts/build_jalan_rel_
+    // intersection.py) -- perlintasan sebidang hasil analisis spasial,
+    // bukan dari daftar JPL resmi seperti "PERLINTASAN SEBIDANG KA" di atas.
+    match: (p) => p === "JALUR KERETA API" || p === "KERETA API" || p === "PERLINTASAN SEBIDANG KA"
+      || p === "TITIK POTONG JALAN-REL KA" },
   // Maskapai: bucket nasional flat (scripts/import_maskapai_organisasi_to_postgis.py),
   // sumbernya tabel maskapai_organisasi (hasil scrape_maskapai_organisasi.py +
   // geocode_maskapai_organisasi.py), bukan file .shp -- titik lokasi kantor

@@ -541,6 +541,7 @@ async function loadUsulanModaList(reset) {
 
   const params = new URLSearchParams({ limit: b.limit, offset: b.offset });
   if (b.provinsi) params.set("provinsi_text", b.provinsi);
+  if (b.q) params.set("q", b.q);
 
   let data;
   try {
@@ -593,9 +594,18 @@ const USULAN_IJD_ONLY_BUTTONS = [
   "btnUsulanImport", "btnUsulanExport", "btnUsulanExportIjdScore", "btnIjdDashboard", "btnUsulanExportNpr",
 ];
 
+const USULAN_MODA_SEARCH_PLACEHOLDER = {
+  IJD: "Cari nama ruas, kegiatan, atau kode ruas...",
+  Udara: "Cari nama bandara...",
+  Darat: "Cari nama trayek...",
+  Laut: "Cari nama pelabuhan...",
+};
+
 function usulanModaChange(moda) {
   state.usulanBrowse.moda = moda;
   state.usulanBrowse.offset = 0;
+  state.usulanBrowse.q = "";
+  document.getElementById("usulanSearchInput").value = "";
   clearBrowseUsulanPolylines();
   document.getElementById("usulanBrowseDetail").innerHTML = "";
   if (usulanModaMarker) {
@@ -610,7 +620,7 @@ function usulanModaChange(moda) {
   document.getElementById("btnUsulanModaExport").hidden = isIjd;
   document.getElementById("btnUsulanModaDashboard").hidden = isIjd;
   document.getElementById("usulanKabupatenField").hidden = !isIjd;
-  document.getElementById("usulanSearchField").hidden = !isIjd;
+  document.getElementById("usulanSearchInput").placeholder = USULAN_MODA_SEARCH_PLACEHOLDER[moda] || "Cari...";
 
   if (isIjd) loadUsulanBrowseList(true);
   else loadUsulanModaList(true);
@@ -2391,7 +2401,8 @@ function bindUsulanBrowse() {
     clearTimeout(searchTimer);
     searchTimer = setTimeout(() => {
       state.usulanBrowse.q = e.target.value.trim();
-      loadUsulanBrowseList(true);
+      if (state.usulanBrowse.moda === "IJD") loadUsulanBrowseList(true);
+      else loadUsulanModaList(true);
     }, 400);
   });
 

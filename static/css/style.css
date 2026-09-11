@@ -93,12 +93,31 @@ html, body {
 .topbar-datatable { position: relative; flex: 0 0 auto; }
 .datatable-menu {
   position: absolute; top: calc(100% + 8px); right: 0; z-index: 60;
-  min-width: 320px; max-height: 60vh; overflow-y: auto;
+  min-width: 320px; max-height: 60vh;
   background: var(--panel); border: 1px solid var(--border);
   border-radius: 12px; box-shadow: var(--shadow); padding: 6px;
-  scrollbar-width: none; -ms-overflow-style: none; /* tetap bisa scroll, scrollbar disembunyikan */
+  display: flex; flex-direction: column;
 }
-.datatable-menu::-webkit-scrollbar { display: none; }
+/* [hidden] tanpa aturan eksplisit di sini akan KETIMPA display:flex di atas
+   (author CSS selalu menang atas default [hidden] UA-stylesheet walau
+   dideklarasikan lebih dulu) -- tanpa baris ini menu jadi selalu terlihat,
+   toggle buka/tutup jadi tidak berefek apa-apa. */
+.datatable-menu[hidden] { display: none; }
+.datatable-menu-search {
+  display: flex; align-items: center; gap: 8px; flex: 0 0 auto;
+  padding: 7px 10px; margin-bottom: 6px;
+  background: rgba(255,255,255,.05); border: 1px solid var(--border); border-radius: 8px;
+}
+.datatable-menu-search i { color: var(--text-dim); font-size: 13px; }
+.datatable-menu-search input {
+  flex: 1; min-width: 0; background: transparent; border: 0; outline: none;
+  color: var(--text); font-family: inherit; font-size: 13px;
+}
+.datatable-menu-items {
+  overflow-y: auto; scrollbar-width: none; -ms-overflow-style: none; /* tetap bisa scroll, scrollbar disembunyikan */
+}
+.datatable-menu-items::-webkit-scrollbar { display: none; }
+.datatable-menu-empty { padding: 14px 10px; text-align: center; }
 .datatable-menu-item {
   display: flex; justify-content: space-between; align-items: center; gap: 12px;
   width: 100%; padding: 9px 12px; border: 0; border-radius: 8px;

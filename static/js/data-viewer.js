@@ -25,6 +25,27 @@ async function dataViewerLoadTables() {
   return dataViewer.tables;
 }
 
+function dataViewerMenuTables() {
+  // bappenas_lokus_a punya entry point sendiri sekarang (tombol navbar
+  // "Lokus Bappenas") -- tidak perlu dobel muncul di menu "Data" generik.
+  return (dataViewer.tables || []).filter((t) => t.name !== "bappenas_lokus_a")
+    .slice().sort((a, b) => a.label.localeCompare(b.label, "id"));
+}
+
+function dataViewerRenderMenuItems(query) {
+  const itemsEl = document.getElementById("dataTableMenuItems");
+  if (!itemsEl) return;
+  const q = (query || "").trim().toLowerCase();
+  const rows = dataViewerMenuTables().filter((t) => !q || t.label.toLowerCase().includes(q));
+  itemsEl.innerHTML = rows.length
+    ? rows.map((t) =>
+        `<button type="button" class="datatable-menu-item" data-table="${t.name}">
+           <span>${escapeHtml(t.label)}</span>
+           <span class="datatable-menu-count">${t.total.toLocaleString("id-ID")}</span>
+         </button>`).join("")
+    : `<div class="datatable-menu-empty hint">Tidak ada tabel/report yang cocok.</div>`;
+}
+
 async function dataViewerToggleMenu() {
   const menu = document.getElementById("dataTableMenu");
   if (!menu.hidden) {
@@ -32,17 +53,17 @@ async function dataViewerToggleMenu() {
     return;
   }
   try {
-    const tables = await dataViewerLoadTables();
-    // bappenas_lokus_a punya entry point sendiri sekarang (tombol navbar
-    // "Lokus Bappenas") -- tidak perlu dobel muncul di menu "Data" generik.
-    menu.innerHTML = tables.filter((t) => t.name !== "bappenas_lokus_a")
-      .slice().sort((a, b) => a.label.localeCompare(b.label, "id"))
-      .map((t) =>
-      `<button type="button" class="datatable-menu-item" data-table="${t.name}">
-         <span>${t.label}</span>
-         <span class="datatable-menu-count">${t.total.toLocaleString("id-ID")}</span>
-       </button>`).join("");
+    await dataViewerLoadTables();
+    menu.innerHTML = `
+      <div class="datatable-menu-search">
+        <i class="bi bi-search"></i>
+        <input type="text" id="dataTableMenuSearch" placeholder="Cari nama tabel/report..." autocomplete="off" />
+      </div>
+      <div class="datatable-menu-items" id="dataTableMenuItems"></div>
+    `;
+    dataViewerRenderMenuItems("");
     menu.hidden = false;
+    document.getElementById("dataTableMenuSearch").focus();
   } catch (err) {
     toast(err.message, true);
   }
@@ -327,6 +348,10 @@ function bindDataViewer() {
   document.getElementById("dataTableMenu").addEventListener("click", (e) => {
     const item = e.target.closest("[data-table]");
     if (item) dataViewerOpen(item.dataset.table);
+  });
+
+  document.getElementById("dataTableMenu").addEventListener("input", (e) => {
+    if (e.target.id === "dataTableMenuSearch") dataViewerRenderMenuItems(e.target.value);
   });
 
   document.addEventListener("click", (e) => {

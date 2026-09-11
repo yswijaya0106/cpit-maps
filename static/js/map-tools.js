@@ -61,6 +61,11 @@ function setMapTool(tool) {
 
 function onFeatureClick(layerName, feature, latLng) {
   if (state.mapTool === "identify") {
+    if (state.identifyHighlight?.layer === layerName && state.identifyHighlight?.feature === feature) {
+      clearIdentifyHighlight();
+      state.identifyInfoWindow?.close();
+      return;
+    }
     showIdentifyInfo(layerName, feature, latLng);
   } else if (state.mapTool === "select") {
     toggleFeatureSelection(layerName, feature);

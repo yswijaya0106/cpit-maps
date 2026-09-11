@@ -1039,6 +1039,24 @@ upsert, so they're safe to re-run:
   structural diff (`--save`/`--check`) over a fixed list of read-only
   endpoints, meant as a safety net while incrementally refactoring app.py
   (e.g. moving functions to a new module) without changing behavior.
+- `build_basarnas_analisis_kantor.py` — answers, per Kantor/Pos SAR, exactly
+  the 13 columns requested in `docs/Requierment/Analisis Basarnas (1).xlsx`
+  sheet "Lembar1" (an empty template) by aggregating existing BASARNAS data
+  (`map_layers` bucket "BASARNAS" points/polygons + `basarnas_ops_sar` +
+  `basarnas_rescuer_potensi`) into `basarnas_analisis_kantor`
+  (`schema_basarnas_analisis_kantor.sql` documents which of the 13 columns
+  are available vs. genuinely unavailable — "Termasuk Wilayah Rawan
+  Bencana" has no source anywhere in the database and is always NULL; every
+  operational column, e.g. "Waktu Respon Rata-Rata Operasi", is NULL for Pos
+  SAR rows because those sources are recorded at Kantor granularity only).
+  Kantor SAR ↔ `basarnas_ops_sar`/`basarnas_rescuer_potensi` join is by
+  normalized city name (no shared ID exists); response-time uses the
+  **median**, not the mean, since a handful of `waktu_tiba` rows have a
+  source-data year typo (e.g. one Ambon row reads `2030`) that would
+  otherwise blow the average out to thousands of minutes. Exposed in the
+  navbar "Data" viewer as "Analisis Basarnas per Kantor/Pos SAR (Kelengkapan
+  Data)". Idempotent (DELETE + reinsert) — rerun after any of its three
+  source datasets changes.
 
 The PDF extractors are position/regex-based (PyMuPDF) and tuned to the 2026
 BPS layouts — expect to adjust them for other publication years.

@@ -851,6 +851,9 @@ DATA_TABLES = {
     "basarnas_puslat_fasilitas": "Inventaris Sarana/Prasarana Puslat SDMPP BASARNAS",
     "maskapai_organisasi": "Daftar Maskapai Dalam Negeri & Asing (Ditjen Hubud Kemenhub)",
     "lalu_lintas_udara_bandara": "Lalu Lintas Udara Bulanan per Bandara (Ditjen Hubud Kemenhub)",
+    "basarnas_analisis_kantor": "Analisis Basarnas per Kantor/Pos SAR (Kelengkapan Data)",
+    "jpl_prioritas_djka": "Prioritas Keselamatan Perlintasan Sebidang KA (DJKA)",
+    "penanganan_ss_ka_tahap": "Rencana Penanganan Perlintasan Sebidang KA Bertahap (I/II/III)",
 }
 # kolom yang tidak ditampilkan (payload besar)
 DATA_TABLE_SKIP_COLS = {"geom_geojson", "detail_fasilitas"}
@@ -896,6 +899,15 @@ DATA_TABLE_TEXT_PROVINSI = {
     "bps_data_bandara": "provinsi",
     "bps_kinerja_pelabuhan": "provinsi",
     "angkutan_perintis": "provinsi",
+}
+
+# Kolom "nama" per tabel referensi Udara/Darat/Laut di atas -- basis
+# pencarian teks bebas ("q") panel "Jelajahi Usulan Inpres" mode non-IJD,
+# sama persis dengan USULAN_MODA_FIELDS[moda].nama di static/js/usulan-inpres.js.
+DATA_TABLE_SEARCH_COL = {
+    "bps_data_bandara": "nama_bandara",
+    "bps_kinerja_pelabuhan": "pelabuhan",
+    "angkutan_perintis": "nama_trayek",
 }
 
 
@@ -1016,7 +1028,7 @@ def bappenas_lokus_a_import(kriteria: str, file: UploadFile = File(...)):
     return {"kriteria": kriteria, "filename": file.filename, "total": len(rows), "match_kabupaten": n_match}
 
 
-def _data_table_geo_where(table: str, provinsi: int, kabupaten: int, kriteria: str = "", provinsi_text: str = ""):
+def _data_table_geo_where(table: str, provinsi: int, kabupaten: int, kriteria: str = "", provinsi_text: str = "", q: str = ""):
     """WHERE + params dari filter provinsi/kabupaten, kalau tabelnya kebagian
     kode geo (DATA_TABLE_GEO) dan filter diisi. Kabupaten menang kalau
     keduanya diisi (provinsinya sudah tersirat). "kriteria" -- khusus
@@ -1025,7 +1037,8 @@ def _data_table_geo_where(table: str, provinsi: int, kabupaten: int, kriteria: s
     grid, bukan cuma menentukan target upload xlsx. "provinsi_text" --
     tabel di DATA_TABLE_TEXT_PROVINSI (kolom provinsi teks bebas, bukan
     kode BPS) difilter ILIKE, dipakai panel "Lokasi Prioritas" mode
-    Udara/Darat/Laut."""
+    Udara/Darat/Laut. "q" -- pencarian teks bebas pada kolom nama
+    (DATA_TABLE_SEARCH_COL), tabel yg tidak terdaftar di sana mengabaikan q."""
     clauses, params = [], []
     geo = DATA_TABLE_GEO.get(table)
     if geo:
@@ -1043,15 +1056,19 @@ def _data_table_geo_where(table: str, provinsi: int, kabupaten: int, kriteria: s
     if kriteria and table == "bappenas_lokus_a":
         clauses.append("kriteria = %s")
         params.append(kriteria)
+    search_col = DATA_TABLE_SEARCH_COL.get(table)
+    if search_col and q:
+        clauses.append(f'"{search_col}" ILIKE %s')
+        params.append(f"%{q}%")
     where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
     return where, params
 
 
 @app.get("/api/data/{table}/export/xlsx")
-def data_table_export(table: str, provinsi: int = 0, kabupaten: int = 0, kriteria: str = "", provinsi_text: str = ""):
+def data_table_export(table: str, provinsi: int = 0, kabupaten: int = 0, kriteria: str = "", provinsi_text: str = "", q: str = ""):
     if table not in DATA_TABLES:
         raise HTTPException(404, "Tabel tidak dikenal")
-    where, params = _data_table_geo_where(table, provinsi, kabupaten, kriteria, provinsi_text)
+    where, params = _data_table_geo_where(table, provinsi, kabupaten, kriteria, provinsi_text, q)
     with db_cursor() as cur:
         columns = [c for c in _table_columns(cur, table) if c not in DATA_TABLE_SKIP_COLS]
         col_sql = ", ".join(f'"{c}"' for c in columns)
@@ -1075,12 +1092,12 @@ def data_table_export(table: str, provinsi: int = 0, kabupaten: int = 0, kriteri
 
 
 @app.get("/api/data/{table}")
-def data_table_rows(table: str, limit: int = 50, offset: int = 0, provinsi: int = 0, kabupaten: int = 0, kriteria: str = "", provinsi_text: str = ""):
+def data_table_rows(table: str, limit: int = 50, offset: int = 0, provinsi: int = 0, kabupaten: int = 0, kriteria: str = "", provinsi_text: str = "", q: str = ""):
     if table not in DATA_TABLES:
         raise HTTPException(404, "Tabel tidak dikenal")
     limit = max(1, min(limit, 200))
     offset = max(0, offset)
-    where, params = _data_table_geo_where(table, provinsi, kabupaten, kriteria, provinsi_text)
+    where, params = _data_table_geo_where(table, provinsi, kabupaten, kriteria, provinsi_text, q)
     with db_cursor() as cur:
         columns = [c for c in _table_columns(cur, table) if c not in DATA_TABLE_SKIP_COLS]
         col_sql = ", ".join(f'"{c}"' for c in columns)
@@ -8099,6 +8116,323 @@ def chat(payload: ChatRequest):
         raise HTTPException(400, "Tidak ada pesan")
     reply, actions = chat_providers._call_chat(payload.messages, payload.context)
     return {"reply": reply, "actions": actions}
+
+
+# --- Skor "Urgensitas Penanganan Pelabuhan" (Laut) -- DRAF Fase 1, dari
+# "Kerangka berpikir lAUT (1).pptx" (docs/Requierment/). Lingkup: 5 dari 7
+# parameter kerangka (Tingkat Utilitas #1 & Kondisi Kerusakan #2 BELUM ADA
+# DATA, di luar cakupan ini -- lihat docs/kajian_implementasi_skor_urgensi_
+# pelabuhan_laut.md). Data pendukung (jarak sehirarki, penduduk radius,
+# klasifikasi 3TP, ruas IJD terdekat) di-PRECOMPUTE oleh
+# scripts/spatial_join_pelabuhan_urgensi.py ke kolom pelabuhan_daerah --
+# scorer di bawah ini HANYA baca kolom, TANPA query spasial live (pola sama
+# alasan performa dgn koridor_radius_50m IJD).
+#
+# BOBOT ANTAR-PARAMETER DI BAWAH INI PLACEHOLDER SAMA RATA (20% x 5) --
+# pptx sumber TIDAK menyebutkan bobot resmi. Belum dikonfirmasi pemilik
+# kaidah (lihat docs/checklist_implementasi_skor_urgensi_pelabuhan.md
+# §"Keputusan/konfirmasi tertunda") -- SKOR TOTAL di endpoint2 ini BUKAN
+# angka resmi, cuma draf kerja. Ganti PELABUHAN_URGENSI_BOBOT begitu
+# dikonfirmasi, tidak perlu ubah struktur kode lain.
+PELABUHAN_URGENSI_PARAM = ["kedekatan", "tiga_tp", "kawasan_strategis", "penduduk", "akses"]
+PELABUHAN_URGENSI_LABEL = {
+    "kedekatan": "Kedekatan dengan Pelabuhan Lain",
+    "tiga_tp": "Klasifikasi Wilayah 3TP (kategorikal)",
+    "kawasan_strategis": "Dukungan Kawasan Strategis (RIPN saja)",
+    "penduduk": "Jumlah Penduduk dalam Radius",
+    "akses": "Kemudahan Akses (via ruas usulan IJD terdekat)",
+}
+PELABUHAN_URGENSI_BOBOT = {p: 1.0 / len(PELABUHAN_URGENSI_PARAM) for p in PELABUHAN_URGENSI_PARAM}
+
+# Ambang "sudah terlayani -> skor 0" parameter Kedekatan (slide 3 pptx
+# sumber) -- SENGAJA beda angka dari radius parameter Penduduk/Akses
+# (PENDUDUK_RADIUS_KM di spatial_join_pelabuhan_urgensi.py, 93/60/40) --
+# lihat catatan ambiguitas di kajian §1, belum dikonfirmasi mana yang benar.
+PELABUHAN_AMBANG_KEDEKATAN_KM = {"PP": 93, "PR": 37, "PL": 10}
+
+
+def _pelabuhan_urgensi_bulk_ctx():
+    """Batch min-max per hirarki_kode utk parameter yang relatif (bukan
+    tier tetap): #3 jarak (hanya yg >= ambang), #6 penduduk, #7 % mantap &
+    lebar jalan dari ruas terdekat. Satu query per bentuk, dipakai ulang
+    di semua baris -- pola sama _ijd_score_bulk_rows (batch, bukan per
+    baris)."""
+    ctx = {"jarak": {}, "penduduk": {}, "lebar": {}, "pct_mantap": {}}
+    with db_cursor() as cur:
+        cur.execute(
+            """
+            SELECT hirarki_kode,
+                   min(jarak_sehirarki_terdekat_km) FILTER (
+                       WHERE jarak_sehirarki_terdekat_km >= (
+                           CASE hirarki_kode WHEN 'PP' THEN 93 WHEN 'PR' THEN 37 WHEN 'PL' THEN 10 END)
+                   ) AS jarak_min,
+                   max(jarak_sehirarki_terdekat_km) AS jarak_max,
+                   min(penduduk_radius_total) AS pend_min, max(penduduk_radius_total) AS pend_max,
+                   min(ruas_ijd_lebar_jalan_m) AS lebar_min, max(ruas_ijd_lebar_jalan_m) AS lebar_max
+            FROM pelabuhan_daerah WHERE hirarki_kode IS NOT NULL GROUP BY 1
+            """
+        )
+        for r in cur.fetchall():
+            hk = r["hirarki_kode"]
+            ctx["jarak"][hk] = (r["jarak_min"], r["jarak_max"])
+            ctx["penduduk"][hk] = (r["pend_min"], r["pend_max"])
+            ctx["lebar"][hk] = (r["lebar_min"], r["lebar_max"])
+        cur.execute(
+            """
+            SELECT hirarki_kode, min(pm) AS pm_min, max(pm) AS pm_max
+            FROM (
+                SELECT hirarki_kode,
+                       (COALESCE(ruas_ijd_kondisi_baik_km, 0) + COALESCE(ruas_ijd_kondisi_sedang_km, 0))
+                       / NULLIF(COALESCE(ruas_ijd_kondisi_baik_km, 0) + COALESCE(ruas_ijd_kondisi_sedang_km, 0)
+                                + COALESCE(ruas_ijd_kondisi_ringan_km, 0) + COALESCE(ruas_ijd_kondisi_berat_km, 0), 0)
+                       * 100 AS pm
+                FROM pelabuhan_daerah
+                WHERE hirarki_kode IS NOT NULL AND ruas_ijd_terdekat_id IS NOT NULL
+            ) x
+            WHERE pm IS NOT NULL GROUP BY 1
+            """
+        )
+        for r in cur.fetchall():
+            ctx["pct_mantap"][r["hirarki_kode"]] = (r["pm_min"], r["pm_max"])
+    return ctx
+
+
+def _skala_minmax(nilai, lo, hi, maks=10.0):
+    if nilai is None or lo is None or hi is None:
+        return None
+    if hi <= lo:
+        return maks  # semua pelabuhan pembanding sama nilainya -> beri skor maksimum, hindari div-by-zero
+    return round((float(nilai) - float(lo)) / (float(hi) - float(lo)) * maks, 2)
+
+
+def _pelabuhan_score_kedekatan(row, ctx):
+    hk, jarak = row["hirarki_kode"], row["jarak_sehirarki_terdekat_km"]
+    if hk is None or jarak is None:
+        return {"tersedia": False, "skor_0_10": None, "nilai_mentah": {},
+                 "keterangan": "Tanpa koordinat, atau tidak ada pelabuhan sehirarki lain untuk dibandingkan"}
+    jarak = float(jarak)
+    ambang = PELABUHAN_AMBANG_KEDEKATAN_KM.get(hk)
+    if ambang is not None and jarak < ambang:
+        return {"tersedia": True, "skor_0_10": 0.0,
+                "nilai_mentah": {"jarak_km": jarak, "ambang_km": ambang,
+                                  "pelabuhan_terdekat": row["pelabuhan_sehirarki_terdekat_nama"]},
+                "keterangan": f"Di bawah ambang {ambang}km ({hk}) -> dianggap sudah terlayani pelabuhan sehirarki terdekat"}
+    lo, hi = ctx["jarak"].get(hk, (None, None))
+    skor = _skala_minmax(jarak, lo, hi, 10.0)
+    return {"tersedia": skor is not None, "skor_0_10": skor,
+            "nilai_mentah": {"jarak_km": jarak, "pelabuhan_terdekat": row["pelabuhan_sehirarki_terdekat_nama"]},
+            "keterangan": (f"Min-max thd pelabuhan {hk} lain yang di atas ambang {ambang}km"
+                            if skor is not None else "Data pembanding hirarki tidak cukup")}
+
+
+_PELABUHAN_3TP_SKOR = {"Bukan 3TP": 0.0, "Wilayah Perbatasan": 5.0, "Wilayah 3T": 8.0, "Wilayah 3TP": 10.0}
+
+
+def _pelabuhan_score_3tp(row, ctx):
+    kat = row["klasifikasi_3tp_kategori"]
+    if kat is None:
+        return {"tersedia": False, "skor_0_10": None, "nilai_mentah": {}, "keterangan": "Kabupaten pelabuhan tidak diketahui"}
+    return {"tersedia": True, "skor_0_10": _PELABUHAN_3TP_SKOR[kat],
+            "nilai_mentah": {"kategori": kat, "program": row["klasifikasi_3tp_program_json"]},
+            "keterangan": "Versi kategorikal per-kabupaten -- BUKAN versi jarak ke wilayah 3T/perbatasan penuh (Fase 2)"}
+
+
+def _pelabuhan_score_kawasan_strategis(row, ctx):
+    ripn = row["ripn"]
+    if ripn is None:
+        return {"tersedia": False, "skor_0_10": None, "nilai_mentah": {}, "keterangan": "Data RIPN kosong"}
+    skor = 5.0 if str(ripn).strip().lower() == "ya" else 0.0
+    return {"tersedia": True, "skor_0_10": skor, "nilai_mentah": {"ripn": ripn, "psn": None},
+            "keterangan": "RIPN saja (skala 0-5 dari 0-10 kerangka penuh) -- status PSN belum ada sumber datanya (tersedia_psn=false)"}
+
+
+def _pelabuhan_score_penduduk(row, ctx):
+    hk, total = row["hirarki_kode"], row["penduduk_radius_total"]
+    if hk is None or total is None:
+        return {"tersedia": False, "skor_0_10": None, "nilai_mentah": {},
+                "keterangan": "Tanpa koordinat, atau tidak ada wilayah dalam radius"}
+    lo, hi = ctx["penduduk"].get(hk, (None, None))
+    skor = _skala_minmax(total, lo, hi, 10.0)
+    return {"tersedia": skor is not None, "skor_0_10": skor,
+            "nilai_mentah": {"penduduk_radius_total": total, "wilayah": row["penduduk_radius_wilayah_json"]},
+            "keterangan": "Min-max thd pelabuhan lain di hirarki yang sama" if skor is not None else "Data pembanding hirarki tidak cukup"}
+
+
+def _pelabuhan_score_akses(row, ctx):
+    hk = row["hirarki_kode"]
+    if row["ruas_ijd_terdekat_id"] is None:
+        return {"tersedia": False, "skor_0_10": None, "nilai_mentah": {},
+                "keterangan": ("Tidak ada ruas usulan IJD dalam radius -- cakupan Fase 1 terbatas ke ruas usulan "
+                                "IJD, bukan seluruh jaringan jalan (versi cakupan-penuh ada di Fase 2)")}
+    baik = float(row["ruas_ijd_kondisi_baik_km"] or 0)
+    sedang = float(row["ruas_ijd_kondisi_sedang_km"] or 0)
+    ringan = float(row["ruas_ijd_kondisi_ringan_km"] or 0)
+    berat = float(row["ruas_ijd_kondisi_berat_km"] or 0)
+    total_km = baik + sedang + ringan + berat
+    pct_mantap = (baik + sedang) / total_km * 100 if total_km > 0 else None
+    lo_pm, hi_pm = ctx["pct_mantap"].get(hk, (None, None))
+    skor_kemantapan = _skala_minmax(pct_mantap, lo_pm, hi_pm, 5.0) if pct_mantap is not None else None
+    lebar = row["ruas_ijd_lebar_jalan_m"]
+    lo_l, hi_l = ctx["lebar"].get(hk, (None, None))
+    skor_lebar = _skala_minmax(float(lebar), lo_l, hi_l, 5.0) if lebar is not None else None
+    bagian = [s for s in (skor_kemantapan, skor_lebar) if s is not None]
+    skor = round(sum(bagian), 2) if bagian else None
+    return {"tersedia": skor is not None, "skor_0_10": skor,
+            "nilai_mentah": {"ruas": row["ruas_ijd_terdekat_nama"], "jarak_ruas_km": row["ruas_ijd_terdekat_jarak_km"],
+                              "pct_mantap": round(pct_mantap, 1) if pct_mantap is not None else None,
+                              "lebar_jalan_m": lebar, "skor_kemantapan_0_5": skor_kemantapan, "skor_lebar_0_5": skor_lebar},
+            "keterangan": "Kemantapan+lebar dari ruas IJD terdekat dalam radius (cakupan terbatas)"}
+
+
+_PELABUHAN_URGENSI_SCORERS = {
+    "kedekatan": _pelabuhan_score_kedekatan,
+    "tiga_tp": _pelabuhan_score_3tp,
+    "kawasan_strategis": _pelabuhan_score_kawasan_strategis,
+    "penduduk": _pelabuhan_score_penduduk,
+    "akses": _pelabuhan_score_akses,
+}
+
+
+def _compute_pelabuhan_urgensi_score(row, ctx):
+    komponen = {}
+    bobot_tersedia = 0.0
+    tertimbang = 0.0
+    for p in PELABUHAN_URGENSI_PARAM:
+        hasil = _PELABUHAN_URGENSI_SCORERS[p](row, ctx)
+        komponen[p] = {"label": PELABUHAN_URGENSI_LABEL[p], **hasil}
+        if hasil["tersedia"]:
+            bobot = PELABUHAN_URGENSI_BOBOT[p]
+            bobot_tersedia += bobot
+            tertimbang += (hasil["skor_0_10"] / 10.0) * bobot
+    skor_100 = round(tertimbang / bobot_tersedia * 100, 2) if bobot_tersedia > 0 else None
+    n_tersedia = sum(1 for p in PELABUHAN_URGENSI_PARAM if komponen[p]["tersedia"])
+    return {
+        "komponen": komponen,
+        "skor_total_0_100": skor_100,
+        "kelengkapan": f"{n_tersedia}/{len(PELABUHAN_URGENSI_PARAM)}",
+        "catatan": ("DRAF -- bobot antar-parameter PLACEHOLDER sama rata (20% x 5), BELUM dikonfirmasi pemilik "
+                    "kaidah. Skor Total dinormalisasi hanya dari komponen yang tersedia (bobot_tersedia), bukan "
+                    "dipaksa 0 untuk yang kosong. Lingkup 5 dari 7 parameter kerangka (Utilitas & Kondisi "
+                    "Kerusakan belum ada data)."),
+    }
+
+
+PELABUHAN_URGENSI_SELECT_COLS = """
+    id, nama_pelabuhan, provinsi, kabupaten_kota, hirarki_pelabuhan, hirarki_kode,
+    lat, lon, ripn,
+    jarak_sehirarki_terdekat_km, pelabuhan_sehirarki_terdekat_nama,
+    klasifikasi_3tp_kategori, klasifikasi_3tp_program_json,
+    penduduk_radius_total, penduduk_radius_wilayah_json,
+    ruas_ijd_terdekat_id, ruas_ijd_terdekat_nama, ruas_ijd_terdekat_jarak_km,
+    ruas_ijd_kondisi_baik_km, ruas_ijd_kondisi_sedang_km, ruas_ijd_kondisi_ringan_km, ruas_ijd_kondisi_berat_km,
+    ruas_ijd_lebar_jalan_m
+"""
+
+
+@app.get("/api/pelabuhan/{pelabuhan_id}/urgensi-score")
+def pelabuhan_urgensi_score(pelabuhan_id: int):
+    with db_cursor() as cur:
+        cur.execute(f"SELECT {PELABUHAN_URGENSI_SELECT_COLS} FROM pelabuhan_daerah WHERE id = %s", (pelabuhan_id,))
+        row = cur.fetchone()
+    if not row:
+        raise HTTPException(404, "Pelabuhan tidak ditemukan")
+    if row["hirarki_kode"] is None:
+        raise HTTPException(400, "Skor urgensi Fase 1 hanya berlaku utk pelabuhan laut hirarki PP/PR/PL")
+    ctx = _pelabuhan_urgensi_bulk_ctx()
+    hasil = _compute_pelabuhan_urgensi_score(row, ctx)
+    return {"id": row["id"], "nama_pelabuhan": row["nama_pelabuhan"], "provinsi": row["provinsi"],
+            "kabupaten_kota": row["kabupaten_kota"], "hirarki_pelabuhan": row["hirarki_pelabuhan"],
+            "hirarki_kode": row["hirarki_kode"], **hasil}
+
+
+def _pelabuhan_urgensi_bulk_rows(provinsi: Optional[List[str]] = None):
+    where = "WHERE hirarki_kode IS NOT NULL"
+    params: list = []
+    if provinsi:
+        where += " AND provinsi = ANY(%s)"
+        params.append(provinsi)
+    with db_cursor() as cur:
+        cur.execute(
+            f"SELECT {PELABUHAN_URGENSI_SELECT_COLS} FROM pelabuhan_daerah {where} "
+            "ORDER BY provinsi, kabupaten_kota, nama_pelabuhan",
+            params,
+        )
+        rows = cur.fetchall()
+    ctx = _pelabuhan_urgensi_bulk_ctx()
+    return [{"row": row, "skor": _compute_pelabuhan_urgensi_score(row, ctx)} for row in rows]
+
+
+@app.get("/api/pelabuhan/urgensi-score/preview")
+def pelabuhan_urgensi_preview(provinsi: List[str] = Query(default=[])):
+    hasil = _pelabuhan_urgensi_bulk_rows(provinsi or None)
+    out = []
+    for h in hasil:
+        r, s = h["row"], h["skor"]
+        out.append({"id": r["id"], "nama_pelabuhan": r["nama_pelabuhan"], "provinsi": r["provinsi"],
+                     "kabupaten_kota": r["kabupaten_kota"], "hirarki_kode": r["hirarki_kode"],
+                     "skor_total_0_100": s["skor_total_0_100"], "kelengkapan": s["kelengkapan"]})
+    return {"rows": out,
+            "catatan": ("Skor Urgensitas Penanganan Pelabuhan -- DRAF Fase 1 (5 dari 7 parameter kerangka; bobot "
+                        "placeholder sama rata, BELUM resmi). Lihat "
+                        "docs/kajian_implementasi_skor_urgensi_pelabuhan_laut.md.")}
+
+
+@app.get("/api/pelabuhan/urgensi-score/export/xlsx")
+def pelabuhan_urgensi_export_xlsx(provinsi: List[str] = Query(default=[])):
+    from openpyxl.styles import Alignment, Font, PatternFill
+
+    hasil = _pelabuhan_urgensi_bulk_rows(provinsi or None)
+
+    headers = ["No", "Nama Pelabuhan", "Provinsi", "Kab/Kota", "Hirarki",
+               "Jarak ke Pelabuhan Sehirarki Terdekat (km)", "Skor Kedekatan (0-10)",
+               "Klasifikasi 3TP (Kabupaten)", "Skor 3TP (0-10)",
+               "RIPN", "Skor Kawasan Strategis (0-5, RIPN saja -- PSN belum tersedia)",
+               "Penduduk dalam Radius", "Skor Penduduk (0-10)",
+               "Ruas IJD Terdekat", "Jarak ke Ruas (km)", "% Mantap Ruas", "Lebar Jalan Ruas (m)",
+               "Skor Akses (0-10)", "Kelengkapan Data (dari 5 parameter)",
+               "Skor Total Urgensi (0-100, bobot PLACEHOLDER -- belum resmi)"]
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Urgensi Pelabuhan (Draf)"
+    ws.append(headers)
+
+    for i, h in enumerate(hasil, start=1):
+        r, s = h["row"], h["skor"]
+        k = s["komponen"]
+        ws.append([
+            i, r["nama_pelabuhan"], r["provinsi"], r["kabupaten_kota"], r["hirarki_kode"],
+            k["kedekatan"]["nilai_mentah"].get("jarak_km"), k["kedekatan"]["skor_0_10"],
+            k["tiga_tp"]["nilai_mentah"].get("kategori"), k["tiga_tp"]["skor_0_10"],
+            r["ripn"], k["kawasan_strategis"]["skor_0_10"],
+            k["penduduk"]["nilai_mentah"].get("penduduk_radius_total"), k["penduduk"]["skor_0_10"],
+            k["akses"]["nilai_mentah"].get("ruas") or "Tidak ada dalam radius",
+            k["akses"]["nilai_mentah"].get("jarak_ruas_km"),
+            k["akses"]["nilai_mentah"].get("pct_mantap"),
+            k["akses"]["nilai_mentah"].get("lebar_jalan_m"),
+            k["akses"]["skor_0_10"],
+            s["kelengkapan"], s["skor_total_0_100"],
+        ])
+
+    for col in range(1, len(headers) + 1):
+        cell = ws.cell(row=1, column=col)
+        cell.font = Font(bold=True, size=10)
+        cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+        cell.fill = PatternFill("solid", fgColor="F2F2F2")
+    ws.freeze_panes = "A2"
+    ws.row_dimensions[1].height = 45
+    for col in range(1, len(headers) + 1):
+        ws.column_dimensions[openpyxl.utils.get_column_letter(col)].width = 16
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    fname = f"urgensi_pelabuhan_draf_{datetime.now():%Y%m%d%H%M%S}.xlsx"
+    return StreamingResponse(
+        buf,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f"attachment; filename={fname}"},
+    )
 
 
 class NoCacheStaticFiles(StaticFiles):

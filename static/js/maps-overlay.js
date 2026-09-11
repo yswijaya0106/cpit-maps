@@ -107,7 +107,13 @@ const MAP_LAYER_CATEGORIES = [
       // import_terminal_tipe_a_to_postgis.py) -- lihat
       // docs/kajian_data_baru_docs_new.md §Fase 4.
       "PELABUHAN TERSUS/TUKS", "PELABUHAN PENYEBERANGAN OPERASI", "TERMINAL TIPE A",
-      "PELABUHAN PENUMPANG"].includes(p) },
+      "PELABUHAN PENUMPANG",
+      // JALAN DARURAT: bucket nasional flat (scripts/import_jalan_darurat_to_postgis.py),
+      // ruas jalan nasional lebar perkerasan >=11m (RNI 2023) yang layak
+      // difungsikan sbg landas pacu darurat -- dual-use Jalan<->Udara,
+      // sengaja masuk kategori ini (bukan "Jalan") supaya tampil
+      // berdampingan dgn BANDARA, lihat docs/kajian_data_baru_11092026.md §1.
+      "JALAN DARURAT"].includes(p) },
   // BASARNAS: bucket nasional flat (scripts/import_basarnas_to_postgis.py),
   // layer overlay umum lepas dari IJD/usulan -- lihat
   // docs/kajian_data_baru_docs_new.md §8.
@@ -121,7 +127,11 @@ const MAP_LAYER_CATEGORIES = [
   // jalur perkotaan yang tidak ada di sumber SHP). Digabung ke kategori yang
   // sama supaya user tidak perlu tahu ada 2 sumber terpisah.
   { id: "kereta-api", label: "Kereta Api", icon: "bi-train-front",
-    match: (p) => p === "JALUR KERETA API" || p === "KERETA API" },
+    // "PERLINTASAN SEBIDANG KA": bucket nasional flat (scripts/import_
+    // railway_crossing_tahap_to_postgis.py), 136 titik rencana penanganan
+    // JPL bertahap (Tahap I/II/III) -- lihat docs/kajian_data_baru_11092026.md
+    // §3, digabung ke kategori Kereta Api yang sama spt "KERETA API" di atas.
+    match: (p) => p === "JALUR KERETA API" || p === "KERETA API" || p === "PERLINTASAN SEBIDANG KA" },
   // Maskapai: bucket nasional flat (scripts/import_maskapai_organisasi_to_postgis.py),
   // sumbernya tabel maskapai_organisasi (hasil scrape_maskapai_organisasi.py +
   // geocode_maskapai_organisasi.py), bukan file .shp -- titik lokasi kantor
@@ -136,6 +146,15 @@ const MAP_LAYER_CATEGORIES = [
   // "Bandara ID" (attachBandaraKemenhubJoin, static/js/map-tools.js).
   { id: "bandara-kemenhub", label: "Bandara (Live, Kemenhub)", icon: "bi-airplane-fill",
     match: (p) => p === "BANDARA KEMENHUB" },
+  // RTRW: bucket per provinsi (scripts/import_rtrw_kalbar_transportasi_to_postgis.py),
+  // kabupaten="<nama provinsi RTRW>" (mis. "Kalimantan Barat") -- BUKAN
+  // bucket nasional flat spt kategori lain di atas, karena sumbernya baru
+  // 1 provinsi (lihat docs/kajian_data_baru_11092026.md §2/§4 -- pilot,
+  // bukan cakupan nasional). Simpul+jaringan transportasi dari Rencana
+  // Struktur Ruang RTRW (hierarki resmi Bandara/Pelabuhan Pengumpul/
+  // Pengumpan, alur pelayaran sungai/danau, dst).
+  { id: "rtrw", label: "RTRW (Rencana Tata Ruang)", icon: "bi-map",
+    match: (p) => p === "RTRW" },
   { id: "jalan", label: "Jalan", icon: "bi-signpost-2", match: () => true }, // catch-all, HARUS terakhir
 ];
 

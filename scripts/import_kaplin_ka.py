@@ -85,6 +85,7 @@ RASIO_WAJAR = (0.5, 2.0)
 # semacam itu dicoba lewat layer rel cadangan (FALLBACK_REL) dalam koridor sempit di sekitar petak.
 GAP_JEMBATAN_M = 150
 KORIDOR_PAD_DERAJAT = 0.03  # ~3 km di kiri/kanan/atas/bawah kotak batas kedua stasiun
+GARIS_LURUS_DIGAMBAR = False  # True = petak tanpa jalur rel digambar sbg garis lurus (perkiraan)
 LURUS_RASIO = (0.3, 1.5)  # rentang wajar panjang garis lurus / jarak petak di sheet
 RASIO_FALLBACK = (0.6, 1.7)  # lebih ketat dari RASIO_WAJAR: layer cadangan bisa tumpang tindih/paralel
 # urutan percobaan layer cadangan (masing-masing dipakai SENDIRI, tidak digabung -- menggabung semua
@@ -456,6 +457,11 @@ def proses(pulau, cfg, stasiun_all, cur):
             if lokal:
                 geom = LineString([xy.to_ll(x, y) for x, y in lokal[0]])
                 sumber, glen = f"Menyusuri jalur rel (layer cadangan: {lokal[2]})", lokal[1]
+        if geom is None and not GARIS_LURUS_DIGAMBAR:
+            # permintaan user (25 Sep 2026): garis lurus antar stasiun menyesatkan (tidak di atas rel di
+            # peta dasar) -> petak yang tak bisa disusuri di jaringan rel TIDAK digambar sama sekali.
+            tak_gambar.append(f"{p['awal']}-{p['akhir']} ({p['lintas']}) [tak ada jalur rel yang tersambung]")
+            continue
         if geom is None:
             geom = LineString([(a["lon"], a["lat"]), (b["lon"], b["lat"])])
             glen = math.hypot((a["lon"] - b["lon"]) * xy.kx, (a["lat"] - b["lat"]) * xy.ky)

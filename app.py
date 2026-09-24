@@ -49,6 +49,7 @@ from db import db_cursor  # noqa: E402
 from map_layer_labels import map_layer_label as _map_layer_label  # noqa: E402
 import auth  # noqa: E402
 import chat_providers  # noqa: E402
+import wilayah_pulau  # noqa: E402
 import road_safety  # noqa: E402
 import urban_darat  # noqa: E402
 # _llm_plain/_plain_* (penilaian Bappenas AI) masih tinggal di app.py dan
@@ -872,6 +873,7 @@ DATA_TABLES = {
     "basarnas_analisis_kantor": "Analisis Basarnas per Kantor/Pos SAR (Kelengkapan Data)",
     "jpl_prioritas_djka": "Prioritas Keselamatan Perlintasan Sebidang KA (DJKA)",
     "penanganan_ss_ka_tahap": "Rencana Penanganan Perlintasan Sebidang KA Bertahap (I/II/III)",
+    "koridor_simpul_terdekat": "Peta Koridor — Jarak Terdekat ke Simpul Bandara & Pelabuhan",
 }
 # kolom yang tidak ditampilkan (payload besar)
 DATA_TABLE_SKIP_COLS = {"geom_geojson", "detail_fasilitas"}
@@ -906,6 +908,13 @@ DATA_TABLE_GEO = {
     "si_kendaraan_provinsi": ("kode_provinsi", "kode_provinsi"),
     "si_lahan_sawah_provinsi": ("kode_provinsi", "kode_provinsi"),
     "pelabuhan_daerah": ("kode_provinsi", "kode_kabupaten"),
+    "koridor_simpul_terdekat": ("kode_provinsi", "kode_kab"),
+}
+
+# Tabel yang punya filter "Pulau" (nasional / pulau / provinsi) di viewer Data
+# -> nama kolom pulau-nya; pengelompokan provinsi->pulau ada di wilayah_pulau.py.
+DATA_TABLE_PULAU_COL = {
+    "koridor_simpul_terdekat": "pulau",
 }
 
 # Tabel dari docs/New/ (layer overlay umum, lihat docs/kajian_data_baru_docs_new.md)
@@ -979,18 +988,32 @@ def data_tables():
             total = cur.fetchone()["n"]
             out.append({
                 "name": name, "label": label, "total": total, "geo": name in DATA_TABLE_GEO,
+                "has_pulau": name in DATA_TABLE_PULAU_COL,
                 "has_tahun": bool(year_col),
             })
     return out
 
 
 @app.get("/api/data/geo/provinces")
-def data_geo_provinces():
+def data_geo_provinces(pulau: str = ""):
     """Master provinsi (dari penduduk_kecamatan, cakupan nasional) — dipakai
     dropdown filter provinsi di viewer "Data" untuk semua tabel di DATA_TABLE_GEO."""
     with db_cursor() as cur:
-        cur.execute("SELECT DISTINCT kode_provinsi, provinsi FROM penduduk_kecamatan ORDER BY provinsi")
+        if pulau:
+            cur.execute(
+                "SELECT DISTINCT kode_provinsi, provinsi FROM penduduk_kecamatan "
+                "WHERE kode_provinsi = ANY(%s) ORDER BY provinsi",
+                (wilayah_pulau.PULAU_KODE_PROVINSI.get(pulau, []),),
+            )
+        else:
+            cur.execute("SELECT DISTINCT kode_provinsi, provinsi FROM penduduk_kecamatan ORDER BY provinsi")
         return cur.fetchall()
+
+
+@app.get("/api/data/geo/pulau")
+def data_geo_pulau():
+    """Daftar gugus pulau utk filter "Pulau" di viewer Data."""
+    return list(wilayah_pulau.PULAU_KODE_PROVINSI.keys())
 
 
 @app.get("/api/data/geo/kabupaten")
@@ -1065,7 +1088,7 @@ def bappenas_lokus_a_import(kriteria: str, file: UploadFile = File(...)):
     return {"kriteria": kriteria, "filename": file.filename, "total": len(rows), "match_kabupaten": n_match}
 
 
-def _data_table_geo_where(table: str, provinsi: int, kabupaten: int, kriteria: str = "", provinsi_text: str = "", q: str = "", tahun: str = ""):
+def _data_table_geo_where(table: str, provinsi: int, kabupaten: int, kriteria: str = "", provinsi_text: str = "", q: str = "", tahun: str = "", pulau: str = ""):
     """WHERE + params dari filter provinsi/kabupaten, kalau tabelnya kebagian
     kode geo (DATA_TABLE_GEO) dan filter diisi. Kabupaten menang kalau
     keduanya diisi (provinsinya sudah tersirat). "kriteria" -- khusus
@@ -1088,6 +1111,10 @@ def _data_table_geo_where(table: str, provinsi: int, kabupaten: int, kriteria: s
         elif provinsi:
             clauses.append(f"{prov_expr} = %s")
             params.append(provinsi)
+    pulau_col = DATA_TABLE_PULAU_COL.get(table)
+    if pulau_col and pulau:
+        clauses.append(f'"{pulau_col}" = %s')
+        params.append(pulau)
     text_col = DATA_TABLE_TEXT_PROVINSI.get(table)
     if text_col and provinsi_text:
         clauses.append(f'"{text_col}" ILIKE %s')
@@ -1111,10 +1138,10 @@ def _data_table_geo_where(table: str, provinsi: int, kabupaten: int, kriteria: s
 
 
 @app.get("/api/data/{table}/export/xlsx")
-def data_table_export(table: str, provinsi: int = 0, kabupaten: int = 0, kriteria: str = "", provinsi_text: str = "", q: str = "", tahun: str = ""):
+def data_table_export(table: str, provinsi: int = 0, kabupaten: int = 0, kriteria: str = "", provinsi_text: str = "", q: str = "", tahun: str = "", pulau: str = ""):
     if table not in DATA_TABLES:
         raise HTTPException(404, "Tabel tidak dikenal")
-    where, params = _data_table_geo_where(table, provinsi, kabupaten, kriteria, provinsi_text, q, tahun)
+    where, params = _data_table_geo_where(table, provinsi, kabupaten, kriteria, provinsi_text, q, tahun, pulau)
     with db_cursor() as cur:
         columns = [c for c in _table_columns(cur, table) if c not in DATA_TABLE_SKIP_COLS]
         col_sql = ", ".join(f'"{c}"' for c in columns)
@@ -1138,12 +1165,12 @@ def data_table_export(table: str, provinsi: int = 0, kabupaten: int = 0, kriteri
 
 
 @app.get("/api/data/{table}")
-def data_table_rows(table: str, limit: int = 50, offset: int = 0, provinsi: int = 0, kabupaten: int = 0, kriteria: str = "", provinsi_text: str = "", q: str = "", tahun: str = ""):
+def data_table_rows(table: str, limit: int = 50, offset: int = 0, provinsi: int = 0, kabupaten: int = 0, kriteria: str = "", provinsi_text: str = "", q: str = "", tahun: str = "", pulau: str = ""):
     if table not in DATA_TABLES:
         raise HTTPException(404, "Tabel tidak dikenal")
     limit = max(1, min(limit, 200))
     offset = max(0, offset)
-    where, params = _data_table_geo_where(table, provinsi, kabupaten, kriteria, provinsi_text, q, tahun)
+    where, params = _data_table_geo_where(table, provinsi, kabupaten, kriteria, provinsi_text, q, tahun, pulau)
     with db_cursor() as cur:
         columns = [c for c in _table_columns(cur, table) if c not in DATA_TABLE_SKIP_COLS]
         col_sql = ", ".join(f'"{c}"' for c in columns)

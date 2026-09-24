@@ -95,6 +95,12 @@ Deps: `requirements.txt`, venv at `.venv/` (already gitignored).
   helpers) are done lazily inside functions, not at module top-level, to
   avoid a circular import — app.py imports `chat_providers` at top-level.
 - [db.py](db.py) — the `db_cursor()` contextmanager (see below).
+- [auth.py](auth.py) — password hashing + signed session tokens (see login
+  gate under Run). [road_safety.py](road_safety.py) /
+  [urban_darat.py](urban_darat.py) — Darat-moda profile builders (logic only;
+  routes stay in app.py, see "Multi-modal transport data").
+- No test suite and no linter/build step: verify by hitting endpoints, or
+  `scripts/smoke_check.py --save` / `--check` for a before/after diff.
 - [map_layer_labels.py](map_layer_labels.py) — `MAP_LAYER_LABELS` /
   `_map_layer_label`, shared between app.py and
   `scripts/import_maps_to_postgis.py`.
@@ -992,6 +998,15 @@ upsert, so they're safe to re-run:
   misleading per-row. Resumable per (provinsi, kabupaten) via
   `map_layer_meta`, `--force` to reimport, `--provinsi` (repeatable) to
   scope a run.
+- `build_koridor_simpul_terdekat.py` — jarak terdekat tiap koridor PETA
+  KORIDOR (per `NO_KORIDOR` x kabupaten, 2.482 baris) ke bandara (`BANDARA/
+  Bandara`) dan pelabuhan (`PELABUHAN/Pelabuhan Nasional`) → tabel
+  `koridor_simpul_terdekat`, menu "Data" (filter Nasional / **Pulau** /
+  Provinsi / Kabupaten; filter Pulau baru: `DATA_TABLE_PULAU_COL` +
+  `wilayah_pulau.py`, param `pulau`). Jarak geodesik garis lurus dari
+  geometri koridor yg disederhanakan ~50 m (~65 dtk); DELETE + reinsert,
+  rerun setelah PETA KORIDOR/simpul diimpor ulang. Pelabuhan penyeberangan
+  sengaja tidak dihitung.
 - `import_kemantapan_ijd2026.py` — road-soundness per kab/kota
   (`kemantapan_ijd_2026`), the source of IJD pagu component G8.A2; also
   writes the official "Tidak mantap (%)" figure into

@@ -9,6 +9,8 @@ const dataViewer = {
   limit: 50,
   total: 0,
   geo: false,       // tabel aktif bisa difilter provinsi/kabupaten?
+  hasPulau: false,  // tabel aktif punya filter "Pulau" (DATA_TABLE_PULAU_COL di app.py)?
+  pulau: "",        // gugus pulau terpilih ("" = nasional)
   provinsi: "",     // kode_provinsi terpilih ("" = semua)
   kabupaten: "",    // kode_kabupaten terpilih ("" = semua)
   hasTahun: false,  // tabel aktif punya filter "Tahun" (DATA_TABLE_YEAR_COL di app.py)?
@@ -80,6 +82,8 @@ async function dataViewerOpen(tableName) {
   dataViewer.geo = !!(t && t.geo);
   dataViewer.provinsi = "";
   dataViewer.kabupaten = "";
+  dataViewer.hasPulau = !!(t && t.has_pulau);
+  dataViewer.pulau = "";
   dataViewer.moda = "IJD";
   dataViewer.hasTahun = !!(t && t.has_tahun);
   dataViewer.tahun = "";
@@ -128,9 +132,28 @@ async function dataViewerSetupFilters() {
   document.getElementById("dataTableFilterProvinsiLabel").textContent = "Semua provinsi";
   document.getElementById("dataTableFilterKabupatenLabel").textContent = "Semua kabupaten";
   document.getElementById("dataTableFilterKabupatenToggle").disabled = true;
+  const pulauSel = document.getElementById("dataTableFilterPulau");
+  pulauSel.hidden = !dataViewer.hasPulau;
+  if (dataViewer.hasPulau) {
+    if (pulauSel.options.length <= 1) {
+      try {
+        const res = await fetch("/api/data/geo/pulau");
+        for (const nama of await res.json()) pulauSel.add(new Option(nama, nama));
+      } catch { /* dropdown tetap cuma "Nasional" */ }
+    }
+    pulauSel.value = "";
+  }
 }
 
 async function dataViewerGeoProvinces() {
+  if (dataViewer.pulau) {
+    try {
+      const res = await fetch(`/api/data/geo/provinces?pulau=${encodeURIComponent(dataViewer.pulau)}`);
+      return await res.json();
+    } catch {
+      return [];
+    }
+  }
   if (!dataViewer.geoProvinces) {
     try {
       const res = await fetch("/api/data/geo/provinces");
@@ -153,6 +176,16 @@ async function dataViewerGeoKabupaten(kodeProvinsi) {
 }
 
 function bindDataViewerGeoFilters() {
+  document.getElementById("dataTableFilterPulau").addEventListener("change", (e) => {
+    dataViewer.pulau = e.target.value;
+    dataViewer.provinsi = "";
+    dataViewer.kabupaten = "";
+    dataViewer.offset = 0;
+    document.getElementById("dataTableFilterProvinsiLabel").textContent = "Semua provinsi";
+    document.getElementById("dataTableFilterKabupatenLabel").textContent = "Semua kabupaten";
+    document.getElementById("dataTableFilterKabupatenToggle").disabled = true;
+    if (dataViewer.table) dataViewerFetchPage();
+  });
   bindMapLayerCombo(
     "dataTableFilterProvinsiField", "dataTableFilterProvinsiToggle",
     "dataTableFilterProvinsiPanel", "dataTableFilterProvinsiLabel",
@@ -274,6 +307,7 @@ async function dataViewerFetchPage() {
     } else {
       if (dataViewer.provinsi) params.set("provinsi", dataViewer.provinsi);
       if (dataViewer.kabupaten) params.set("kabupaten", dataViewer.kabupaten);
+      if (dataViewer.hasPulau && dataViewer.pulau) params.set("pulau", dataViewer.pulau);
       if (dataViewer.table === "bappenas_lokus_a" && dataViewer.importKriteria) {
         params.set("kriteria", dataViewer.importKriteria);
       }
@@ -378,6 +412,7 @@ function bindDataViewer() {
     } else {
       if (dataViewer.provinsi) params.set("provinsi", dataViewer.provinsi);
       if (dataViewer.kabupaten) params.set("kabupaten", dataViewer.kabupaten);
+      if (dataViewer.hasPulau && dataViewer.pulau) params.set("pulau", dataViewer.pulau);
       if (dataViewer.table === "bappenas_lokus_a" && dataViewer.importKriteria) {
         params.set("kriteria", dataViewer.importKriteria);
       }

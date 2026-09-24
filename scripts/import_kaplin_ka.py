@@ -79,6 +79,18 @@ ALIAS = {
 }
 SNAP_MAKS_M = 2000
 RASIO_WAJAR = (0.5, 2.0)
+# Graf rel utama (layer "Rel Jawa"/"Rel Sumatera") terputus jadi puluhan potongan: celah kecil antar
+# ujung garis (digitasi tidak menyambung) disambung bila <= GAP_JEMBATAN_M meter. Celah besar (mis.
+# ruas Jatinegara-Bekasi ~3 km yang memang tidak ada di layer itu) TIDAK disambung paksa -- petak
+# semacam itu dicoba lewat layer rel cadangan (FALLBACK_REL) dalam koridor sempit di sekitar petak.
+GAP_JEMBATAN_M = 150
+KORIDOR_PAD_DERAJAT = 0.03  # ~3 km di kiri/kanan/atas/bawah kotak batas kedua stasiun
+LURUS_RASIO = (0.3, 1.5)  # rentang wajar panjang garis lurus / jarak petak di sheet
+RASIO_FALLBACK = (0.6, 1.7)  # lebih ketat dari RASIO_WAJAR: layer cadangan bisa tumpang tindih/paralel
+# urutan percobaan layer cadangan (masing-masing dipakai SENDIRI, tidak digabung -- menggabung semua
+# layer sekaligus terbukti memperbanyak garis lurus karena jalur paralel saling tersambung salah)
+FALLBACK_REL = [("JALUR KERETA API", "JALUR KERETA API AKTIF (BTP)"), ("JALUR KERETA API", "JALUR KERETA API"),
+                ("KERETA API", "Jalur KA Perkotaan")]
 WARNA = {"rendah": "#2e9e5b", "sedang": "#e0a800", "tinggi": "#d64545", "na": "#8a94a6"}
 
 
@@ -183,6 +195,39 @@ class Rail:
                 if u != v:
                     edge(u, v)
         self.adj, self.pos = adj, pos
+        self._jembatani_celah(GAP_JEMBATAN_M)
+
+    def _jembatani_celah(self, gap_m):
+        """Sambung ujung buntu (node berderajat 1) ke node terdekat di KOMPONEN LAIN bila jaraknya
+        <= gap_m. Hanya celah kecil akibat digitasi; celah besar dibiarkan (lihat GAP_JEMBATAN_M)."""
+        adj, pos = self.adj, self.pos
+        komp, cid = {}, 0
+        for n in adj:
+            if n in komp:
+                continue
+            st = [n]
+            komp[n] = cid
+            while st:
+                u = st.pop()
+                for v, _ in adj[u]:
+                    if v not in komp:
+                        komp[v] = cid
+                        st.append(v)
+            cid += 1
+        if cid < 2:
+            return
+        keys = list(adj)
+        P = np.array([pos[k] for k in keys])
+        C = np.array([komp[k] for k in keys])
+        for i, k in enumerate(keys):
+            if len(adj[k]) != 1:
+                continue
+            d = np.hypot(P[:, 0] - P[i, 0], P[:, 1] - P[i, 1])
+            d[C == C[i]] = np.inf
+            j = int(d.argmin())
+            if np.isfinite(d[j]) and d[j] <= gap_m:
+                adj[k].append((keys[j], float(d[j])))
+                adj[keys[j]].append((k, float(d[j])))
 
     def path(self, s, t):
         dist, prev, pq, n = {s: 0.0}, {}, [(0.0, 0, s)], 0
@@ -261,6 +306,36 @@ def kategori(u):
 
 def fmt(x, d=0):
     return f"{x:,.{d}f}".replace(",", "X").replace(".", ",").replace("X", ".")
+
+
+def jalur_lokal(cur, xy, a, b, jarak_m):
+    """Fallback utk petak yang tidak bisa disusuri di graf rel utama: bangun graf KECIL dari satu layer
+    rel cadangan (FALLBACK_REL, dicoba berurutan) hanya di koridor sekitar kedua stasiun, lalu cari jalur
+    terpendek. Return (titik_xy, panjang_m, nama_layer) atau None."""
+    lons, lats = sorted([a["lon"], b["lon"]]), sorted([a["lat"], b["lat"]])
+    pad = KORIDOR_PAD_DERAJAT
+    for prov, lay in FALLBACK_REL:
+        cur.execute(
+            "SELECT ST_AsBinary(geom) AS g FROM map_layers WHERE provinsi=%s AND layer=%s "
+            "AND geom && ST_MakeEnvelope(%s, %s, %s, %s, 4326)",
+            (prov, lay, lons[0] - pad, lats[0] - pad, lons[1] + pad, lats[1] + pad))
+        lines = []
+        for r in cur.fetchall():
+            g = wkb.loads(bytes(r["g"]))
+            for part in (g.geoms if g.geom_type.startswith("Multi") else [g]):
+                lines.append(list(part.coords))
+        if not lines:
+            continue
+        rail = Rail(lines, xy)
+        rail.add_station("A", xy.to_m(a["lon"], a["lat"]))
+        rail.add_station("B", xy.to_m(b["lon"], b["lat"]))
+        if "A" not in rail.sta_node or "B" not in rail.sta_node:
+            continue
+        rail.finalize()
+        pts, dist = rail.path(rail.sta_node["A"][0], rail.sta_node["B"][0])
+        if pts and dist and (jarak_m is None or RASIO_FALLBACK[0] <= dist / jarak_m <= RASIO_FALLBACK[1]):
+            return pts, dist, lay
+    return None
 
 
 def proses(pulau, cfg, stasiun_all, cur):
@@ -372,8 +447,20 @@ def proses(pulau, cfg, stasiun_all, cur):
                 geom = LineString([xy.to_ll(x, y) for x, y in pts])
                 sumber, glen = "Menyusuri jalur rel (layer Rel)", dist
         if geom is None:
+            lokal = jalur_lokal(cur, xy, a, b, p["jarak_m"])
+            if lokal:
+                geom = LineString([xy.to_ll(x, y) for x, y in lokal[0]])
+                sumber, glen = f"Menyusuri jalur rel (layer cadangan: {lokal[2]})", lokal[1]
+        if geom is None:
             geom = LineString([(a["lon"], a["lat"]), (b["lon"], b["lat"])])
             glen = math.hypot((a["lon"] - b["lon"]) * xy.kx, (a["lat"] - b["lat"]) * xy.ky)
+            # garis lurus selalu <= panjang rel sebenarnya; kalau jauh di luar jarak petak di sheet,
+            # berarti koordinat salah satu stasiun salah cocok (kode ganda/stasiun lain) -> lebih baik
+            # tidak digambar daripada menggambar garis ratusan km yang menyesatkan.
+            if p["jarak_m"] and not (LURUS_RASIO[0] <= glen / p["jarak_m"] <= LURUS_RASIO[1]):
+                tak_gambar.append(f"{p['awal']}-{p['akhir']} ({p['lintas']}) [koordinat stasiun tidak konsisten: "
+                                  f"garis lurus {glen / 1000:.1f} km vs petak {p['jarak_m'] / 1000:.1f} km]")
+                continue
             sumber = "Garis lurus antar stasiun (perkiraan)"
         util = (p["program"] / p["kapasitas"] * 100) if p["program"] is not None and p["kapasitas"] else None
         kat, warna = kategori(util)

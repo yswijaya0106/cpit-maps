@@ -1070,6 +1070,17 @@ upsert, so they're safe to re-run:
   PETAK JALAN / KORIDOR UTAMA / STASIUN. Frontend: properti `_warna`/`_lebar`
   (garis) dan `_label` (titik, label tampil mulai zoom 9, `bindKaplinLabelZoom`)
   bersifat generik di `applyLayerStyle`; legenda di map-tools.js.
+  **Perbaikan 24 Sep 2026 (garis tidak mengikuti rel)**: graf `Rel Jawa`/`Rel Sumatera`
+  terputus jadi ±31 potongan → 46 petak Jawa/27 Sumatera jatuh ke garis lurus (mis.
+  Jatinegara–Bekasi). Kini: (1) celah antar ujung garis ≤150 m disambung
+  (`GAP_JEMBATAN_M`), (2) petak yang tetap gagal dicoba di graf LOKAL koridor petak itu
+  dari layer rel cadangan (`FALLBACK_REL`: JALUR KERETA API AKTIF (BTP) → JALUR KERETA
+  API → Jalur KA Perkotaan, satu layer per percobaan, rasio 0,6-1,7) — **jangan menggabung
+  semua layer rel sekaligus** (diuji: garis lurus malah naik 46 → 132-169), (3) garis lurus
+  hanya digambar bila panjangnya 0,3-1,5× jarak petak sheet; di luar itu berarti koordinat
+  stasiun salah cocok (mis. LP–SBB 710 km) → petak TIDAK digambar. Hasil: garis lurus Jawa
+  1, Sumatera 2; petak tak digambar Jawa 15, Sumatera 3. Setelah rerun, restart server
+  (cache `_map_layer_geojson_cache`).
 - `import_kemantapan_ijd2026.py` — road-soundness per kab/kota
   (`kemantapan_ijd_2026`), the source of IJD pagu component G8.A2; also
   writes the official "Tidak mantap (%)" figure into

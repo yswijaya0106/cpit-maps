@@ -8548,7 +8548,9 @@ PELABUHAN_URGENSI_SELECT_COLS = """
     penduduk_radius_total, penduduk_radius_wilayah_json,
     ruas_ijd_terdekat_id, ruas_ijd_terdekat_nama, ruas_ijd_terdekat_jarak_km,
     ruas_ijd_kondisi_baik_km, ruas_ijd_kondisi_sedang_km, ruas_ijd_kondisi_ringan_km, ruas_ijd_kondisi_berat_km,
-    ruas_ijd_lebar_jalan_m
+    ruas_ijd_lebar_jalan_m,
+    jalan_terdekat_kode, jalan_terdekat_nama, jalan_terdekat_jaringan, jalan_terdekat_klasifikasi,
+    jalan_terdekat_jarak_km
 """
 
 
@@ -8565,7 +8567,7 @@ def pelabuhan_urgensi_score(pelabuhan_id: int):
     hasil = _compute_pelabuhan_urgensi_score(row, ctx)
     return {"id": row["id"], "nama_pelabuhan": row["nama_pelabuhan"], "provinsi": row["provinsi"],
             "kabupaten_kota": row["kabupaten_kota"], "hirarki_pelabuhan": row["hirarki_pelabuhan"],
-            "hirarki_kode": row["hirarki_kode"], **hasil}
+            "hirarki_kode": row["hirarki_kode"], "jalan_terdekat": _pelabuhan_jalan_terdekat(row), **hasil}
 
 
 def _pelabuhan_urgensi_bulk_rows(provinsi: Optional[List[str]] = None):
@@ -8583,6 +8585,15 @@ def _pelabuhan_urgensi_bulk_rows(provinsi: Optional[List[str]] = None):
         rows = cur.fetchall()
     ctx = _pelabuhan_urgensi_bulk_ctx()
     return [{"row": row, "skor": _compute_pelabuhan_urgensi_score(row, ctx)} for row in rows]
+
+
+def _pelabuhan_jalan_terdekat(r):
+    """Ruas jalan terdekat DARI SEMUA JARINGAN (nasional/provinsi/tol/kab-kota; precompute
+    scripts/spatial_join_pelabuhan_urgensi.py --hanya-jalan) + klasifikasi + nama jalan --
+    untuk TAMPILAN. Skor Akses tetap memakai kondisi/lebar ruas usulan IJD (ruas_ijd_*)."""
+    return {"kode_ruas": r["jalan_terdekat_kode"], "nama_jalan": r["jalan_terdekat_nama"],
+            "jaringan": r["jalan_terdekat_jaringan"], "klasifikasi": r["jalan_terdekat_klasifikasi"],
+            "jarak_km": r["jalan_terdekat_jarak_km"]}
 
 
 def _pelabuhan_urgensi_row_detail(r, s):
@@ -8614,7 +8625,8 @@ def _pelabuhan_urgensi_row_detail(r, s):
         "penduduk_wilayah_tercakup": "\n".join(f"{w['nama']} : {w['penduduk']:,}".replace(",", ".") for w in wilayah) if wilayah else None,
         "penduduk_total": pd.get("penduduk_radius_total"),
         "penduduk_skor": k["penduduk"]["skor_0_10"],
-        "akses_ruas": ak.get("ruas"), "akses_jarak_ruas_km": ak.get("jarak_ruas_km"),
+        "jalan_kode_ruas": r["jalan_terdekat_kode"], "jalan_nama": r["jalan_terdekat_nama"],
+        "jalan_klasifikasi": r["jalan_terdekat_klasifikasi"], "jalan_jarak_km": r["jalan_terdekat_jarak_km"],
         "akses_kondisi_baik_km": r["ruas_ijd_kondisi_baik_km"], "akses_kondisi_sedang_km": r["ruas_ijd_kondisi_sedang_km"],
         "akses_kondisi_ringan_km": r["ruas_ijd_kondisi_ringan_km"], "akses_kondisi_berat_km": r["ruas_ijd_kondisi_berat_km"],
         "akses_pct_mantap": ak.get("pct_mantap"), "akses_lebar_jalan_m": ak.get("lebar_jalan_m"),
@@ -8646,10 +8658,12 @@ PELABUHAN_URGENSI_EXPORT_KOLOM = [
     ("Skor Kawasan Strategis (0-5, RIPN saja)", "kawasan_strategis_skor"),
     ("Radius Penduduk (km)", "penduduk_radius_km"), ("Wilayah Tercakup (kab/kota atau kecamatan)", "penduduk_wilayah_tercakup"),
     ("Total Penduduk dalam Radius", "penduduk_total"), ("Skor Penduduk (0-10)", "penduduk_skor"),
-    ("Ruas Usulan IJD Terdekat", "akses_ruas"), ("Jarak ke Ruas (km)", "akses_jarak_ruas_km"),
-    ("Kondisi Baik (km)", "akses_kondisi_baik_km"), ("Kondisi Sedang (km)", "akses_kondisi_sedang_km"),
-    ("Kondisi Ringan (km)", "akses_kondisi_ringan_km"), ("Kondisi Berat (km)", "akses_kondisi_berat_km"),
-    ("% Mantap Ruas", "akses_pct_mantap"), ("Lebar Jalan Ruas (m)", "akses_lebar_jalan_m"),
+    ("Ruas Jalan Terdekat (kode ruas)", "jalan_kode_ruas"), ("Nama Jalan", "jalan_nama"),
+    ("Klasifikasi Jalan", "jalan_klasifikasi"), ("Jarak ke Ruas Jalan (km)", "jalan_jarak_km"),
+    # Skor Akses tetap dihitung dari kondisi & lebar RUAS USULAN IJD terdekat (satu-satunya sumber kondisi jalan)
+    ("Kondisi Baik (km, ruas usulan IJD)", "akses_kondisi_baik_km"), ("Kondisi Sedang (km, ruas usulan IJD)", "akses_kondisi_sedang_km"),
+    ("Kondisi Ringan (km, ruas usulan IJD)", "akses_kondisi_ringan_km"), ("Kondisi Berat (km, ruas usulan IJD)", "akses_kondisi_berat_km"),
+    ("% Mantap (ruas usulan IJD)", "akses_pct_mantap"), ("Lebar Jalan (m, ruas usulan IJD)", "akses_lebar_jalan_m"),
     ("Skor Kemantapan (0-5)", "akses_skor_kemantapan"), ("Skor Lebar Jalan (0-5)", "akses_skor_lebar"),
     ("Skor Akses (0-10)", "akses_skor"),
     ("Kelengkapan Data (dari 5 parameter)", "kelengkapan"),

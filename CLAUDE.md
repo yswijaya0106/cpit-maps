@@ -870,6 +870,20 @@ scripts/tables/layers out to staging.
   `ref_wilayah`, kualifikasi nama tabel pada kolom `kode_kabupaten` (nama
   sama di kedua sisi → subquery membandingkan ref dengan dirinya sendiri,
   selalu cocok, orphan tampak 0 padahal ada).
+- **Skor Urgensitas Penanganan Pelabuhan (Laut, DRAF) — ruas jalan terdekat**
+  (24 Sep 2026): kolom "Ruas IJD Terdekat" di preview/export diganti **ruas jalan
+  terdekat dari SEMUA jaringan** (nasional, provinsi, tol, dan 202 layer jalan
+  kab/kota) + kode ruas + nama jalan + klasifikasi jalan + jarak, di-precompute
+  `scripts/spatial_join_pelabuhan_urgensi.py --hanya-jalan` ke kolom
+  `pelabuhan_daerah.jalan_terdekat_*` (radius ~55 km; 654/701 pelabuhan
+  berkoordinat terisi). Atribut layer kab/kota sangat beragam (nama ruas di
+  20-an nama kolom) — best-effort; kode status huruf selain K/P/N ditampilkan
+  apa adanya. **Skor Akses TIDAK berubah**: tetap dari kondisi/lebar ruas
+  usulan IJD terdekat (`ruas_ijd_*`, satu-satunya sumber kondisi jalan;
+  header kolomnya kini berlabel "ruas usulan IJD"). Skor Kedekatan
+  (jarak sehirarki terdekat) tidak berubah: < ambang → 0, ≥ ambang → skala 0-10
+  min-max per hirarki, makin jauh makin tinggi (diverifikasi terhadap data).
+  DB baru wajib menjalankan skrip itu (SELECT app.py membaca kolom baru).
 - `scripts/lhr_spatial_join.py` — ad-hoc (not part of the rerun-safe
   pipeline) spatial join of each LHR ruas against BATAS KECAMATAN polygons,
   writing provinsi/kabupaten/kecamatan directly into the source LHR xlsx.

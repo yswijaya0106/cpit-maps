@@ -287,10 +287,126 @@ def _isi_ruas_ijd_terdekat(force: bool):
             print(f"  ruas IJD terdekat {kode} ({radius_km}km): {n} baris di-update ({time.time() - t1:.2f}s)")
 
 
+# --- Ruas jalan terdekat (semua jaringan) -- menggantikan tampilan "Ruas IJD Terdekat" ------------
+# Permintaan 24 Sep 2026: yang ditampilkan di preview/export Skor Urgensitas Pelabuhan adalah ruas
+# jalan terdekat (BUKAN hanya ruas usulan IJD) + klasifikasi jalan + nama jalan. Skor Akses tetap
+# memakai kondisi/lebar ruas usulan IJD (ruas_ijd_*), karena kondisi jalan hanya ada di sana.
+#
+# Jaringan (layer map_layers): Jalan Nasional (LINK_NAME/ROAD_FUNCT/ROAD_CLASS), Jalan Provinsi
+# (RUAS/FUNGSI), Jalan Tol, dan seluruh layer jalan kab/kota per-kabupaten (202 layer; skema atribut
+# SANGAT beragam antar layer -- nama ruas tersebar di 20-an nama kolom, jadi dipilih lewat daftar
+# kolom cadangan; bila tak ada nama, kolom nama dibiarkan NULL). Cakupan jalan kab/kota parsial
+# (202 dari 514 kab/kota) dan kualitas atribut tidak seragam -- best-effort, bukan data resmi lengkap.
+JALAN_RADIUS_DERAJAT = 0.5  # ~55 km; di luar itu tidak ada ruas jalan yang dilaporkan
+
+_NAMA_KAB = ["Nm_Ruas", "Nama_Ruas", "NAMA_RUAS", "NM_RUAS", "Nm_Ruas_1", "Nama_Ruas_", "nama_ruas",
+             "NAMA_JALAN", "Nama_Jalan", "Ruas", "NAME", "Name", "NAMA", "NAMA_UNSUR"]
+_STATUS_KAB = ["Status", "STATUS", "STATUS_JAL", "STATUS0", "Klasifikas", "klas_jal_1"]
+_FUNGSI_KAB = ["Fungsi", "FUNGSI", "FUNGSI_JAL", "Fungsi_Jal", "JLN_FUNGSI", "FUNGSI2016", "FGSRJL", "Kelas"]
+_KODE_KAB = ["No_Ruas", "NO_RUAS", "Kode_Ruas", "Nomor_Ruas", "no_ruas"]
+
+
+def _pilih(keys, extra_null=("", "-", "0", "0.0")):
+    """SQL: nilai atribut pertama yang terisi dari daftar kolom (nilai kosong/'-'/'0' dianggap kosong)."""
+    nulls = ", ".join(f"'{n}'" for n in extra_null)
+    parts = [f"CASE WHEN trim(attrs->>'{k}') IN ({nulls}) THEN NULL ELSE trim(attrs->>'{k}') END" for k in keys]
+    return "COALESCE(" + ", ".join(parts) + ")"
+
+
+def _isi_jalan_terdekat(force: bool):
+    where_force = "" if force else "AND p.jalan_terdekat_jaringan IS NULL"
+    fungsi_nas = ("CASE attrs->>'ROAD_FUNCT' WHEN 'A' THEN 'Arteri' WHEN 'K1' THEN 'Kolektor 1' "
+                  "WHEN 'K2' THEN 'Kolektor 2' WHEN 'K3' THEN 'Kolektor 3' ELSE attrs->>'ROAD_FUNCT' END")
+    status_raw = _pilih(_STATUS_KAB)
+    # sebagian layer menulis status dgn kode huruf (K/P/N); kode lain (D, JP, JSK, ...) maknanya belum
+    # terdokumentasi -> tidak ditebak, ditampilkan apa adanya sebagai "kode status sumber".
+    status_kab = (f"CASE WHEN {status_raw} IS NULL THEN NULL WHEN upper({status_raw}) = 'K' THEN 'Kabupaten' "
+                  f"WHEN upper({status_raw}) = 'P' THEN 'Provinsi' WHEN upper({status_raw}) = 'N' THEN 'Nasional' "
+                  f"WHEN length({status_raw}) <= 3 THEN NULL ELSE {status_raw} END")
+    fungsi_kab = _pilih(_FUNGSI_KAB)
+    t0 = time.time()
+    with db_cursor() as cur:
+        for kol, tipe in (("jalan_terdekat_kode", "TEXT"), ("jalan_terdekat_nama", "TEXT"),
+                          ("jalan_terdekat_jaringan", "TEXT"), ("jalan_terdekat_klasifikasi", "TEXT"),
+                          ("jalan_terdekat_jarak_km", "NUMERIC(10,3)")):
+            cur.execute(f"ALTER TABLE pelabuhan_daerah ADD COLUMN IF NOT EXISTS {kol} {tipe}")
+        cur.execute(
+            f"""
+            CREATE TEMP TABLE tmp_jalan AS
+            SELECT 'Nasional' AS jaringan, attrs->>'LINKID' AS kode, NULLIF(trim(attrs->>'LINK_NAME'), '') AS nama,
+                   'Jalan Nasional' || COALESCE(' · ' || NULLIF({fungsi_nas}, ''), '')
+                     || COALESCE(' · Kelas ' || NULLIF(attrs->>'ROAD_CLASS', ''), '') AS klasifikasi, geom
+            FROM map_layers WHERE provinsi = 'JALAN NASIONAL' AND layer = 'Jalan Nasional'
+            UNION ALL
+            SELECT 'Provinsi', COALESCE(NULLIF(trim(attrs->>'NOMOR'), ''), attrs->>'KEYIRMS'),
+                   NULLIF(trim(attrs->>'RUAS'), ''),
+                   'Jalan Provinsi' || COALESCE(' · ' || NULLIF(trim(attrs->>'FUNGSI'), ''), ''), geom
+            FROM map_layers WHERE provinsi = 'JALAN PROVINSI'
+            UNION ALL
+            SELECT 'Tol', attrs->>'NRUAS', COALESCE(NULLIF(trim(attrs->>'NAMA_JALAN'), ''), NULLIF(trim(attrs->>'RRUAS_NAMA'), '')),
+                   'Jalan Tol', geom
+            FROM map_layers WHERE provinsi = 'JALAN TOL'
+            UNION ALL
+            SELECT 'Kabupaten/Kota', {_pilih(_KODE_KAB)}, {_pilih(_NAMA_KAB)},
+                   CASE WHEN {status_kab} IS NULL THEN 'Jalan Kabupaten/Kota'
+                          || COALESCE(' (kode status sumber: ' || {status_raw} || ')', '')
+                        WHEN lower({status_kab}) LIKE 'jalan%%' THEN {status_kab}
+                        ELSE 'Jalan ' || {status_kab} END
+                     || COALESCE(' · ' || {fungsi_kab}, ''), geom
+            FROM map_layers WHERE layer ILIKE 'JALAN%%' AND provinsi NOT LIKE 'JALAN%%'
+            """
+        )
+        cur.execute("CREATE INDEX ON tmp_jalan USING GIST (geom)")
+        cur.execute("ANALYZE tmp_jalan")
+        cur.execute("SELECT jaringan, count(*) AS n FROM tmp_jalan GROUP BY 1 ORDER BY 1")
+        print("  tabel temp jalan siap dlm %.1fs: %s" % (time.time() - t0, {r["jaringan"]: r["n"] for r in cur.fetchall()}))
+        t1 = time.time()
+        cur.execute(
+            f"""
+            WITH target AS MATERIALIZED (
+                SELECT id, ST_SetSRID(ST_MakePoint(lon, lat), 4326) AS g
+                FROM pelabuhan_daerah p WHERE lat IS NOT NULL AND lon IS NOT NULL {where_force}
+            ),
+            terdekat AS (
+                SELECT t.id AS pelabuhan_id, r.*
+                FROM target t
+                JOIN LATERAL (
+                    SELECT j.jaringan, j.kode, j.nama, j.klasifikasi,
+                           ST_Distance(j.geom::geography, t.g::geography) / 1000.0 AS jarak_km
+                    FROM tmp_jalan j
+                    WHERE ST_DWithin(j.geom, t.g, %(radius)s)
+                    ORDER BY j.geom <-> t.g LIMIT 1
+                ) r ON true
+            )
+            UPDATE pelabuhan_daerah p
+            SET jalan_terdekat_jaringan = td.jaringan, jalan_terdekat_kode = td.kode,
+                jalan_terdekat_nama = regexp_replace(td.nama, '\s+', ' ', 'g'),
+                jalan_terdekat_klasifikasi = regexp_replace(td.klasifikasi, '\s+', ' ', 'g'),
+                jalan_terdekat_jarak_km = round(td.jarak_km::numeric, 3)
+            FROM terdekat td WHERE p.id = td.pelabuhan_id
+            """,
+            {"radius": JALAN_RADIUS_DERAJAT},
+        )
+        print(f"  jalan terdekat: {cur.rowcount} pelabuhan di-update ({time.time() - t1:.1f}s)")
+        cur.execute(
+            "SELECT jalan_terdekat_jaringan AS j, count(*) AS n, count(jalan_terdekat_nama) AS bernama "
+            "FROM pelabuhan_daerah WHERE lat IS NOT NULL GROUP BY 1 ORDER BY 2 DESC"
+        )
+        for r in cur.fetchall():
+            print(f"    {r['j'] or '(tidak ada jalan dalam radius)'}: {r['n']} pelabuhan, {r['bernama']} dengan nama jalan")
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--force", action="store_true", help="hitung ulang termasuk yang sudah terisi")
+    ap.add_argument("--hanya-jalan", action="store_true",
+                    help="hanya hitung ruas jalan terdekat (semua jaringan), tanpa langkah lain")
     args = ap.parse_args()
+
+    if args.hanya_jalan:
+        print("Mencari ruas jalan terdekat (semua jaringan)...")
+        _isi_jalan_terdekat(args.force)
+        return
 
     _run_schema()
     _isi_hirarki_kode()
@@ -350,6 +466,9 @@ def main():
 
     print("\nMencari ruas usulan IJD terdekat per hirarki (parameter #7)...")
     _isi_ruas_ijd_terdekat(args.force)
+
+    print("\nMencari ruas jalan terdekat, semua jaringan (tampilan; skor Akses tetap memakai ruas IJD)...")
+    _isi_jalan_terdekat(args.force)
 
     with db_cursor() as cur:
         cur.execute(

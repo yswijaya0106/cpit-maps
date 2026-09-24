@@ -326,7 +326,7 @@ async function loadLayerChildren(provinsi, kabupaten, opts = {}) {
     row.innerHTML = `
       <input type="checkbox" ${isActive ? "checked" : ""} data-provinsi="${escapeHtml(provinsi)}" data-kabupaten="${escapeHtml(kabupaten)}" data-layer="${escapeHtml(l.layer)}" />
       <span class="maplayer-swatch" style="background:${isActive ? mapLayerColor(l.layer) : mapLayerPreviewColor(l.layer)}"></span>
-      <span class="maplayer-item-label">${escapeHtml(l.label)}</span>
+      <span class="maplayer-item-label" title="${escapeHtml(l.label)}">${escapeHtml(l.label)}</span>
       <span class="maplayer-item-size">${l.size_mb != null ? `${l.size_mb} MB` : ""}</span>
       <input type="range" class="maplayer-opacity" min="0" max="1" step="0.05" value="${opacity}" data-provinsi="${escapeHtml(provinsi)}" data-kabupaten="${escapeHtml(kabupaten)}" data-layer="${escapeHtml(l.layer)}" title="Transparansi layer" ${isActive ? "" : "hidden"} />
     `;

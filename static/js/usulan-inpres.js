@@ -313,7 +313,7 @@ async function highlightUsulanModaShpFeature(provinsi, kabupaten, layer, namaTit
   });
   if (!found) return;
 
-  dataLayer.overrideStyle(found, IDENTIFY_HIGHLIGHT_STYLE);
+  dataLayer.overrideStyle(found, identifyHighlightStyle());
   usulanModaShpHighlight = { key, feature: found };
   if (shouldPan) {
     let latLng = null;

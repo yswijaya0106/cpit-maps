@@ -1466,3 +1466,29 @@ html::-webkit-scrollbar, body::-webkit-scrollbar, .sidebar::-webkit-scrollbar, .
 .usulan-riwayat-table th { text-align: left; color: var(--text-dim); font-weight: 600; padding: 4px 6px; white-space: nowrap; }
 .usulan-riwayat-table td { padding: 5px 6px; border-top: 1px solid var(--border); vertical-align: top; }
 .usulan-riwayat-table td.num { text-align: right; white-space: nowrap; }
+
+/* Panel identify mengambang (pengganti InfoWindow, bisa digeser lewat header) */
+.identify-panel {
+  position: absolute; top: 14px; left: 14px; z-index: 7; width: 360px; max-width: calc(100% - 28px);
+  max-height: calc(100% - 28px); display: flex; flex-direction: column;
+  background: #fff; color: #223; border-radius: 10px; box-shadow: var(--shadow);
+  border: 1px solid #ccd; overflow: hidden;
+}
+.identify-panel[hidden] { display: none; }
+.identify-panel-head {
+  display: flex; align-items: center; gap: 6px; padding: 7px 8px 7px 6px; flex: 0 0 auto;
+  background: #eef1fb; border-bottom: 1px solid #dde; cursor: grab; user-select: none; touch-action: none;
+}
+.identify-panel-head.dragging { cursor: grabbing; }
+.identify-panel-head > i { color: #889; }
+.identify-panel-title { flex: 1; min-width: 0; font-weight: 700; font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.identify-panel-btn {
+  border: 0; background: transparent; color: #556; cursor: pointer; width: 24px; height: 24px;
+  border-radius: 6px; display: inline-flex; align-items: center; justify-content: center;
+}
+.identify-panel-btn:hover { background: #dfe4f5; color: #223; }
+.identify-panel-body { padding: 10px; overflow: auto; min-height: 0; }
+.identify-panel.collapsed .identify-panel-body { display: none; }
+.identify-panel.collapsed .identify-panel-head { border-bottom: 0; }
+.identify-panel .identify-info { max-width: none; }
+.identify-panel .identify-join-scroll { max-width: none; }

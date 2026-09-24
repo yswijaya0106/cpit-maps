@@ -773,8 +773,10 @@ scripts/tables/layers out to staging.
   dibersihkan saat popup ditutup) + tombol "Zoom ke wilayah". Kunci = nama
   kota ↔ attrs `Nama Kantor Pencarian dan Pertolongan` layer `WILAYAH TANGGUNG
   JAWAB SAR`; 43/47 Kantor SAR cocok (Banyuwangi, Surakarta, Kantor Pusat,
-  Balai SDM PP tidak punya poligon → `tersedia:false`); Pos SAR memakai wilayah
-  kantor induknya. Poligon disederhanakan server-side (0.002°) karena aslinya
+  Balai SDM PP tidak punya poligon → `tersedia:false`). **Sumber BASARNAS TIDAK
+  memuat poligon per Pos SAR** (hanya 43 poligon milik Kantor SAR) — untuk Pos SAR
+  popup menggambar wilayah kantor induknya berwarna oranye dengan catatan eksplisit,
+  bukan wilayah kerja Pos itu sendiri. Poligon disederhanakan server-side (0.002°) karena aslinya
   ~20 MB total; cache per kota in-memory.
 - **`GET /api/provinsi/{provinsi}/laka-lantas`** — yearly traffic-accident
   stats (`anev_laka_lantas_polda`) for a province, keyed by POLDA name via

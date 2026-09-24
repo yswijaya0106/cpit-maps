@@ -35,7 +35,7 @@ function setMapTool(tool) {
   if (state.mapTool === "select" && tool !== "select") clearSelection();
   if (state.mapTool === "identify" && tool !== "identify") {
     clearIdentifyHighlight();
-    state.identifyInfoWindow?.close();
+    hideIdentifyPanel();
   }
   state.mapTool = tool;
 
@@ -62,7 +62,7 @@ function onFeatureClick(layerName, feature, latLng) {
   if (state.mapTool === "identify") {
     if (state.identifyHighlight?.layer === layerName && state.identifyHighlight?.feature === feature) {
       clearIdentifyHighlight();
-      state.identifyInfoWindow?.close();
+      hideIdentifyPanel();
       return;
     }
     showIdentifyInfo(layerName, feature, latLng);
@@ -72,6 +72,25 @@ function onFeatureClick(layerName, feature, latLng) {
 }
 
 const IDENTIFY_HIGHLIGHT_STYLE = { strokeColor: "#22d3a5", strokeWeight: 4, strokeOpacity: 1, fillOpacity: 0.5, zIndex: 100 };
+
+// Ikon pin (bentuk "location_on" Material) untuk fitur TITIK yang sedang dipilih:
+// lingkaran kecil bawaan layer (scale 4) nyaris tidak terbedakan dari titik
+// lain, sedangkan strokeColor/strokeWeight di atas tidak berpengaruh pada
+// titik. Dibangun lewat fungsi (bukan konstanta) karena google.maps.Point baru
+// ada setelah Maps SDK termuat. Poligon/garis mengabaikan properti `icon`.
+const PIN_PATH = "M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z";
+
+function identifyHighlightStyle(color = "#ef1c1c") {
+  return {
+    ...IDENTIFY_HIGHLIGHT_STYLE,
+    zIndex: 1000,
+    icon: {
+      path: PIN_PATH, fillColor: color, fillOpacity: 1,
+      strokeColor: "#ffffff", strokeWeight: 1.5,
+      scale: 1.9, anchor: new google.maps.Point(12, 22),
+    },
+  };
+}
 
 // Beberapa sumber (mis. KML KAI) menyimpan deskripsi sebagai satu string
 // dengan literal "<br>" sebagai pemisah baris -- escape dulu isinya lalu
@@ -87,7 +106,7 @@ function formatIdentifyValue(raw) {
 
 function showIdentifyInfo(layerName, feature, latLng) {
   clearIdentifyHighlight();
-  state.mapLayers.active[layerName]?.overrideStyle(feature, IDENTIFY_HIGHLIGHT_STYLE);
+  state.mapLayers.active[layerName]?.overrideStyle(feature, identifyHighlightStyle());
   state.identifyHighlight = { layer: layerName, feature };
 
   const rows = [];
@@ -103,10 +122,7 @@ function showIdentifyInfo(layerName, feature, latLng) {
   // di bawah bisa langsung diberi event listener.
   const container = document.createElement("div");
   container.className = "identify-info";
-  container.innerHTML = `
-    <div class="identify-info-title">${escapeHtml(mapLayerDisplayLabel(layerName))}</div>
-    ${body}
-  `;
+  container.innerHTML = body;
   const kodeKec = feature.getProperty("KODE_KECAMATAN");
   if (kodeKec) attachKecamatanJoin(container, kodeKec);
   // Kantor SAR punya nama_kantor langsung; Pos SAR simpan nama kantor
@@ -114,7 +130,7 @@ function showIdentifyInfo(layerName, feature, latLng) {
   // -- keduanya di-join ke tabel referensi BASARNAS yang sama.
   const namaKantorSar = feature.getProperty("nama_kantor") || feature.getProperty("Nama Kantor SAR");
   if (namaKantorSar) {
-    attachKantorSarWilayah(container, namaKantorSar);
+    attachKantorSarWilayah(container, namaKantorSar, !feature.getProperty("nama_kantor"));
     attachKantorSarJoin(container, namaKantorSar);
   }
   if (layerName.startsWith("BATAS PROVINSI::")) {
@@ -136,13 +152,77 @@ function showIdentifyInfo(layerName, feature, latLng) {
     }
   }
 
-  if (!state.identifyInfoWindow) {
-    state.identifyInfoWindow = new google.maps.InfoWindow();
-    state.identifyInfoWindow.addListener("closeclick", clearIdentifyHighlight);
-  }
-  state.identifyInfoWindow.setContent(container);
-  state.identifyInfoWindow.setPosition(latLng);
-  state.identifyInfoWindow.open(state.map);
+  openIdentifyPanel(mapLayerDisplayLabel(layerName), container);
+}
+
+/* Panel identify mengambang (pengganti google.maps.InfoWindow, 24 Sep 2026):
+   InfoWindow menempel di titik klik dan tidak bisa digeser, jadi menutupi
+   fitur/poligon yang sedang diidentifikasi (mis. wilayah tanggung jawab SAR).
+   Panel ini digeser lewat headernya, bisa diciutkan, dan posisinya diingat
+   selama halaman terbuka. Isi (`container`) & gayanya sama seperti popup lama. */
+function getIdentifyPanel() {
+  let panel = document.getElementById("identifyPanel");
+  if (panel) return panel;
+  panel = document.createElement("div");
+  panel.id = "identifyPanel";
+  panel.className = "identify-panel";
+  panel.hidden = true;
+  panel.innerHTML = `
+    <div class="identify-panel-head" title="Geser untuk memindahkan panel">
+      <i class="bi bi-grip-vertical"></i>
+      <span class="identify-panel-title"></span>
+      <button type="button" class="identify-panel-btn" data-act="collapse" title="Ciutkan / bentangkan"><i class="bi bi-dash-lg"></i></button>
+      <button type="button" class="identify-panel-btn" data-act="close" title="Tutup"><i class="bi bi-x-lg"></i></button>
+    </div>
+    <div class="identify-panel-body"></div>`;
+  const area = document.querySelector(".map-area");
+  area.appendChild(panel);
+
+  const head = panel.querySelector(".identify-panel-head");
+  let drag = null;
+  head.addEventListener("pointerdown", (e) => {
+    if (e.target.closest("button")) return;
+    const r = panel.getBoundingClientRect();
+    drag = { dx: e.clientX - r.left, dy: e.clientY - r.top };
+    head.setPointerCapture(e.pointerId);
+    head.classList.add("dragging");
+  });
+  head.addEventListener("pointermove", (e) => {
+    if (!drag) return;
+    const a = area.getBoundingClientRect();
+    const w = panel.offsetWidth;
+    // header harus tetap terjangkau: sisakan minimal 80px di dalam area peta
+    const left = Math.min(Math.max(e.clientX - drag.dx - a.left, 80 - w), a.width - 80);
+    const top = Math.min(Math.max(e.clientY - drag.dy - a.top, 0), a.height - 40);
+    panel.style.left = `${left}px`;
+    panel.style.top = `${top}px`;
+  });
+  const endDrag = () => { drag = null; head.classList.remove("dragging"); };
+  head.addEventListener("pointerup", endDrag);
+  head.addEventListener("pointercancel", endDrag);
+
+  panel.querySelector('[data-act="collapse"]').addEventListener("click", () => {
+    panel.classList.toggle("collapsed");
+  });
+  panel.querySelector('[data-act="close"]').addEventListener("click", () => {
+    hideIdentifyPanel();
+    clearIdentifyHighlight();
+  });
+  return panel;
+}
+
+function openIdentifyPanel(title, contentEl) {
+  const panel = getIdentifyPanel();
+  panel.querySelector(".identify-panel-title").textContent = title;
+  const body = panel.querySelector(".identify-panel-body");
+  body.replaceChildren(contentEl);
+  panel.classList.remove("collapsed");
+  panel.hidden = false;
+}
+
+function hideIdentifyPanel() {
+  const panel = document.getElementById("identifyPanel");
+  if (panel) panel.hidden = true;
 }
 
 /* Join atribut poligon kecamatan ke tabel database — pengguna memilih tabel
@@ -286,11 +366,11 @@ function zoomKantorSarWilayah() {
   if (!bounds.isEmpty()) state.map.fitBounds(bounds);
 }
 
-function attachKantorSarWilayah(container, namaKantor) {
+function attachKantorSarWilayah(container, namaKantor, isPos = false) {
   const wrap = document.createElement("div");
   wrap.className = "identify-join";
   wrap.innerHTML = `
-    <div class="identify-join-head"><i class="bi bi-bounding-box-circles"></i> Wilayah tanggung jawab</div>
+    <div class="identify-join-head"><i class="bi bi-bounding-box-circles"></i> ${isPos ? "Wilayah Kantor SAR induk" : "Wilayah tanggung jawab"}</div>
     <div class="identify-join-body hint">Memuat...</div>`;
   container.appendChild(wrap);
   const bodyEl = wrap.querySelector(".identify-join-body");
@@ -303,18 +383,27 @@ function attachKantorSarWilayah(container, namaKantor) {
       if (!res.ok) throw new Error(data.detail || "Gagal memuat");
       if (token !== kantorSarWilayahToken) return; // popup sudah ditutup/pindah ke fitur lain
       if (!data.tersedia) {
-        bodyEl.textContent = data.catatan;
+        bodyEl.textContent = isPos
+          ? `Pos SAR tidak memiliki poligon sendiri, dan poligon Kantor SAR induknya (${data.kantor}) juga tidak ada di data sumber.`
+          : data.catatan;
         return;
       }
       if (!kantorSarWilayahData) kantorSarWilayahData = new google.maps.Data({ map: state.map });
       kantorSarWilayahData.forEach((f) => kantorSarWilayahData.remove(f));
       kantorSarWilayahData.addGeoJson(data.geojson);
+      // Pos SAR: data sumber BASARNAS TIDAK punya poligon per Pos SAR (hanya 43
+      // poligon milik Kantor SAR), jadi yang digambar adalah wilayah kantor
+      // induknya -- warna oranye + catatan eksplisit agar tidak dikira wilayah Pos itu sendiri.
+      const warna = isPos ? "#f59e0b" : "#3b82f6";
       kantorSarWilayahData.setStyle({
-        fillColor: "#3b82f6", fillOpacity: 0.12, strokeColor: "#3b82f6", strokeWeight: 2,
+        fillColor: warna, fillOpacity: 0.12, strokeColor: warna, strokeWeight: 2,
         clickable: false, zIndex: 1,
       });
       bodyEl.className = "identify-join-body";
-      bodyEl.innerHTML = `Ditampilkan di peta (${data.call_sign ? escapeHtml(data.call_sign) + " · " : ""}Kelas ${escapeHtml(data.tipe_kelas || "-")} ·
+      const catatanPos = isPos
+        ? `<div class="hint">Pos SAR tidak memiliki poligon wilayah sendiri di data sumber. Yang ditampilkan adalah wilayah tanggung jawab <b>Kantor SAR ${escapeHtml(data.kantor)}</b> (induknya), bukan wilayah kerja Pos ini.</div>`
+        : "";
+      bodyEl.innerHTML = `${catatanPos}Ditampilkan di peta (${data.call_sign ? escapeHtml(data.call_sign) + " · " : ""}Kelas ${escapeHtml(data.tipe_kelas || "-")} ·
         ${data.luas_km2.toLocaleString("id-ID")} km²)
         <button type="button" class="btn btn-ghost btn-sm identify-wilayah-zoom"><i class="bi bi-zoom-in"></i> Zoom ke wilayah</button>`;
       bodyEl.querySelector(".identify-wilayah-zoom").addEventListener("click", zoomKantorSarWilayah);
@@ -418,7 +507,9 @@ function toggleFeatureSelection(layerName, feature) {
     data.revertStyle(feature);
     state.selectedFeatures.splice(idx, 1);
   } else {
-    data.overrideStyle(feature, { strokeColor: "#ffffff", strokeWeight: 3, fillOpacity: 0.55, zIndex: 100 });
+    data.overrideStyle(feature, {
+      ...identifyHighlightStyle("#ffb648"), strokeColor: "#ffffff", strokeWeight: 3, fillOpacity: 0.55,
+    });
     state.selectedFeatures.push({ layer: layerName, feature });
   }
   renderSelectionPanel();
@@ -437,7 +528,7 @@ function clearSelectionForLayer(layerName) {
   renderSelectionPanel();
   if (state.identifyHighlight?.layer === layerName) {
     state.identifyHighlight = null;
-    state.identifyInfoWindow?.close();
+    hideIdentifyPanel();
   }
 }
 

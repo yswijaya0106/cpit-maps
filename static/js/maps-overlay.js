@@ -169,6 +169,10 @@ const MAP_LAYER_CATEGORIES = [
   // bucket flat nasional, ketebalan garis = rupiah / ton, ada filter di legend.
   { id: "arus-perdagangan", label: "Arus Perdagangan Antar Provinsi", icon: "bi-arrow-left-right",
     match: (p) => p === "ARUS PERDAGANGAN ANTAR PROVINSI" },
+  // Klaster/Subklaster pangan-perkebunan-peternakan Merauke (scripts/import_subklaster_to_postgis.py):
+  // bucket flat, poligon diwarnai per klaster (properti _warna), legenda KLASTER_LEGEND.
+  { id: "klaster", label: "Klaster & Subklaster (Merauke)", icon: "bi-grid-3x3-gap",
+    match: (p) => p === "KLASTER SUBKLASTER" },
   { id: "jalan", label: "Jalan", icon: "bi-signpost-2", match: () => true }, // catch-all, HARUS terakhir
 ];
 
@@ -559,6 +563,7 @@ async function showMapLayer(provinsi, kabupaten, layer) {
     if (layer === "KAPLIN STASIUN") bindKaplinLabelZoom();
     if (provinsi === "BATAS KECAMATAN") updateKecamatanLintasan();
     updateMapLegend();
+    panToLayerIfOffscreen(data);
   } catch (err) {
     console.error(err);
     toast("Gagal memuat layer peta", true);
@@ -566,6 +571,19 @@ async function showMapLayer(provinsi, kabupaten, layer) {
     if (cb) cb.checked = false;
     delete state.mapLayers.meta[key];
   }
+}
+
+// Saat layer dibuka: geser peta ke tengah layer TANPA mengubah zoom -- hanya
+// bila tak satu pun bagian layer terlihat di viewport sekarang (layer nasional
+// tidak menarik peta menjauh dari wilayah yang sedang dilihat user).
+function panToLayerIfOffscreen(data) {
+  if (!state.map) return;
+  const bounds = new google.maps.LatLngBounds();
+  data.forEach((f) => f.getGeometry() && f.getGeometry().forEachLatLng((ll) => bounds.extend(ll)));
+  if (bounds.isEmpty()) return;
+  const view = state.map.getBounds();
+  if (view && view.intersects(bounds)) return;
+  state.map.panTo(bounds.getCenter());
 }
 
 /* ---------- kecamatan yang dilintasi rute KML usulan diberi warna beda ---------- */
@@ -689,6 +707,12 @@ const KAPLIN_KORIDOR_LEGEND = [
   ["#D55E00", "Semarang – Surabaya"], ["#CC79A7", "Bandung – Kroya"],
 ];
 const KAPLIN_LABEL_MIN_ZOOM = 9;
+// Legenda Klaster/Subklaster (import_subklaster_to_postgis.py) -- nilai warna sama persis dgn KLASTER_WARNA skrip.
+const KLASTER_BUCKET = "KLASTER SUBKLASTER";
+const KLASTER_LEGEND = [
+  ["#E6B800", "Klaster Tanaman Pangan"], ["#009E73", "Klaster Perkebunan Tebu"],
+  ["#D55E00", "Klaster Perkebunan Sawit"], ["#CC79A7", "Klaster Peternakan"],
+];
 const arusFilter = { pulau: "", provinsi: "", arah: "keduanya", antarPulau: false };
 
 function arusFeatureVisible(f) {
@@ -755,6 +779,11 @@ function applyLayerStyle(key) {
       };
     }
     if (type === "Polygon" || type === "MultiPolygon") {
+      // poligon dgn warna per kategori dari server (mis. Klaster/Subklaster: _warna per klaster)
+      const warnaPoligon = feature.getProperty("_warna");
+      if (warnaPoligon) {
+        return { fillColor: warnaPoligon, fillOpacity: 0.35 * opacity, strokeColor: warnaPoligon, strokeWeight: 1, strokeOpacity: opacity };
+      }
       return { fillColor: color, fillOpacity: 0.18 * opacity, strokeColor: color, strokeWeight: 1.2, strokeOpacity: opacity };
     }
     // Layer "Arus Perdagangan Antar Provinsi" (import_arus_irio_provinsi.py):

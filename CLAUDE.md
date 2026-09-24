@@ -1081,6 +1081,14 @@ upsert, so they're safe to re-run:
   stasiun salah cocok (mis. LP–SBB 710 km) → petak TIDAK digambar. Hasil: garis lurus Jawa
   1, Sumatera 2; petak tak digambar Jawa 15, Sumatera 3. Setelah rerun, restart server
   (cache `_map_layer_geojson_cache`).
+- `import_subklaster_to_postgis.py` — SHP Klaster/Subklaster Merauke
+  (`docs/250820206/SHP Subklaster/`, versi 17-09-2026; klaster Tanaman
+  Pangan/Tebu/Sawit/Peternakan 2026-2029) → bucket flat `KLASTER SUBKLASTER`:
+  layer `SUBKLASTER` (32 poligon dissolve) + `SUBKLASTER DETAIL - <klaster>`
+  (10.328 poligon per pola ruang/tutupan lahan, dipecah per klaster krn ~20 MB).
+  Poligon diwarnai per klaster via properti `_warna` (generik di
+  `applyLayerStyle`), legenda `KLASTER_LEGEND`. DELETE + reinsert; restart
+  server setelah rerun (cache `_map_layer_geojson_cache`).
 - `import_kemantapan_ijd2026.py` — road-soundness per kab/kota
   (`kemantapan_ijd_2026`), the source of IJD pagu component G8.A2; also
   writes the official "Tidak mantap (%)" figure into

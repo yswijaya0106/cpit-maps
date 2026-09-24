@@ -702,15 +702,19 @@ function renderArusLegend(key, raw) {
   };
   const wrap = document.createElement("div");
   wrap.className = "map-legend-subitems";
-  const color = mapLayerColor(raw);
-  wrap.innerHTML = [0, 0.25, 0.5, 0.75, 1].map((t) => {
+  const color = "#7a8599"; // abu netral: contoh ketebalan saja, warna = pulau asal (di bawah)
+  wrap.innerHTML = `<div class="map-legend-subitem-label" style="font-weight:600;margin:2px 0">Ketebalan garis</div>` + [0, 0.25, 0.5, 0.75, 1].map((t) => {
     const w = 0.8 + (12 - 0.8) * t;
     const v = hi > lo ? lo * Math.pow(hi / lo, t) : hi;
     return `<div class="map-legend-subitem">
       <span style="display:inline-block;width:34px;height:${Math.max(1, w)}px;background:${color};opacity:.7;border-radius:2px"></span>
       <span class="map-legend-subitem-label">${t === 0 ? "≤ " : ""}${escapeHtml(fmtNilai(v))}</span>
     </div>`;
-  }).join("");
+  }).join("") + `<div class="map-legend-subitem-label" style="font-weight:600;margin:6px 0 2px">Warna garis = pulau asal</div>`
+    + Object.entries(ARUS_PULAU_COLORS).map(([nama, c]) => `<div class="map-legend-subitem">
+      <span class="maplayer-swatch" style="background:${c}"></span>
+      <span class="map-legend-subitem-label">${escapeHtml(nama)}</span>
+    </div>`).join("");
   return wrap;
 }
 

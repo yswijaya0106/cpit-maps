@@ -641,6 +641,12 @@ function updateKecamatanLintasan() {
    tujuan, atau keduanya menurut `arah`; "antarPulau" menyaring hanya arus
    yang menyeberang pulau (kandidat angkutan laut). */
 const ARUS_LAYER_PREFIX = "ARUS PERDAGANGAN";
+// Warna garis = gugus pulau ASAL arus (palet kategorikal ramah buta warna);
+// ketebalan tetap menurut rupiah/ton. Dipakai juga oleh legenda (map-tools.js).
+const ARUS_PULAU_COLORS = {
+  "Sumatera": "#E69F00", "Jawa": "#0072B2", "Bali & Nusa Tenggara": "#CC79A7",
+  "Kalimantan": "#009E73", "Sulawesi": "#D55E00", "Maluku": "#56B4E9", "Papua": "#8E44AD",
+};
 const arusFilter = { pulau: "", provinsi: "", arah: "keduanya", antarPulau: false };
 
 function arusFeatureVisible(f) {
@@ -701,7 +707,8 @@ function applyLayerStyle(key) {
     const lebarGaris = Number(feature.getProperty("Ketebalan garis (px)"));
     if (lebarGaris > 0) {
       return {
-        strokeColor: color, strokeWeight: lebarGaris, strokeOpacity: 0.65 * opacity,
+        strokeColor: ARUS_PULAU_COLORS[feature.getProperty("Pulau Asal")] || color,
+        strokeWeight: lebarGaris, strokeOpacity: 0.7 * opacity,
         zIndex: Math.round(100 - lebarGaris * 5),
       };
     }

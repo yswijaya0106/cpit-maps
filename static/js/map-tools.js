@@ -715,7 +715,7 @@ function renderArusLegend(key, raw) {
   const wrap = document.createElement("div");
   wrap.className = "map-legend-subitems";
   const color = "#7a8599"; // abu netral: contoh ketebalan saja, warna = pulau asal (di bawah)
-  wrap.innerHTML = `<div class="map-legend-subitem-label" style="font-weight:600;margin:2px 0">Ketebalan garis</div>` + [0, 0.25, 0.5, 0.75, 1].map((t) => {
+  wrap.innerHTML = `<div class="map-legend-subhead">Ketebalan garis</div>` + [0, 0.25, 0.5, 0.75, 1].map((t) => {
     const w = 0.8 + (12 - 0.8) * t;
     const v = hi > lo ? lo * Math.pow(hi / lo, t) : hi;
     return `<div class="map-legend-subitem">
@@ -723,7 +723,7 @@ function renderArusLegend(key, raw) {
       <span class="map-legend-subitem-label">${t === 0 ? "≤ " : ""}${escapeHtml(fmtNilai(v))}</span>
     </div>`;
   }).join("")
-    + `<div class="map-legend-subitem-label" style="font-weight:600;margin:6px 0 2px">Transparansi garis = kelas nilai</div>`
+    + `<div class="map-legend-subhead">Transparansi garis = kelas nilai</div>`
     + [1, 2, 3, 4, 5].map((k) => {
       const a = hi > lo ? lo * Math.pow(hi / lo, (k - 1) / 5) : lo, b = hi > lo ? lo * Math.pow(hi / lo, k / 5) : hi;
       return `<div class="map-legend-subitem">
@@ -731,7 +731,7 @@ function renderArusLegend(key, raw) {
         <span class="map-legend-subitem-label">Kelas ${k} (${k * 20}%): ${k === 1 ? "≤ " : ""}${escapeHtml(fmtNilai(b))}</span>
       </div>`;
     }).join("")
-    + `<div class="map-legend-subitem-label" style="margin-top:6px">Satu warna per layer; warna lain muncul saat provinsi lain dipilih.</div>`;
+    + `<div class="map-legend-subitem-label" style="margin-top:6px;font-size:11px;color:var(--text-dim)">Satu warna per layer; warna lain muncul saat provinsi lain dipilih.</div>`;
   return wrap;
 }
 
@@ -748,7 +748,7 @@ function renderArusControls(key) {
   const wrap = document.createElement("div");
   wrap.className = "map-legend-subitems arus-filter";
   wrap.innerHTML = `
-    <div class="map-legend-subitem-label" style="font-weight:600;margin:6px 0 2px">Filter arus</div>
+    <div class="map-legend-subhead">Filter arus</div>
     <select class="laporan-moda-select" data-f="pulau" title="Filter gugus pulau">${opts(pulau, "Nasional (semua pulau)", arusFilter.pulau)}</select>
     <select class="laporan-moda-select" data-f="provinsi" title="Filter provinsi">${opts(prov, "Semua provinsi", arusFilter.provinsi)}</select>
     <select class="laporan-moda-select" data-f="arah" title="Pulau/provinsi sebagai...">

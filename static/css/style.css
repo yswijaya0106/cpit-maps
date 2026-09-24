@@ -758,8 +758,8 @@ td.checklist-cell .ijd-badge { margin-right: 4px; }
 .map-panel-header .maplayer-close { margin-left: auto; }
 
 .map-legend {
-  position: absolute; top: 14px; right: 62px; z-index: 6; width: 240px;
-  max-height: 280px; display: flex; flex-direction: column; gap: 8px;
+  position: absolute; top: 14px; right: 62px; z-index: 6; width: 300px;
+  max-height: 70vh; display: flex; flex-direction: column; gap: 8px;
   background: #1b2440; border: 1px solid var(--border); border-radius: 10px;
   box-shadow: var(--shadow); padding: 10px;
 }
@@ -770,9 +770,9 @@ td.checklist-cell .ijd-badge { margin-right: 4px; }
   border-radius: 6px; display: flex; align-items: center; gap: 4px; white-space: nowrap;
 }
 .maplayer-clearall:hover { color: var(--danger); background: rgba(255,92,124,.12); }
-.map-legend-list { display: flex; flex-direction: column; gap: 6px; overflow-y: auto; max-height: 220px; }
+.map-legend-list { display: flex; flex-direction: column; gap: 6px; overflow-y: auto; max-height: calc(70vh - 60px); }
 .map-legend-item { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--text); }
-.map-legend-item-label { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.map-legend-item-label { flex: 1; min-width: 0; overflow-wrap: anywhere; line-height: 1.25; }
 .map-legend-item-remove {
   flex: 0 0 auto; background: none; border: none; outline: none; color: var(--text-dim);
   font-size: 11px; cursor: pointer; padding: 3px; line-height: 1; border-radius: 5px;
@@ -780,7 +780,8 @@ td.checklist-cell .ijd-badge { margin-right: 4px; }
 .map-legend-item-remove:hover { color: var(--danger); background: rgba(255,92,124,.12); }
 .map-legend-subitems { display: flex; flex-direction: column; gap: 4px; padding: 2px 0 4px 18px; }
 .map-legend-subitem { display: flex; align-items: center; gap: 8px; font-size: 11px; color: var(--text-dim); }
-.map-legend-subitem-label { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.map-legend-subitem-label { flex: 1; min-width: 0; overflow-wrap: anywhere; line-height: 1.25; }
+.map-legend-subhead { font-size: 11px; font-weight: 600; color: var(--text); margin: 6px 0 2px; }
 
 .map-measure-result {
   position: absolute; top: 14px; left: 50%; transform: translateX(-50%); z-index: 6;

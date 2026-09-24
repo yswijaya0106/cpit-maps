@@ -762,7 +762,12 @@ function applyLayerStyle(key) {
     // properti "Ketebalan garis (px)"; garis tipis digambar di atas yang tebal.
     const warnaGaris = feature.getProperty("_warna");
     if (warnaGaris) {
-      return { strokeColor: warnaGaris, strokeWeight: Number(feature.getProperty("_lebar")) || 3, strokeOpacity: 0.92 * opacity };
+      // Koridor Utama = "selubung" lebar semi-transparan DI BAWAH garis petak, supaya warna
+      // utilisasi petak tetap terlihat & mudah diklik (klik -> popup atribut petak).
+      if (mapLayerRawName(key) === "KAPLIN KORIDOR UTAMA") {
+        return { strokeColor: warnaGaris, strokeWeight: 10, strokeOpacity: 0.5 * opacity, zIndex: 5 };
+      }
+      return { strokeColor: warnaGaris, strokeWeight: Number(feature.getProperty("_lebar")) || 4, strokeOpacity: 0.95 * opacity, zIndex: kaplinZ(feature) };
     }
     const lebarGaris = Number(feature.getProperty("Ketebalan garis (px)"));
     if (lebarGaris > 0) {
@@ -774,6 +779,14 @@ function applyLayerStyle(key) {
     }
     return { strokeColor: color, strokeWeight: 1.6, strokeOpacity: 0.9 * opacity };
   });
+}
+
+// Sheet KAPLIN memuat petak agregat (mis. Jatinegara-Bekasi 14,8 km) SEKALIGUS petak per-stasiun di atas
+// rel yang sama: petak yang lebih pendek digambar di atas supaya klik antar dua stasiun membuka petak
+// stasiun itu, bukan petak agregat.
+function kaplinZ(feature) {
+  const km = parseFloat(String(feature.getProperty("Jarak petak (km)") || "").replace(/\./g, "").replace(",", ".")) || 0;
+  return 10 + Math.max(0, Math.round(300 - km * 3));
 }
 
 // label stasiun KAPLIN bergantung zoom -> gambar ulang saat zoom berubah

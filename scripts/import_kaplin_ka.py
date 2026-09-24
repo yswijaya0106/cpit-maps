@@ -265,7 +265,18 @@ def fmt(x, d=0):
 
 def proses(pulau, cfg, stasiun_all, cur):
     xy = Xy(cfg["lat0"])
-    cur.execute("SELECT ST_AsBinary(geom) AS g FROM map_layers WHERE layer=%s", (cfg["rel"],))
+    # cfg["rel"]: satu nama layer rel, atau daftar (layer_provinsi, layer) untuk menggabung beberapa
+    # sumber rel; cfg["bbox"] (minlon, minlat, maxlon, maxlat) membatasi layer nasional ke pulau ini.
+    rel = cfg["rel"] if isinstance(cfg["rel"], list) else [(None, cfg["rel"])]
+    kond, par = [], []
+    for prov, lay in rel:
+        kond.append("(layer=%s" + (" AND provinsi=%s)" if prov else ")"))
+        par += [lay] + ([prov] if prov else [])
+    sql = "SELECT ST_AsBinary(geom) AS g FROM map_layers WHERE (" + " OR ".join(kond) + ")"
+    if cfg.get("bbox"):
+        sql += " AND geom && ST_MakeEnvelope(%s, %s, %s, %s, 4326)"
+        par += list(cfg["bbox"])
+    cur.execute(sql, par)
     lines = []
     for r in cur.fetchall():
         g = wkb.loads(bytes(r["g"]))

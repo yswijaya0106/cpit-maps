@@ -687,14 +687,14 @@ function updateMapLegend() {
 function renderArusLegend(key, raw) {
   const data = state.mapLayers.active[key];
   const perTon = raw.endsWith("TON");
-  let lo = Infinity, hi = 0;
+  // skala global (sama utk "Seluruh Indonesia" dan tiap provinsi) dibawa di tiap fitur
+  let lo = 0, hi = 0;
   data.forEach((f) => {
-    const v = Number(f.getProperty("_nilai")), w = Number(f.getProperty("Ketebalan garis (px)"));
-    if (!(v > 0)) return;
-    if (w > 0.81 && v < lo) lo = v;
-    if (v > hi) hi = v;
+    if (hi) return;
+    lo = Number(f.getProperty("_skala_lo")) || 0;
+    hi = Number(f.getProperty("_skala_hi")) || 0;
   });
-  if (!isFinite(lo)) lo = hi;
+  if (!lo) lo = hi;
   const fmtNilai = (v) => {
     if (perTon) return `${Math.round(v).toLocaleString("id-ID")} ton`;
     return v >= 1e6 ? `Rp ${(v / 1e6).toLocaleString("id-ID", { maximumFractionDigits: 1 })} triliun`

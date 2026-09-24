@@ -278,7 +278,9 @@ async function loadKabupatenChildren(provinsi, opts = {}) {
   const frag = document.createDocumentFragment();
   rows
     .slice()
-    .sort((a, b) => (a.label || a.kabupaten).localeCompare(b.label || b.kabupaten))
+    // entri "Seluruh ..." (mis. arus perdagangan nasional) selalu paling atas
+    .sort((a, b) => (/^Seluruh/.test(b.kabupaten) - /^Seluruh/.test(a.kabupaten))
+      || (a.label || a.kabupaten).localeCompare(b.label || b.kabupaten))
     .forEach((r) => {
       frag.appendChild(renderTreeNode({
         label: r.label || r.kabupaten,

@@ -13,7 +13,8 @@ Menghasilkan:
      per pasangan, lengkap) + KAMUS_KOLOM.txt.
   2. Layer overlay PostGIS (map_layers/map_layer_meta): provinsi bucket
      "ARUS PERDAGANGAN ANTAR PROVINSI", layer "ARUS PERDAGANGAN RUPIAH" dan
-     "ARUS PERDAGANGAN TON". Atribut popup identify lengkap (top industri,
+     "ARUS PERDAGANGAN TON", masing-masing utk kabupaten "Seluruh Indonesia" dan
+     per provinsi (arus keluar dari ATAU masuk ke provinsi itu). Atribut popup identify lengkap (top industri,
      jenis muatan, arus balik, persentase moda bila ada).
 
 Ketebalan garis: skala log dari persentil-2 s.d. maks nilai (0.8 - 12 px).
@@ -51,9 +52,10 @@ from wilayah_pulau import PULAU_BY_KODE_PROVINSI  # noqa: E402
 BUCKET = "ARUS PERDAGANGAN ANTAR PROVINSI"
 OUT_DIR = ROOT / "Maps" / BUCKET
 LAYERS = {
-    "rp": ("ARUS PERDAGANGAN RUPIAH", "Arus Perdagangan Antar Provinsi — ketebalan = nilai transaksi (Rp)", "arus_perdagangan_rupiah.shp"),
-    "ton": ("ARUS PERDAGANGAN TON", "Arus Perdagangan Antar Provinsi — ketebalan = volume (ton)", "arus_perdagangan_ton.shp"),
+    "rp": ("ARUS PERDAGANGAN RUPIAH", "Arus Perdagangan — ketebalan = Rupiah", "arus_perdagangan_rupiah.shp"),
+    "ton": ("ARUS PERDAGANGAN TON", "Arus Perdagangan — ketebalan = Ton", "arus_perdagangan_ton.shp"),
 }
+SELURUH = "Seluruh Indonesia"
 W_MIN, W_MAX = 0.8, 12.0
 
 # kode BPS 34 provinsi -> (lat, lon) ibu kota provinsi
@@ -182,6 +184,7 @@ def main():
             # awalan "_" = atribut teknis utk legenda/filter frontend, tidak
             # ditampilkan di popup identify (map-tools.js)
             attrs["_nilai"] = round(d[k], 2)
+            attrs["_skala_lo"], attrs["_skala_hi"] = rng[k]  # skala legenda = global, bukan per provinsi
             shp = {
                 "ASAL": na, "TUJUAN": nt, "KODE_ASAL": ka, "KODE_TUJ": kt,
                 "RP_JUTA": round(d["rp"], 2), "TON": round(d["ton"], 2),
@@ -194,7 +197,7 @@ def main():
                 "TOP_RP": "; ".join(top_rp)[:250], "TOP_TON": "; ".join(top_ton)[:250],
                 "MODA": (moda or "")[:250], "geometry": geom,
             }
-            feats[k].append((attrs, shp, geom))
+            feats[k].append((attrs, shp, geom, ka, kt))
 
     # 1. SHP + CSV detail
     for k, (_, _, fname) in LAYERS.items():
@@ -223,22 +226,28 @@ def main():
         "TOP_RP/TOP_TON : 5 industri terbesar (dipotong 250 karakter); MODA : persentase moda bila ada di sumber (sebagian kecil pasangan)\n"
         "Detail lengkap industri: arus_perdagangan_detail_industri.csv\n", encoding="utf-8")
 
-    # 2. PostGIS
+    # 2. PostGIS: kabupaten = "Seluruh Indonesia" (semua pasangan) + satu entri
+    # per provinsi (arus yang keluar DARI atau masuk KE provinsi itu).
+    skop = [(SELURUH, None)] + [(kode_nama[k], k) for k in sorted(kode_nama)]
     with db_cursor() as cur:
+        cur.execute("DELETE FROM map_layers WHERE provinsi=%s", (BUCKET,))
+        cur.execute("DELETE FROM map_layer_meta WHERE provinsi=%s", (BUCKET,))
         for k, (layer, label, fname) in LAYERS.items():
-            cur.execute("DELETE FROM map_layers WHERE provinsi=%s AND kabupaten='' AND layer=%s", (BUCKET, layer))
-            cur.execute("DELETE FROM map_layer_meta WHERE provinsi=%s AND kabupaten='' AND layer=%s", (BUCKET, layer))
-            rows = [(BUCKET, "", layer, Json({a: v for a, v in at.items() if v is not None}), shapely.force_2d(g).wkb_hex)
-                    for at, _, g in feats[k]]
-            cur.executemany(
-                "INSERT INTO map_layers (provinsi, kabupaten, layer, attrs, geom) "
-                "VALUES (%s, %s, %s, %s, ST_GeomFromWKB(decode(%s, 'hex'), 4326))", rows)
-            size = sum(len(r[4]) + len(str(r[3].obj)) for r in rows) / 1_048_576
-            cur.execute(
-                "INSERT INTO map_layer_meta (provinsi, kabupaten, layer, label, feature_count, size_mb, source_shp) "
-                "VALUES (%s, '', %s, %s, %s, %s, %s)",
-                (BUCKET, layer, label, len(rows), round(size, 2), f"{BUCKET}/{fname}"))
-            print(f"  PostGIS {layer}: {len(rows)} fitur")
+            for nama_skop, kode in skop:
+                rows = [(BUCKET, nama_skop, layer, Json({a: v for a, v in at.items() if v is not None}),
+                         shapely.force_2d(g).wkb_hex)
+                        for at, _, g, ka, kt in feats[k] if kode is None or kode in (ka, kt)]
+                if not rows:
+                    continue
+                cur.executemany(
+                    "INSERT INTO map_layers (provinsi, kabupaten, layer, attrs, geom) "
+                    "VALUES (%s, %s, %s, %s, ST_GeomFromWKB(decode(%s, 'hex'), 4326))", rows)
+                size = sum(len(r[4]) + len(str(r[3].obj)) for r in rows) / 1_048_576
+                cur.execute(
+                    "INSERT INTO map_layer_meta (provinsi, kabupaten, layer, label, feature_count, size_mb, source_shp) "
+                    "VALUES (%s, %s, %s, %s, %s, %s, %s)",
+                    (BUCKET, nama_skop, layer, label, len(rows), round(size, 2), f"{BUCKET}/{fname}"))
+            print(f"  PostGIS {layer}: {len(skop)} skop (seluruh + per provinsi)")
     print("Selesai.")
 
 

@@ -1045,7 +1045,7 @@ upsert, so they're safe to re-run:
   blok juta Rp, blok ton, persentase moda). Menulis SHP polyline
   (`Maps/ARUS PERDAGANGAN ANTAR PROVINSI/`, ketebalan `LEBAR_PX` skala log per
   rupiah / per ton) + CSV detail industri, dan layer overlay PostGIS
-  (bucket flat `ARUS PERDAGANGAN ANTAR PROVINSI`, 2 layer x 1.122 garis lengkung
+  (bucket flat `ARUS PERDAGANGAN ANTAR PROVINSI`, 2 layer x (kabupaten "Seluruh Indonesia" 1.122 garis + 34 entri per provinsi = arus keluar/masuk provinsi itu), garis lengkung
   antar **ibu kota** provinsi, bukan centroid). Popup identify = atribut
   lengkap; `applyLayerStyle` (maps-overlay.js) membaca properti
   `Ketebalan garis (px)`. Persentase moda di sumber hanya terisi ~40 dari 1.156

@@ -532,6 +532,15 @@ def proses(pulau, cfg, stasiun_all, cur):
             if lokal:
                 geom = LineString([xy.to_ll(x, y) for x, y in lokal[0]])
                 sumber, glen = f"Menyusuri jalur rel (layer cadangan: {lokal[2]})", lokal[1]
+        if geom is not None:
+            # garis harus tersambung ke TITIK stasiun (yang berlabel di layer Stasiun): tambahkan koordinat
+            # stasiun sbg vertex awal/akhir bila jaraknya ke ujung jalur rel <= 300 m (spur pendek).
+            c = list(geom.coords)
+            for idx, st in ((0, a), (-1, b)):
+                sx, sy = st["lon"], st["lat"]
+                if 0 < math.hypot((c[idx][0] - sx) * xy.kx, (c[idx][1] - sy) * xy.ky) <= 300:
+                    c = [(sx, sy)] + c if idx == 0 else c + [(sx, sy)]
+            geom = LineString(c)
         if geom is None and not GARIS_LURUS_DIGAMBAR:
             # permintaan user (25 Sep 2026): garis lurus antar stasiun menyesatkan (tidak di atas rel di
             # peta dasar) -> petak yang tak bisa disusuri di jaringan rel TIDAK digambar sama sekali.

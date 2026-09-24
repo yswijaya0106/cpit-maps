@@ -27,7 +27,7 @@ if sys.stdout.encoding and sys.stdout.encoding.lower() != "utf-8":
 from db import db_cursor  # noqa: E402
 from wilayah_pulau import PULAU_BY_KODE_PROVINSI  # noqa: E402
 
-SQL = """
+SQL = r"""
 WITH kor AS MATERIALIZED (
   SELECT attrs->>'NO_KORIDOR' AS no_koridor,
          MAX(attrs->>'NAMA_KORID') AS nama_koridor,
@@ -43,6 +43,14 @@ band AS MATERIALIZED (
   SELECT attrs->>'Name' AS nama, attrs->>'Kelas' AS kelas, geom, geom::geography AS geog
   FROM map_layers WHERE provinsi = 'BANDARA' AND layer = 'Bandara'
 ),
+band1 AS MATERIALIZED (
+  SELECT * FROM band WHERE kelas ~ '^Kelas I(A|B)?( \(.*\))?$'
+),
+pu AS MATERIALIZED (
+  SELECT attrs->>'Name' AS nama, geom, geom::geography AS geog
+  FROM map_layers WHERE provinsi = 'PELABUHAN' AND layer = 'Pelabuhan Nasional'
+    AND attrs->>'hierarki' = 'Utama (PU)'
+),
 pen AS MATERIALIZED (
   SELECT COALESCE(attrs->>'NAMOBJ', attrs->>'LINTAS') AS nama, attrs->>'LINTAS' AS lintas, geom, geom::geography AS geog
   FROM map_layers WHERE provinsi = 'PELABUHAN PENYEBRANGAN' AND layer = 'PP'
@@ -54,6 +62,10 @@ pel AS MATERIALIZED (
 SELECT k.no_koridor, k.nama_koridor, k.provinsi, k.kabupaten, k.jumlah_ruas, k.panjang_km,
        b.nama AS bandara, b.kelas AS kelas_bandara,
        ROUND((ST_Distance(k.g::geography, b.geog) / 1000)::numeric, 2) AS jarak_bandara_km,
+       b1.nama AS bandara_k1, b1.kelas AS kelas_bandara_k1,
+       ROUND((ST_Distance(k.g::geography, b1.geog) / 1000)::numeric, 2) AS jarak_bandara_k1_km,
+       u.nama AS pelabuhan_utama,
+       ROUND((ST_Distance(k.g::geography, u.geog) / 1000)::numeric, 2) AS jarak_pelabuhan_utama_km,
        n.nama AS penyeberangan, n.lintas AS lintas_penyeberangan,
        ROUND((ST_Distance(k.g::geography, n.geog) / 1000)::numeric, 2) AS jarak_penyeberangan_km,
        p.nama AS pelabuhan, p.hierarki AS hierarki_pelabuhan,
@@ -62,6 +74,12 @@ FROM kor k
 LEFT JOIN LATERAL (
   SELECT * FROM band ORDER BY band.geom <-> k.g LIMIT 1
 ) b ON TRUE
+LEFT JOIN LATERAL (
+  SELECT * FROM band1 ORDER BY band1.geom <-> k.g LIMIT 1
+) b1 ON TRUE
+LEFT JOIN LATERAL (
+  SELECT * FROM pu ORDER BY pu.geom <-> k.g LIMIT 1
+) u ON TRUE
 LEFT JOIN LATERAL (
   SELECT * FROM pen ORDER BY pen.geom <-> k.g LIMIT 1
 ) n ON TRUE
@@ -92,13 +110,17 @@ def main():
                 r["bandara"], r["kelas_bandara"], r["jarak_bandara_km"],
                 r["pelabuhan"], r["hierarki_pelabuhan"], r["jarak_pelabuhan_km"],
                 r["penyeberangan"], r["lintas_penyeberangan"], r["jarak_penyeberangan_km"],
+                r["bandara_k1"], r["kelas_bandara_k1"], r["jarak_bandara_k1_km"],
+                r["pelabuhan_utama"], r["jarak_pelabuhan_utama_km"],
             ))
         cur.execute("DELETE FROM koridor_simpul_terdekat")
         cur.executemany(
             "INSERT INTO koridor_simpul_terdekat (no_koridor, nama_koridor, pulau, provinsi, kode_provinsi, kabupaten_kota, kode_kab, "
             "jumlah_ruas, panjang_km, bandara_terdekat, kelas_bandara, jarak_bandara_km, pelabuhan_terdekat, "
             "hierarki_pelabuhan, jarak_pelabuhan_km, penyeberangan_terdekat, lintas_penyeberangan, "
-            "jarak_penyeberangan_km) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+            "jarak_penyeberangan_km, bandara_kelas1_terdekat, kelas_bandara_kelas1, jarak_bandara_kelas1_km, "
+            "pelabuhan_utama_terdekat, jarak_pelabuhan_utama_km) "
+            "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
             out,
         )
     tanpa_pulau = sum(1 for o in out if o[2] is None)

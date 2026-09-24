@@ -22,9 +22,19 @@ CREATE TABLE IF NOT EXISTS koridor_simpul_terdekat (
   penyeberangan_terdekat  TEXT,
   lintas_penyeberangan    TEXT,
   jarak_penyeberangan_km  NUMERIC(10, 2),
+  bandara_kelas1_terdekat  TEXT,
+  kelas_bandara_kelas1     TEXT,
+  jarak_bandara_kelas1_km  NUMERIC(10, 2),
+  pelabuhan_utama_terdekat TEXT,
+  jarak_pelabuhan_utama_km NUMERIC(10, 2),
   PRIMARY KEY (no_koridor, kabupaten_kota)
 );
 -- tabel yg sudah terlanjur dibuat sebelum kolom penyeberangan ditambah
 ALTER TABLE koridor_simpul_terdekat ADD COLUMN IF NOT EXISTS penyeberangan_terdekat TEXT;
 ALTER TABLE koridor_simpul_terdekat ADD COLUMN IF NOT EXISTS lintas_penyeberangan TEXT;
 ALTER TABLE koridor_simpul_terdekat ADD COLUMN IF NOT EXISTS jarak_penyeberangan_km NUMERIC(10, 2);
+ALTER TABLE koridor_simpul_terdekat ADD COLUMN IF NOT EXISTS bandara_kelas1_terdekat TEXT;
+ALTER TABLE koridor_simpul_terdekat ADD COLUMN IF NOT EXISTS kelas_bandara_kelas1 TEXT;
+ALTER TABLE koridor_simpul_terdekat ADD COLUMN IF NOT EXISTS jarak_bandara_kelas1_km NUMERIC(10, 2);
+ALTER TABLE koridor_simpul_terdekat ADD COLUMN IF NOT EXISTS pelabuhan_utama_terdekat TEXT;
+ALTER TABLE koridor_simpul_terdekat ADD COLUMN IF NOT EXISTS jarak_pelabuhan_utama_km NUMERIC(10, 2);

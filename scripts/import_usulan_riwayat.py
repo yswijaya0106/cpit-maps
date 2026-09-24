@@ -29,6 +29,7 @@ import openpyxl
 import psycopg
 
 BASE_DIR = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(BASE_DIR))
 DEFAULT_GLOB = str(BASE_DIR / "docs" / "24092026" / "Jalan" / "*_usulan_inpres_*.xlsx")
 
 # alias header sumber (tahun lama) -> nama header kanonik
@@ -81,6 +82,7 @@ CREATE TABLE IF NOT EXISTS usulan_inpres_riwayat (
     bilateral_bappenas TEXT, bilateral_pu TEXT,
     nilai_rdpp NUMERIC, nilai_dpp NUMERIC, diprogramkan TEXT,
     penuntasan_ijd_kompetensi TEXT,
+    kode_provinsi SMALLINT, kode_kabupaten INTEGER,  -- ID BPS, diisi wilayah_id.isi_kode_riwayat
     sumber_file TEXT, diimpor_at TIMESTAMPTZ DEFAULT now(),
     PRIMARY KEY (tahun, id)
 );
@@ -172,6 +174,11 @@ def main():
                 sys.exit(f"Tahun tidak bisa ditebak dari nama file {f}; pakai --tahun")
             n, absen = import_file(conn, f, tahun)
             print(f"{tahun}: {n} baris dari {os.path.basename(f)} ({len(absen)} kolom tak ada di file -> NULL)")
+        import wilayah_id  # ID wilayah: ref_wilayah dulu, lalu kode_provinsi/kode_kabupaten riwayat
+        with conn.cursor() as cur:
+            wilayah_id.build_ref_wilayah(cur)
+            print("Kode wilayah riwayat terisi:", wilayah_id.isi_kode_riwayat(cur))
+        conn.commit()
         with conn.cursor() as cur:
             cur.execute("SELECT tahun, COUNT(*) FROM usulan_inpres_riwayat GROUP BY 1 ORDER BY 1")
             print("Total di tabel:", cur.fetchall())

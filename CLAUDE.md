@@ -852,6 +852,24 @@ scripts/tables/layers out to staging.
   dengan `PG_*` di environment). Temuan Parameter E: flag `Penuntasan IJD
   Sebelumnya` (154) dan `lanjutan_ijd_2025` (155) hanya beririsan 84 usulan
   — belum dikonfirmasi sumber mana yang benar.
+- **Referensi wilayah berbasis ID (`ref_wilayah`, 24 Sep 2026)**: tabel
+  `ref_wilayah` (kode_provinsi/kode_kabupaten/kode_kecamatan + nama, dari
+  `penduduk_kecamatan`, 38 prov/514 kab/7.288 kec) + view `ref_wilayah_kabupaten`/
+  `ref_wilayah_provinsi`, dibangun `scripts/build_ref_wilayah.py` (logika di
+  `wilayah_id.py`). `usulan_inpres` dan `usulan_inpres_riwayat` kini punya
+  `kode_provinsi`/`kode_kabupaten` (diisi otomatis oleh importer, dari
+  `wilayah_mapping`) — **scorer IJD belum memakainya** (masih nama →
+  `wilayah_mapping` di ±11 titik app.py; peralihan menunggu keputusan, lihat
+  `docs/kajian_validasi_id_wilayah.md` §4). `scripts/validasi_id_wilayah.py`
+  memeriksa kode semua tabel pendukung terhadap ref (exit 1 bila ada temuan
+  baru). Temuan penting: Papua Barat Daya memakai **98xx** di `kemantapan_ijd_2026`,
+  `bps_kabupaten_indeks_penanaman`, `bps_data_bandara` tapi **92xx** di master
+  (17 usulan PBD kehilangan Indeks Penanaman); 111 usulan punya kabupaten
+  nama ≠ kabupaten geometri; `pelabuhan_daerah.kode_kecamatan` berformat
+  desimal "kab.kec". **Gotcha**: di query yang membandingkan tabel dgn
+  `ref_wilayah`, kualifikasi nama tabel pada kolom `kode_kabupaten` (nama
+  sama di kedua sisi → subquery membandingkan ref dengan dirinya sendiri,
+  selalu cocok, orphan tampak 0 padahal ada).
 - `scripts/lhr_spatial_join.py` — ad-hoc (not part of the rerun-safe
   pipeline) spatial join of each LHR ruas against BATAS KECAMATAN polygons,
   writing provinsi/kabupaten/kecamatan directly into the source LHR xlsx.

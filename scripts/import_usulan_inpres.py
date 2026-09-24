@@ -23,6 +23,7 @@ import openpyxl
 import psycopg
 
 BASE_DIR = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(BASE_DIR))  # wilayah_id.py ada di root repo (skrip ini juga di-import app.py)
 DOCS_DIR = BASE_DIR / "docs"
 SCHEMA_PATH = Path(__file__).resolve().parent / "schema_usulan_inpres.sql"
 
@@ -326,6 +327,17 @@ def upsert_xlsx(source, conn):
             cur.executemany(doc_insert_sql, doc_batch)
 
     conn.commit()
+
+    # kode_provinsi/kode_kabupaten (ID BPS) dari wilayah_mapping -- lihat wilayah_id.py.
+    # Kegagalan (mis. wilayah_mapping belum dibangun) tidak boleh menggagalkan import.
+    try:
+        import wilayah_id
+        with conn.cursor() as cur:
+            wilayah_id.isi_kode_usulan(cur)
+        conn.commit()
+    except Exception as exc:  # noqa: BLE001
+        conn.rollback()
+        print(f"  [peringatan] kode wilayah usulan_inpres tidak terisi: {exc}")
 
     with conn.cursor() as cur:
         cur.execute("SELECT COUNT(*) FROM usulan_inpres")

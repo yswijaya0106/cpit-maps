@@ -679,6 +679,16 @@ function arusKelas(feature) {
   const t = Math.log(Math.max(v, lo) / lo) / Math.log(hi / lo);
   return Math.min(5, 1 + Math.floor(t * 5));
 }
+// Legenda KAPLIN (import_kaplin_ka.py) -- nilai warna sama persis dgn skrip.
+const KAPLIN_UTILISASI_LEGEND = [
+  ["#2e9e5b", "Utilisasi rendah (< 60%)"], ["#e0a800", "Utilisasi sedang (60–85%)"],
+  ["#d64545", "Utilisasi tinggi (≥ 85%)"], ["#8a94a6", "Data kapasitas tidak tersedia"],
+];
+const KAPLIN_KORIDOR_LEGEND = [
+  ["#0072B2", "Jakarta – Cirebon"], ["#009E73", "Cirebon – Semarang"], ["#E69F00", "Cirebon – Yogyakarta"],
+  ["#D55E00", "Semarang – Surabaya"], ["#CC79A7", "Bandung – Kroya"],
+];
+const KAPLIN_LABEL_MIN_ZOOM = 9;
 const arusFilter = { pulau: "", provinsi: "", arah: "keduanya", antarPulau: false };
 
 function arusFeatureVisible(f) {

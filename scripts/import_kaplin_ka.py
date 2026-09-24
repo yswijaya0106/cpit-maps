@@ -294,6 +294,11 @@ def baca_utama(cfg):
     return out
 
 
+def nama_tampil(s):
+    """Nama stasiun utk label/atribut; stasiun interpolasi hanya punya kode -> tampil apa adanya."""
+    return s["nama"] if s.get("interp") else s["nama"].replace("STASIUN ", "").title()
+
+
 def kategori(u):
     if u is None:
         return "Tidak tersedia", WARNA["na"]
@@ -427,7 +432,7 @@ def proses(pulau, cfg, stasiun_all, cur):
         if kode not in tak_ketemu:
             continue
         lon, lat = xy.to_ll(*q)
-        pilih[kode] = {"kode": kode, "nama": f"{kode} (interpolasi)", "lon": lon, "lat": lat,
+        pilih[kode] = {"kode": kode, "nama": f"{kode} (perkiraan)", "lon": lon, "lat": lat,
                        "attrs": {"KETERANGAN": "Koordinat diinterpolasi (perkiraan)"}, "interp": True}
         rail.add_station(kode, q)
         tak_ketemu.remove(kode)
@@ -464,7 +469,7 @@ def proses(pulau, cfg, stasiun_all, cur):
             sumber = "Garis lurus antar stasiun (perkiraan)"
         util = (p["program"] / p["kapasitas"] * 100) if p["program"] is not None and p["kapasitas"] else None
         kat, warna = kategori(util)
-        nm_a, nm_b = a["nama"].replace("STASIUN ", "").title(), b["nama"].replace("STASIUN ", "").title()
+        nm_a, nm_b = (nama_tampil(a), nama_tampil(b))
         attrs = {
             "Pulau": pulau, "Divre/Daop": p["divre"], "Lintas": p["lintas"],
             "Petak Jalan": f"{nm_a} ({p['awal']}) – {nm_b} ({p['akhir']})",
@@ -501,7 +506,7 @@ def proses(pulau, cfg, stasiun_all, cur):
         if kode not in stasiun_petak:
             continue
         a = s["attrs"]
-        nama = s["nama"].replace("STASIUN ", "").title()
+        nama = nama_tampil(s)
         attrs = {
             "Stasiun": nama, "Kode": kode, "Pulau": pulau, "Provinsi": a.get("PROVINSI"),
             "Kabupaten/Kota": a.get("KABUPATEN/ KOTA"), "Kelas stasiun": a.get("KELAS STASIUN"),

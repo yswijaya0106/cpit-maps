@@ -481,6 +481,45 @@
       </div>
     </div>
 
+    <div class="datatable-overlay" id="udPreviewOverlay" hidden>
+      <div class="datatable-modal">
+        <div class="datatable-head">
+          <div class="datatable-head-title">
+            <h3><i class="bi bi-bus-front"></i> <span id="udPreviewTitle">Profil Urban &amp; Darat</span></h3>
+            <span class="datatable-meta" id="udPreviewMeta"></span>
+          </div>
+          <div class="datatable-head-actions">
+            <select id="udPreviewSheet" class="datatable-search" aria-label="Pilih sheet"></select>
+            <input type="search" id="udPreviewSearch" class="datatable-search" placeholder="Cari..." autocomplete="off" />
+            <button type="button" class="btn btn-primary btn-sm" id="udPreviewExport">
+              <i class="bi bi-file-earmark-excel"></i> Export Excel
+            </button>
+            <button type="button" class="icon-btn" id="udPreviewClose" aria-label="Tutup"><i
+                class="bi bi-x-lg"></i></button>
+          </div>
+        </div>
+        <div class="datatable-scroll" id="udPreviewScroll"></div>
+        <div class="datatable-foot">
+          <div class="datatable-pagesize">
+            Baris per halaman:
+            <select id="udPreviewPageSize">
+              <option value="25">25</option>
+              <option value="50" selected>50</option>
+              <option value="100">100</option>
+              <option value="200">200</option>
+            </select>
+          </div>
+          <div class="datatable-pager">
+            <button type="button" class="btn btn-ghost btn-sm" id="udPreviewPrev"><i class="bi bi-chevron-left"></i>
+              Sebelumnya</button>
+            <span id="udPreviewPageInfo"></span>
+            <button type="button" class="btn btn-ghost btn-sm" id="udPreviewNext">Berikutnya <i
+                class="bi bi-chevron-right"></i></button>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <div class="datatable-overlay" id="laporanPrioritasOverlay" hidden>
       <div class="datatable-modal">
         <div class="datatable-head">
@@ -707,6 +746,9 @@
               <button id="btnUsulanRoadSafety" class="btn btn-ghost btn-sm" hidden
                 title="Profil Road Safety per kab/kota (tanpa data kecelakaan/fatalitas) — preview & export xlsx">
                 <i class="bi bi-cone-striped"></i> Preview Road Safety</button>
+              <button id="btnUsulanUrbanDarat" class="btn btn-ghost btn-sm" hidden
+                title="Profil Urban & Darat (penyeberangan, perintis, integrasi antarmoda, terminal) — preview & export xlsx">
+                <i class="bi bi-bus-front"></i> Preview Urban &amp; Darat</button>
               <button id="btnUsulanModaDashboard" class="btn btn-ghost btn-sm" hidden><i class="bi bi-speedometer2"></i>
                 Dashboard</button>
               <button id="btnUrgensiPelabuhan" class="btn btn-ghost btn-sm" hidden

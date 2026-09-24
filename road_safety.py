@@ -63,8 +63,9 @@ def _norm_kab(s):
     return tipe, re.sub(r"\s+", " ", u).strip()
 
 
-def _build():
-    """Hitung ulang semua sheet -> dict nama_sheet -> DataFrame."""
+def load_wilayah():
+    """-> (master DataFrame kab/kota BPS 2025, kode_from_text(prov, kab)).
+    kode_from_text mencocokkan nama teks bebas ke kode kab BPS (None bila gagal)."""
     master = pd.DataFrame(_q("""
         select kode_kabupaten::text as kode_kab, min(provinsi) as provinsi,
                min(kabupaten_kota) as kabupaten_kota,
@@ -85,32 +86,40 @@ def _build():
         # tipe tidak selalu tertulis di sumber (mis. "Jakarta Barat"): coba kedua tipe
         return key_to_kode.get((p, t, n)) or key_to_kode.get((p, "KOTA" if t == "KAB" else "KAB", n))
 
-    # --- titik -> kab via poligon kecamatan (spatial join di PostGIS)
-    def points_by_kab(layer_provinsi, layer):
-        rows = _q("""
-            select p.attrs as pattrs, ST_Y(p.geom) as lat, ST_X(p.geom) as lon, k.attrs as kattrs
-            from map_layers p
-            left join lateral (
-                select attrs from map_layers k
-                where k.provinsi='BATAS KECAMATAN' and ST_Intersects(k.geom, p.geom)
-                limit 1) k on true
-            where p.provinsi=%s and p.layer=%s""", (layer_provinsi, layer))
-        out = []
-        for r in rows:
-            ka = r["kattrs"] or {}
-            kode = None
-            if ka.get("KODE_KECAMATAN"):
-                kode = str(int(ka["KODE_KECAMATAN"]) // 1000)
-            elif ka:
-                kode = kode_from_text(ka.get("PROVINSI"), ka.get("KABUPATEN_KOTA"))
-            out.append({**r["pattrs"], "_kode_kab": kode, "_lat": r["lat"], "_lon": r["lon"],
-                        "_kab_poligon": ka.get("KABUPATEN_KOTA"), "_kec_poligon": ka.get("KECAMATAN")})
-        return out
+    return master, kode_from_text
 
-    lrk = points_by_kab("JALAN NASIONAL", "LOKASI RAWAN KECELAKAAN 2026")
-    blk = points_by_kab("JALAN NASIONAL", "BLACKSPOT KECELAKAAN")
-    xrel = points_by_kab("TITIK POTONG JALAN-REL KA", "Titik Potong Jalan - Rel KA")
-    ssk = points_by_kab("PERLINTASAN SEBIDANG KA", "Rencana Penanganan SS KA (Titik JPL)")
+
+def points_by_kab(kode_from_text, layer_provinsi, layer):
+    """Titik layer map_layers -> kab/kota lewat spatial join ke poligon BATAS KECAMATAN."""
+    rows = _q("""
+        select p.attrs as pattrs, ST_Y(p.geom) as lat, ST_X(p.geom) as lon, k.attrs as kattrs
+        from map_layers p
+        left join lateral (
+            select attrs from map_layers k
+            where k.provinsi='BATAS KECAMATAN' and ST_Intersects(k.geom, p.geom)
+            limit 1) k on true
+        where p.provinsi=%s and p.layer=%s""", (layer_provinsi, layer))
+    out = []
+    for r in rows:
+        ka = r["kattrs"] or {}
+        kode = None
+        if ka.get("KODE_KECAMATAN"):
+            kode = str(int(ka["KODE_KECAMATAN"]) // 1000)
+        elif ka:
+            kode = kode_from_text(ka.get("PROVINSI"), ka.get("KABUPATEN_KOTA"))
+        out.append({**r["pattrs"], "_kode_kab": kode, "_lat": r["lat"], "_lon": r["lon"],
+                    "_kab_poligon": ka.get("KABUPATEN_KOTA"), "_kec_poligon": ka.get("KECAMATAN")})
+    return out
+
+
+def _build():
+    """Hitung ulang semua sheet -> dict nama_sheet -> DataFrame."""
+    master, kode_from_text = load_wilayah()
+
+    lrk = points_by_kab(kode_from_text, "JALAN NASIONAL", "LOKASI RAWAN KECELAKAAN 2026")
+    blk = points_by_kab(kode_from_text, "JALAN NASIONAL", "BLACKSPOT KECELAKAAN")
+    xrel = points_by_kab(kode_from_text, "TITIK POTONG JALAN-REL KA", "Titik Potong Jalan - Rel KA")
+    ssk = points_by_kab(kode_from_text, "PERLINTASAN SEBIDANG KA", "Rencana Penanganan SS KA (Titik JPL)")
 
     def count_by(rows, pred=None):
         c = defaultdict(int)

@@ -50,6 +50,7 @@ from map_layer_labels import map_layer_label as _map_layer_label  # noqa: E402
 import auth  # noqa: E402
 import chat_providers  # noqa: E402
 import road_safety  # noqa: E402
+import urban_darat  # noqa: E402
 # _llm_plain/_plain_* (penilaian Bappenas AI) masih tinggal di app.py dan
 # butuh konstanta model/URL yang ikut pindah ke chat_providers saat refactor
 # Fase 2 — tanpa import ini semua fitur AI Bappenas NameError.
@@ -105,8 +106,15 @@ async def _warm_ijd_bulk_cache_nasional():
         except Exception as e:
             print(f"  [warm-cache] gagal pra-hitung profil road safety: {e}")
 
+    def _warm_urban_darat():
+        try:
+            urban_darat.get_sheets()
+        except Exception as e:
+            print(f"  [warm-cache] gagal pra-hitung profil urban & darat: {e}")
+
     loop.run_in_executor(None, _warm)
     loop.run_in_executor(None, _warm_road_safety)
+    loop.run_in_executor(None, _warm_urban_darat)
 
 
 # APP_USERNAME/APP_PASSWORD (.env) TIDAK LAGI dipakai sbg kredensial aktif --
@@ -3671,6 +3679,38 @@ def road_safety_kabupaten_export(provinsi: str = "", q: str = ""):
     fname = f"road_safety_kabupaten_{scope}_{datetime.now():%Y%m%d%H%M%S}.xlsx"
     return StreamingResponse(
         road_safety.export_bytes(provinsi, q),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f"attachment; filename={fname}"},
+    )
+
+
+# Profil Urban & Darat (moda Darat, 24 Sep 2026) -- preview per sheet + export
+# xlsx, kerangka docs/24092026/Kerangka Berpikir Tim Urban dan Darat.pptx
+# (tahap 1: Penyeberangan, Perintis, Integrasi Antarmoda, Terminal Tipe A).
+# Logika di urban_darat.py, kajian di docs/kajian_tim_urban_darat_ketersediaan_data.md.
+@app.get("/api/urban-darat/preview")
+def urban_darat_preview(sheet: str = "", provinsi: str = "", q: str = "", limit: int = 50, offset: int = 0):
+    limit = max(1, min(limit, 200))
+    offset = max(0, offset)
+    sheet = sheet or urban_darat.SHEETS[0]
+    if sheet not in urban_darat.SHEETS:
+        raise HTTPException(status_code=400, detail=f"Sheet tidak dikenal: {sheet}")
+    df = urban_darat.filter_sheets(urban_darat.get_sheets(), provinsi, q)[sheet]
+    page = df.iloc[offset:offset + limit]
+    return jsonable_encoder({
+        "table": "urban_darat", "sheet": sheet, "sheets": urban_darat.SHEETS,
+        "label": f"Profil Urban & Darat — {sheet} — {provinsi or 'Nasional'}",
+        "columns": list(df.columns), "rows": road_safety.to_json_rows(page),
+        "total": len(df), "limit": limit, "offset": offset,
+    })
+
+
+@app.get("/api/urban-darat/export/xlsx")
+def urban_darat_export(provinsi: str = "", q: str = ""):
+    scope = re.sub(r"[^\w]+", "_", provinsi) if provinsi else "Nasional"
+    fname = f"urban_darat_{scope}_{datetime.now():%Y%m%d%H%M%S}.xlsx"
+    return StreamingResponse(
+        urban_darat.export_bytes(provinsi, q),
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition": f"attachment; filename={fname}"},
     )

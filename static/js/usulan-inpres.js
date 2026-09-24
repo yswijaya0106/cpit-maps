@@ -621,6 +621,7 @@ function usulanModaChange(moda) {
   document.getElementById("btnUsulanModaDashboard").hidden = isIjd;
   document.getElementById("btnUrgensiPelabuhan").hidden = moda !== "Laut";
   document.getElementById("btnUsulanRoadSafety").hidden = moda !== "Darat";
+  document.getElementById("btnUsulanUrbanDarat").hidden = moda !== "Darat";
   document.getElementById("usulanKabupatenField").hidden = !isIjd;
   document.getElementById("usulanSearchInput").placeholder = USULAN_MODA_SEARCH_PLACEHOLDER[moda] || "Cari...";
 
@@ -1620,6 +1621,128 @@ function bindRsPreview() {
 }
 
 document.addEventListener("DOMContentLoaded", bindRsPreview);
+
+/* --- Preview "Profil Urban & Darat" (moda Darat, 24 Sep 2026) -- kerangka
+   "Tim Urban dan Darat" tahap 1; satu modal, sheet dipilih lewat <select>
+   (Penyeberangan, Perintis, Integrasi Antarmoda, Terminal, Ketersediaan
+   Data, Keterangan). Export selalu mengunduh SEMUA sheet. Lihat
+   docs/kajian_tim_urban_darat_ketersediaan_data.md. -------------------- */
+
+const udPreview = { sheet: "", provinsi: "", q: "", offset: 0, limit: 50, total: 0 };
+
+async function udPreviewOpen(provinsi) {
+  udPreview.provinsi = provinsi || "";
+  udPreview.q = "";
+  udPreview.offset = 0;
+  document.getElementById("udPreviewSearch").value = "";
+  document.getElementById("udPreviewOverlay").hidden = false;
+  await udPreviewFetchPage();
+}
+
+function udPreviewFilterParams() {
+  const params = new URLSearchParams();
+  if (udPreview.provinsi) params.set("provinsi", udPreview.provinsi);
+  if (udPreview.q) params.set("q", udPreview.q);
+  return params;
+}
+
+async function udPreviewFetchPage() {
+  const scroll = document.getElementById("udPreviewScroll");
+  scroll.innerHTML = '<div class="datatable-loading"><i class="bi bi-hourglass-split"></i> Menyusun profil...</div>';
+  try {
+    const params = udPreviewFilterParams();
+    if (udPreview.sheet) params.set("sheet", udPreview.sheet);
+    params.set("limit", udPreview.limit);
+    params.set("offset", udPreview.offset);
+    const res = await fetch(`/api/urban-darat/preview?${params}`);
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || "Gagal memuat preview");
+    udPreview.total = data.total;
+    udPreview.sheet = data.sheet;
+    udPreviewRender(data);
+  } catch (err) {
+    scroll.innerHTML = `<div class="datatable-loading">${escapeHtml(err.message)}</div>`;
+  }
+}
+
+function udPreviewRender(data) {
+  document.getElementById("udPreviewTitle").textContent = data.label;
+  document.getElementById("udPreviewMeta").textContent = `${data.total.toLocaleString("id-ID")} baris`;
+
+  const sel = document.getElementById("udPreviewSheet");
+  if (sel.options.length !== data.sheets.length) {
+    sel.innerHTML = data.sheets.map((n) => `<option value="${escapeHtml(n)}">${escapeHtml(n)}</option>`).join("");
+  }
+  sel.value = data.sheet;
+
+  const head = data.columns.map((c) => `<th>${escapeHtml(c.trim())}</th>`).join("");
+  // Kode/tahun/koordinat/slide: angka identitas, bukan kuantitas -- tanpa pemisah ribuan.
+  const noSeparatorCols = new Set(data.columns.map((c, i) => (/^Kode|^Tahun|^Slide|^Latitude|^Longitude/.test(c) ? i : -1)).filter((i) => i >= 0));
+  const cell = (v, i) => {
+    if (v === null || v === undefined || v === "") return '<td class="null">—</td>';
+    if (typeof v === "number") return `<td class="num">${noSeparatorCols.has(i) ? v : v.toLocaleString("id-ID")}</td>`;
+    return `<td>${escapeHtml(String(v))}</td>`;
+  };
+  const body = data.rows.map((r) => `<tr>${r.map(cell).join("")}</tr>`).join("");
+  document.getElementById("udPreviewScroll").innerHTML = data.rows.length
+    ? `<table class="datatable"><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>`
+    : '<div class="datatable-loading">Tidak ada baris yang cocok.</div>';
+
+  const page = Math.floor(data.offset / data.limit) + 1;
+  const pages = Math.max(1, Math.ceil(data.total / data.limit));
+  document.getElementById("udPreviewPageInfo").textContent = `Halaman ${page} dari ${pages.toLocaleString("id-ID")}`;
+  document.getElementById("udPreviewPrev").disabled = data.offset <= 0;
+  document.getElementById("udPreviewNext").disabled = data.offset + data.limit >= data.total;
+}
+
+function bindUdPreview() {
+  const overlay = document.getElementById("udPreviewOverlay");
+  document.getElementById("btnUsulanUrbanDarat").addEventListener("click", () => {
+    udPreviewOpen(state.usulanBrowse.provinsi || "");
+  });
+  document.getElementById("udPreviewClose").addEventListener("click", () => (overlay.hidden = true));
+  overlay.addEventListener("click", (e) => {
+    if (e.target === overlay) overlay.hidden = true;
+  });
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && !overlay.hidden) overlay.hidden = true;
+  });
+
+  document.getElementById("udPreviewSheet").addEventListener("change", (e) => {
+    udPreview.sheet = e.target.value;
+    udPreview.offset = 0;
+    udPreviewFetchPage();
+  });
+  document.getElementById("udPreviewPrev").addEventListener("click", () => {
+    udPreview.offset = Math.max(0, udPreview.offset - udPreview.limit);
+    udPreviewFetchPage();
+  });
+  document.getElementById("udPreviewNext").addEventListener("click", () => {
+    if (udPreview.offset + udPreview.limit < udPreview.total) {
+      udPreview.offset += udPreview.limit;
+      udPreviewFetchPage();
+    }
+  });
+  document.getElementById("udPreviewPageSize").addEventListener("change", (e) => {
+    udPreview.limit = parseInt(e.target.value, 10);
+    udPreview.offset = 0;
+    udPreviewFetchPage();
+  });
+  let searchTimer;
+  document.getElementById("udPreviewSearch").addEventListener("input", (e) => {
+    clearTimeout(searchTimer);
+    searchTimer = setTimeout(() => {
+      udPreview.q = e.target.value.trim();
+      udPreview.offset = 0;
+      udPreviewFetchPage();
+    }, 350);
+  });
+  document.getElementById("udPreviewExport").addEventListener("click", () => {
+    window.location.href = `/api/urban-darat/export/xlsx?${udPreviewFilterParams()}`;
+  });
+}
+
+document.addEventListener("DOMContentLoaded", bindUdPreview);
 
 /* --- Dashboard Skor IJD Prioritisasi Teknokratik (A-E) -- reuse
    laporanKpiTile/laporanHBar/laporanDonut (didefinisikan di bawah, tapi

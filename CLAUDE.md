@@ -808,6 +808,20 @@ scripts/tables/layers out to staging.
   **Sengaja TANPA data kecelakaan/fatalitas** (`anev_laka_lantas_*` hanya
   level POLDA, tidak bisa diturunkan ke kab/kota); sel kosong = data tidak
   tersedia, bukan nol; tidak ada skor komposit (kerangka tidak menetapkan bobot).
+- **Profil Urban & Darat** (24 Sep 2026, kerangka `docs/24092026/Kerangka
+  Berpikir Tim Urban dan Darat.pptx`, kajian `docs/kajian_tim_urban_darat_
+  ketersediaan_data.md`): tombol "Preview Urban & Darat" (hanya moda Darat)
+  di sebelah tombol Road Safety → modal dgn `<select>` sheet + export xlsx,
+  endpoint `GET /api/urban-darat/{preview,export/xlsx}` (`sheet`, `provinsi`,
+  `q`). Logika di [urban_darat.py](urban_darat.py), memakai
+  `road_safety.load_wilayah`/`points_by_kab`; cache 10 menit + warm saat
+  startup (~22s). Sheet: Penyeberangan (per pelabuhan), Perintis Kab-Kota,
+  Integrasi Antarmoda (per kab/kota, **tanpa indeks komposit** — bobot tak
+  ditetapkan di deck), Terminal Tipe A, Ketersediaan Data, Keterangan.
+  Tipologi 3TP/KSPEAN dari atribut layer `Wilayah Prioritas` (provinsi
+  ANGKUTAN PERINTIS) + lokus `bappenas_lokus_a`; **Wilayah Metropolitan tidak
+  ada delineasinya** (perlu daftar dari pemilik kerangka). Jarak antarsimpul
+  = haversine garis lurus, bukan jarak tempuh.
 - `scripts/lhr_spatial_join.py` — ad-hoc (not part of the rerun-safe
   pipeline) spatial join of each LHR ruas against BATAS KECAMATAN polygons,
   writing provinsi/kabupaten/kecamatan directly into the source LHR xlsx.

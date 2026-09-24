@@ -84,6 +84,8 @@ RASIO_WAJAR = (0.5, 2.0)
 # ruas Jatinegara-Bekasi ~3 km yang memang tidak ada di layer itu) TIDAK disambung paksa -- petak
 # semacam itu dicoba lewat layer rel cadangan (FALLBACK_REL) dalam koridor sempit di sekitar petak.
 GAP_JEMBATAN_M = 150
+GAP_BESAR_M = 8000  # celah lebih besar: hanya dijembatani (berpenalti) bila petak tak punya jalur lain
+PENALTI_JEMBATAN = 4.0
 KORIDOR_PAD_DERAJAT = 0.03  # ~3 km di kiri/kanan/atas/bawah kotak batas kedua stasiun
 GARIS_LURUS_DIGAMBAR = False  # True = petak tanpa jalur rel digambar sbg garis lurus (perkiraan)
 LURUS_RASIO = (0.3, 1.5)  # rentang wajar panjang garis lurus / jarak petak di sheet
@@ -152,6 +154,7 @@ class Rail:
             if d is not None and d <= 40 and 0 < t < 1:
                 self.inserts.setdefault(i, []).append((t, key, q))
         self.adj = None
+        self.jembatan, self._besar, self.last_jembatan = set(), False, False
         self.sta_node = {}
 
     def nearest(self, p, exclude_cid=None):
@@ -198,7 +201,7 @@ class Rail:
         self.adj, self.pos = adj, pos
         self._jembatani_celah(GAP_JEMBATAN_M)
 
-    def _jembatani_celah(self, gap_m):
+    def _jembatani_celah(self, gap_m, penalti=1.0):
         """Sambung ujung buntu (node berderajat 1) ke node terdekat di KOMPONEN LAIN bila jaraknya
         <= gap_m. Hanya celah kecil akibat digitasi; celah besar dibiarkan (lihat GAP_JEMBATAN_M)."""
         adj, pos = self.adj, self.pos
@@ -227,10 +230,23 @@ class Rail:
             d[C == C[i]] = np.inf
             j = int(d.argmin())
             if np.isfinite(d[j]) and d[j] <= gap_m:
-                adj[k].append((keys[j], float(d[j])))
-                adj[keys[j]].append((k, float(d[j])))
+                w = float(d[j]) * penalti
+                adj[k].append((keys[j], w))
+                adj[keys[j]].append((k, w))
+                if penalti > 1.0:
+                    self.jembatan.add(frozenset((k, keys[j])))
 
     def path(self, s, t):
+        pts, dist = self._path(s, t)
+        if pts is None and not self._besar:
+            # celah rel besar (data layer rel terputus, mis. Pantura Batang): jembatani dgn garis lurus
+            # PENALTI (dipakai hanya bila tak ada jalur lain) lalu coba lagi -- lihat GAP_BESAR_M.
+            self._besar = True
+            self._jembatani_celah(GAP_BESAR_M, penalti=PENALTI_JEMBATAN)
+            pts, dist = self._path(s, t)
+        return pts, dist
+
+    def _path(self, s, t):
         dist, prev, pq, n = {s: 0.0}, {}, [(0.0, 0, s)], 0
         while pq:
             d, _, u = heapq.heappop(pq)
@@ -250,7 +266,11 @@ class Rail:
         while u != s:
             u = prev[u]
             out.append(u)
-        return [self.pos[k] for k in reversed(out)], dist[t]
+        out = list(reversed(out))
+        self.last_jembatan = any(frozenset(pr) in self.jembatan for pr in zip(out, out[1:]))
+        pts = [self.pos[k] for k in out]
+        # panjang NYATA (bobot jembatan berpenalti tidak dihitung)
+        return pts, sum(math.hypot(x2 - x1, y2 - y1) for (x1, y1), (x2, y2) in zip(pts, pts[1:]))
 
 
 def load_stasiun(cur):
@@ -450,7 +470,7 @@ def proses(pulau, cfg, stasiun_all, cur):
     for s in stasiun_all:
         by_kode.setdefault(s["kode"], []).append(s)
         by_nama.setdefault(s["nama"].upper().replace("STASIUN ", "").strip(), []).append(s)
-    pilih, tak_ketemu = {}, []
+    pilih, tak_ketemu, kandidat = {}, [], {}
     for kode in sorted(kode_dipakai):
         cands = []
         if kode in ALIAS:
@@ -458,16 +478,32 @@ def proses(pulau, cfg, stasiun_all, cur):
             cands = [s for n, ss in by_nama.items() if n == key or n.startswith(key) for s in ss]
         if not cands:
             cands = by_kode.get(kode, [])
-        best, bd = None, None
+        valid = []
         for s in cands:
             d, *_ = rail.nearest(xy.to_m(s["lon"], s["lat"]))
-            if d is not None and (bd is None or d < bd):
-                best, bd = s, d
-        if best is None or bd > SNAP_MAKS_M * 5:
+            if d is not None and d <= SNAP_MAKS_M * 5:
+                valid.append((d, s))
+        if not valid:
             tak_ketemu.append(kode)
             continue
-        pilih[kode] = best
-        rail.add_station(kode, xy.to_m(best["lon"], best["lat"]))
+        valid.sort(key=lambda x: x[0])
+        pilih[kode] = valid[0][1]
+        if len(valid) > 1:
+            kandidat[kode] = [s for _, s in valid]
+    # kode ganda (mis. KRP = Karangampel/Kuripan) -> pilih kandidat TERDEKAT ke stasiun tetangganya di sheet
+    tetangga = {}
+    for pt in petak:
+        tetangga.setdefault(pt["awal"], set()).add(pt["akhir"])
+        tetangga.setdefault(pt["akhir"], set()).add(pt["awal"])
+    for _ in range(2):
+        for kode, cands in kandidat.items():
+            ref = [pilih[n] for n in tetangga.get(kode, ()) if n in pilih and n not in kandidat]
+            if not ref:
+                continue
+            pilih[kode] = min(cands, key=lambda c: min(
+                math.hypot((c["lon"] - r["lon"]) * xy.kx, (c["lat"] - r["lat"]) * xy.ky) for r in ref))
+    for kode, st in pilih.items():
+        rail.add_station(kode, xy.to_m(st["lon"], st["lat"]))
     rail.finalize()
 
     # interpolasi stasiun tak berkoordinat: deret petak berurutan dalam satu lintas
@@ -527,6 +563,8 @@ def proses(pulau, cfg, stasiun_all, cur):
             if pts and dist and (p["jarak_m"] is None or RASIO_WAJAR[0] <= dist / p["jarak_m"] <= RASIO_WAJAR[1]):
                 geom = LineString([xy.to_ll(x, y) for x, y in pts])
                 sumber, glen = "Menyusuri jalur rel (layer Rel)", dist
+                if rail.last_jembatan:
+                    sumber += " — ada celah data rel yang dijembatani garis lurus"
         if geom is None:
             lokal = jalur_lokal(cur, xy, a, b, p["jarak_m"])
             if lokal:

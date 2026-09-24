@@ -770,6 +770,7 @@ async function loadUsulanDetail(id) {
   html += `<div class="usulan-ijd-score" id="usulanIjdScore"><div class="adv-loading">Menghitung skor prioritisasi IJD...</div></div>`;
   html += `<div class="usulan-ijd-score" id="usulanSkorNasional"></div>`;
   html += `<div class="usulan-ijd-score" id="usulanNpr"></div>`;
+  html += `<div class="usulan-ijd-score" id="usulanRiwayatRuas"></div>`;
   html += `<div class="usulan-ijd-score" id="usulanPenilaianBappenas"></div>`;
   html += `<div class="adv-loading" id="usulanGeomStatus">Memuat lokasi di peta...</div></div>`;
   detailEl.innerHTML = html;
@@ -786,6 +787,7 @@ async function loadUsulanDetail(id) {
   loadIjdScore(u.id);
   loadSkorNasional(u.id);
   loadNpr(u.id);
+  loadRiwayatRuas(u.id);
   loadPenilaianBappenas(u.id);
   await flyToUsulanGeometry(u);
 }
@@ -951,6 +953,48 @@ function renderIjdScoreHtml(data) {
 
   html += `<p class="hint ijd-score-note">${escapeHtml(data.catatan)}</p>`;
   return html;
+}
+
+// Riwayat pengusulan ruas yang sama di tahun sebelumnya (usulan_inpres_riwayat).
+async function loadRiwayatRuas(id) {
+  const el = document.getElementById("usulanRiwayatRuas");
+  if (!el) return;
+  try {
+    const res = await fetch(`/api/usulan-inpres/${id}/riwayat-ruas`);
+    if (!res.ok) throw new Error(await res.text());
+    const data = await res.json();
+    if (!data.riwayat.length) {
+      el.innerHTML = `<div class="ijd-score-head"><span class="ijd-score-title"><i class="bi bi-clock-history"></i> Riwayat Pengusulan Ruas</span></div>
+        <p class="hint">${data.kode_ruas ? "Ruas ini belum pernah diusulkan pada tahun 2023–2025." : escapeHtml(data.catatan)}</p>`;
+      return;
+    }
+    const r = data.ringkasan;
+    const badge = (v) => {
+      if (!v) return '<span class="hint">—</span>';
+      const ok = v === "TERIMA";
+      const bad = v === "TOLAK" || v === "TERTOLAK SISTEM" || v === "TIDAK LULUS";
+      return `<span class="usulan-badge ${ok ? "usulan-badge-ok" : bad ? "usulan-badge-warn" : ""} ijd-badge">${escapeHtml(v)}</span>`;
+    };
+    const rp = (v) => (v == null ? "—" : `${(v / 1e9).toLocaleString("id-ID", { maximumFractionDigits: 1 })} M`);
+    const rows = data.riwayat.map((x) => `<tr>
+      <td>${x.tahun}</td>
+      <td>${escapeHtml(x.nama_kegiatan || "-")}<div class="hint">${escapeHtml(x.jenis_penanganan || "")}</div></td>
+      <td class="num">${rp(x.alokasi_usulan_pemda)}</td>
+      <td>${badge(x.seleksi_sistem)}</td><td>${badge(x.verifikasi_balai)}</td>
+      <td>${badge(x.verifikasi_kompetensi)}</td><td>${badge(x.verifikasi_pfid)}</td>
+      <td class="num">${x.nilai_dpp ? rp(x.nilai_dpp) : "—"}</td></tr>`).join("");
+    el.innerHTML = `<div class="ijd-score-head">
+        <span class="ijd-score-title"><i class="bi bi-clock-history"></i> Riwayat Pengusulan Ruas ${escapeHtml(data.kode_ruas)}</span>
+        <span class="ijd-score-total">Pernah diusulkan: ${r.tahun_diusulkan_sebelumnya.length ? r.tahun_diusulkan_sebelumnya.join(", ") : "tidak ada di 2023–2025"}${r.pernah_ber_dpp ? " · pernah masuk DPP" : ""}</span>
+      </div>
+      <div class="usulan-riwayat-scroll"><table class="usulan-riwayat-table"><thead><tr>
+        <th>Tahun</th><th>Kegiatan</th><th>Alokasi Pemda</th><th>Sistem</th><th>Balai</th><th>Kompetensi</th><th>PFID</th><th>DPP</th>
+      </tr></thead><tbody>${rows}</tbody></table></div>
+      <p class="hint ijd-score-note">${escapeHtml(data.catatan)}</p>`;
+  } catch (err) {
+    console.error(err);
+    el.innerHTML = `<div class="adv-error">Gagal memuat riwayat pengusulan ruas.</div>`;
+  }
 }
 
 async function loadNpr(id) {

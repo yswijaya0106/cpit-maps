@@ -7806,6 +7806,49 @@ def _fetch_usulan_geometry(usulan_id: int) -> dict:
     return geojson
 
 
+# Riwayat pengusulan ruas yang sama di tahun-tahun sebelumnya (24 Sep 2026),
+# dari usulan_inpres_riwayat (scripts/import_usulan_riwayat.py, ekspor SITIA
+# 2023-2026) -- TABEL TERPISAH dari usulan_inpres supaya query 2026 yang ada
+# (ranking, skor, export) tidak tercampur data tahun lama. Kunci: kode_ruas.
+# Tabel belum ada / usulan tanpa kode_ruas -> daftar kosong, bukan error.
+@app.get("/api/usulan-inpres/{usulan_id}/riwayat-ruas")
+def usulan_inpres_riwayat_ruas(usulan_id: int):
+    with db_cursor() as cur:
+        cur.execute("SELECT kode_ruas FROM usulan_inpres WHERE id = %s", (usulan_id,))
+        row = cur.fetchone()
+        if row is None:
+            raise HTTPException(status_code=404, detail="Usulan tidak ditemukan")
+        kode_ruas = row["kode_ruas"]
+        if not kode_ruas:
+            return {"kode_ruas": None, "riwayat": [], "ringkasan": None,
+                    "catatan": "Usulan ini tidak memiliki kode ruas, riwayat tidak dapat dicari."}
+        cur.execute("SELECT to_regclass('public.usulan_inpres_riwayat') AS t")
+        if cur.fetchone()["t"] is None:
+            return {"kode_ruas": kode_ruas, "riwayat": [], "ringkasan": None,
+                    "catatan": "Tabel usulan_inpres_riwayat belum diimpor (scripts/import_usulan_riwayat.py)."}
+        cur.execute(
+            "SELECT tahun, id, kabupaten_kota, nama_kegiatan, jenis_penanganan, prioritas, "
+            "alokasi_usulan_pemda, seleksi_sistem, verifikasi_balai, verifikasi_kompetensi, "
+            "verifikasi_pfid, nilai_dpp, diprogramkan "
+            "FROM usulan_inpres_riwayat WHERE kode_ruas = %s AND NOT (tahun = 2026 AND id = %s) "
+            "ORDER BY tahun DESC, id",
+            (kode_ruas, usulan_id),
+        )
+        riwayat = cur.fetchall()
+    tahun_lama = sorted({r["tahun"] for r in riwayat if r["tahun"] < 2026})
+    return jsonable_encoder({
+        "kode_ruas": kode_ruas,
+        "riwayat": riwayat,
+        "ringkasan": {
+            "tahun_diusulkan_sebelumnya": tahun_lama,
+            "pernah_ber_dpp": any(r["nilai_dpp"] for r in riwayat if r["tahun"] < 2026),
+            "pernah_diterima_kompetensi": any(r["verifikasi_kompetensi"] == "TERIMA" for r in riwayat if r["tahun"] < 2026),
+        },
+        "catatan": "Riwayat berdasarkan kode ruas yang sama; satu ruas dapat memiliki beberapa usulan per tahun "
+                   "(mis. per segmen/penanganan). Nilai DPP kosong belum tentu berarti tidak didanai.",
+    })
+
+
 @app.get("/api/usulan-inpres/{usulan_id}/geometry")
 def usulan_inpres_geometry(usulan_id: int):
     return _fetch_usulan_geometry(usulan_id)

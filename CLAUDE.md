@@ -822,6 +822,19 @@ scripts/tables/layers out to staging.
   ANGKUTAN PERINTIS) + lokus `bappenas_lokus_a`; **Wilayah Metropolitan tidak
   ada delineasinya** (perlu daftar dari pemilik kerangka). Jarak antarsimpul
   = haversine garis lurus, bukan jarak tempuh.
+- **Riwayat usulan Inpres 2023-2026** (24 Sep 2026, ekspor SITIA di `docs/
+  24092026/Jalan/`, kajian `docs/kajian_usulan_inpres_jalan_2023_2026.md`):
+  tabel **`usulan_inpres_riwayat`** (kunci `tahun, id`, kolom slim untuk riwayat
+  ruas & tren) diisi `scripts/import_usulan_riwayat.py` — **sengaja terpisah
+  dari `usulan_inpres`**, karena ~30 query di app.py + puluhan skrip menganggap
+  seluruh baris `usulan_inpres` = tarikan 2026 dan tak satu pun memfilter
+  `tahun_usulan`; jangan memuat 2023-2025 ke tabel itu tanpa memfilter semuanya
+  dulu. `GET /api/usulan-inpres/{id}/riwayat-ruas` (kunci `kode_ruas`) + blok
+  "Riwayat Pengusulan Ruas" di panel detail. Reimpor tarikan 2026 tetap lewat
+  `import_usulan_inpres.py` (script ini tidak memuat `.env` sendiri: jalankan
+  dengan `PG_*` di environment). Temuan Parameter E: flag `Penuntasan IJD
+  Sebelumnya` (154) dan `lanjutan_ijd_2025` (155) hanya beririsan 84 usulan
+  — belum dikonfirmasi sumber mana yang benar.
 - `scripts/lhr_spatial_join.py` — ad-hoc (not part of the rerun-safe
   pipeline) spatial join of each LHR ruas against BATAS KECAMATAN polygons,
   writing provinsi/kabupaten/kecamatan directly into the source LHR xlsx.

@@ -1459,3 +1459,10 @@ html::-webkit-scrollbar, body::-webkit-scrollbar, .sidebar::-webkit-scrollbar, .
   font-size: 13.5px; font-weight: 600; color: var(--text);
   display: flex; align-items: center; gap: 8px; margin-bottom: 4px;
 }
+
+/* Riwayat pengusulan ruas (panel detail usulan, 24 Sep 2026) */
+.usulan-riwayat-scroll { overflow-x: auto; margin-top: 6px; }
+.usulan-riwayat-table { width: 100%; border-collapse: collapse; font-size: 11.5px; }
+.usulan-riwayat-table th { text-align: left; color: var(--text-dim); font-weight: 600; padding: 4px 6px; white-space: nowrap; }
+.usulan-riwayat-table td { padding: 5px 6px; border-top: 1px solid var(--border); vertical-align: top; }
+.usulan-riwayat-table td.num { text-align: right; white-space: nowrap; }

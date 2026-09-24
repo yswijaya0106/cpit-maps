@@ -443,6 +443,44 @@
       </div>
     </div>
 
+    <div class="datatable-overlay" id="rsPreviewOverlay" hidden>
+      <div class="datatable-modal">
+        <div class="datatable-head">
+          <div class="datatable-head-title">
+            <h3><i class="bi bi-cone-striped"></i> <span id="rsPreviewTitle">Profil Road Safety per Kab/Kota</span></h3>
+            <span class="datatable-meta" id="rsPreviewMeta"></span>
+          </div>
+          <div class="datatable-head-actions">
+            <input type="search" id="rsPreviewSearch" class="datatable-search" placeholder="Cari kab/kota..." autocomplete="off" />
+            <button type="button" class="btn btn-primary btn-sm" id="rsPreviewExport">
+              <i class="bi bi-file-earmark-excel"></i> Export Excel
+            </button>
+            <button type="button" class="icon-btn" id="rsPreviewClose" aria-label="Tutup"><i
+                class="bi bi-x-lg"></i></button>
+          </div>
+        </div>
+        <div class="datatable-scroll" id="rsPreviewScroll"></div>
+        <div class="datatable-foot">
+          <div class="datatable-pagesize">
+            Baris per halaman:
+            <select id="rsPreviewPageSize">
+              <option value="25">25</option>
+              <option value="50" selected>50</option>
+              <option value="100">100</option>
+              <option value="200">200</option>
+            </select>
+          </div>
+          <div class="datatable-pager">
+            <button type="button" class="btn btn-ghost btn-sm" id="rsPreviewPrev"><i class="bi bi-chevron-left"></i>
+              Sebelumnya</button>
+            <span id="rsPreviewPageInfo"></span>
+            <button type="button" class="btn btn-ghost btn-sm" id="rsPreviewNext">Berikutnya <i
+                class="bi bi-chevron-right"></i></button>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <div class="datatable-overlay" id="laporanPrioritasOverlay" hidden>
       <div class="datatable-modal">
         <div class="datatable-head">
@@ -666,6 +704,9 @@
                 NPR</button>
               <button id="btnUsulanModaExport" class="btn btn-ghost btn-sm" hidden><i class="bi bi-download"></i>
                 Export XLSX</button>
+              <button id="btnUsulanRoadSafety" class="btn btn-ghost btn-sm" hidden
+                title="Profil Road Safety per kab/kota (tanpa data kecelakaan/fatalitas) — preview & export xlsx">
+                <i class="bi bi-cone-striped"></i> Preview Road Safety</button>
               <button id="btnUsulanModaDashboard" class="btn btn-ghost btn-sm" hidden><i class="bi bi-speedometer2"></i>
                 Dashboard</button>
               <button id="btnUrgensiPelabuhan" class="btn btn-ghost btn-sm" hidden

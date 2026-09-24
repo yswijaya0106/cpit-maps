@@ -49,6 +49,7 @@ from db import db_cursor  # noqa: E402
 from map_layer_labels import map_layer_label as _map_layer_label  # noqa: E402
 import auth  # noqa: E402
 import chat_providers  # noqa: E402
+import road_safety  # noqa: E402
 # _llm_plain/_plain_* (penilaian Bappenas AI) masih tinggal di app.py dan
 # butuh konstanta model/URL yang ikut pindah ke chat_providers saat refactor
 # Fase 2 — tanpa import ini semua fitur AI Bappenas NameError.
@@ -96,7 +97,16 @@ async def _warm_ijd_bulk_cache_nasional():
         except Exception as e:
             print(f"  [warm-cache] gagal pra-hitung skor IJD nasional: {e}")
 
+    def _warm_road_safety():
+        # Profil Road Safety (moda Darat): spatial join titik->kecamatan ~20 detik
+        # pada panggilan pertama, lalu di-cache 10 menit di road_safety.py.
+        try:
+            road_safety.get_sheets()
+        except Exception as e:
+            print(f"  [warm-cache] gagal pra-hitung profil road safety: {e}")
+
     loop.run_in_executor(None, _warm)
+    loop.run_in_executor(None, _warm_road_safety)
 
 
 # APP_USERNAME/APP_PASSWORD (.env) TIDAK LAGI dipakai sbg kredensial aktif --
@@ -3634,6 +3644,36 @@ def _ijd_score_dashboard(provinsi: str = "", tahun: int = 2026) -> dict:
 @app.get("/api/usulan-inpres/ijd-score/dashboard")
 def usulan_inpres_ijd_score_dashboard(provinsi: str = "", tahun: int = 2026):
     return jsonable_encoder(_ijd_score_dashboard(provinsi, tahun))
+
+
+# Profil Road Safety per kab/kota (moda Darat, 24 Sep 2026) -- preview + export
+# xlsx, kerangka docs/24092026/Kerangka Berpikir - Road Safety.pptx. Sengaja
+# TANPA data kecelakaan/fatalitas (hanya ada level POLDA); logika di
+# road_safety.py, kajian di docs/kajian_road_safety_ketersediaan_data.md.
+# Kontrak respons /preview sama dgn /npr/preview (GET /api/data/{table}-compatible).
+@app.get("/api/road-safety/kabupaten/preview")
+def road_safety_kabupaten_preview(provinsi: str = "", q: str = "", limit: int = 50, offset: int = 0):
+    limit = max(1, min(limit, 200))
+    offset = max(0, offset)
+    df = road_safety.filter_sheets(road_safety.get_sheets(), provinsi, q)["Profil Kab-Kota"]
+    page = df.iloc[offset:offset + limit]
+    return jsonable_encoder({
+        "table": "road_safety_kabupaten",
+        "label": f"Profil Road Safety per Kab/Kota — {provinsi or 'Nasional'} (tanpa data kecelakaan)",
+        "columns": list(df.columns), "rows": road_safety.to_json_rows(page),
+        "total": len(df), "limit": limit, "offset": offset,
+    })
+
+
+@app.get("/api/road-safety/kabupaten/export/xlsx")
+def road_safety_kabupaten_export(provinsi: str = "", q: str = ""):
+    scope = re.sub(r"[^\w]+", "_", provinsi) if provinsi else "Nasional"
+    fname = f"road_safety_kabupaten_{scope}_{datetime.now():%Y%m%d%H%M%S}.xlsx"
+    return StreamingResponse(
+        road_safety.export_bytes(provinsi, q),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f"attachment; filename={fname}"},
+    )
 
 
 # Dashboard ringkasan nasional utk tabel referensi Darat/Laut/Udara

@@ -200,6 +200,12 @@ html, body {
   display: flex; align-items: center; flex-wrap: wrap; justify-content: flex-end;
   gap: 8px; flex: 2 1 auto; min-width: 0; margin-left: auto;
 }
+.datatable-search {
+  width: clamp(130px, 20vw, 200px); padding: 6px 10px; font-size: 12.5px; font-family: inherit;
+  background: rgba(255,255,255,.05); border: 1px solid var(--border); border-radius: 8px;
+  color: var(--text); outline: none;
+}
+.datatable-search:focus { border-color: var(--primary, #4f7cff); }
 .datatable-filters { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
 .datatable-filters[hidden] { display: none; }
 .datatable-filters .maplayer-combo { width: clamp(120px, 18vw, 170px); flex: 0 1 auto; }

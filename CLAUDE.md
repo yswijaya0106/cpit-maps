@@ -797,6 +797,17 @@ scripts/tables/layers out to staging.
   `basarnas_puslat_fasilitas` (BASARNAS SAR equipment/personnel/ops/
   training); `psc119_layanan` (emergency-service survey, PII stripped at
   import).
+- **Profil Road Safety per kab/kota** (24 Sep 2026, kerangka `docs/24092026/
+  Kerangka Berpikir - Road Safety.pptx`, kajian `docs/kajian_road_safety_
+  ketersediaan_data.md`): tombol "Preview Road Safety" (hanya moda Darat) di
+  panel Jelajahi Usulan Inpres → modal preview + export xlsx, endpoint
+  `GET /api/road-safety/kabupaten/{preview,export/xlsx}` (`provinsi`, `q`).
+  Logika di [road_safety.py](road_safety.py) (juga dipakai
+  `scripts/export_road_safety_kabupaten.py`), hasil di-cache 10 menit
+  in-process dan di-warm saat startup (spatial join titik→kecamatan ~20s).
+  **Sengaja TANPA data kecelakaan/fatalitas** (`anev_laka_lantas_*` hanya
+  level POLDA, tidak bisa diturunkan ke kab/kota); sel kosong = data tidak
+  tersedia, bukan nol; tidak ada skor komposit (kerangka tidak menetapkan bobot).
 - `scripts/lhr_spatial_join.py` — ad-hoc (not part of the rerun-safe
   pipeline) spatial join of each LHR ruas against BATAS KECAMATAN polygons,
   writing provinsi/kabupaten/kecamatan directly into the source LHR xlsx.

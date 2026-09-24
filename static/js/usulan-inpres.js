@@ -620,6 +620,7 @@ function usulanModaChange(moda) {
   document.getElementById("btnUsulanModaExport").hidden = isIjd;
   document.getElementById("btnUsulanModaDashboard").hidden = isIjd;
   document.getElementById("btnUrgensiPelabuhan").hidden = moda !== "Laut";
+  document.getElementById("btnUsulanRoadSafety").hidden = moda !== "Darat";
   document.getElementById("usulanKabupatenField").hidden = !isIjd;
   document.getElementById("usulanSearchInput").placeholder = USULAN_MODA_SEARCH_PLACEHOLDER[moda] || "Cari...";
 
@@ -1511,6 +1512,114 @@ function bindNprPreview() {
 }
 
 document.addEventListener("DOMContentLoaded", bindNprPreview);
+
+/* --- Preview "Profil Road Safety per Kab/Kota" (moda Darat, 24 Sep 2026) --
+   pola sama dgn nprPreview; tanpa data kecelakaan/fatalitas (lihat
+   docs/kajian_road_safety_ketersediaan_data.md). Filter provinsi ikut panel
+   Jelajahi, pencarian kab/kota di dalam modal. ------------------------- */
+
+const rsPreview = { provinsi: "", q: "", offset: 0, limit: 50, total: 0 };
+
+async function rsPreviewOpen(provinsi) {
+  rsPreview.provinsi = provinsi || "";
+  rsPreview.q = "";
+  rsPreview.offset = 0;
+  document.getElementById("rsPreviewSearch").value = "";
+  document.getElementById("rsPreviewOverlay").hidden = false;
+  await rsPreviewFetchPage();
+}
+
+function rsPreviewParams() {
+  const params = new URLSearchParams();
+  if (rsPreview.provinsi) params.set("provinsi", rsPreview.provinsi);
+  if (rsPreview.q) params.set("q", rsPreview.q);
+  return params;
+}
+
+async function rsPreviewFetchPage() {
+  const scroll = document.getElementById("rsPreviewScroll");
+  scroll.innerHTML = '<div class="datatable-loading"><i class="bi bi-hourglass-split"></i> Menyusun profil...</div>';
+  try {
+    const params = rsPreviewParams();
+    params.set("limit", rsPreview.limit);
+    params.set("offset", rsPreview.offset);
+    const res = await fetch(`/api/road-safety/kabupaten/preview?${params}`);
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || "Gagal memuat preview");
+    rsPreview.total = data.total;
+    rsPreviewRender(data);
+  } catch (err) {
+    scroll.innerHTML = `<div class="datatable-loading">${escapeHtml(err.message)}</div>`;
+  }
+}
+
+function rsPreviewRender(data) {
+  document.getElementById("rsPreviewTitle").textContent = data.label;
+  document.getElementById("rsPreviewMeta").textContent = `${data.total.toLocaleString("id-ID")} kab/kota`;
+
+  const head = data.columns.map((c) => `<th>${escapeHtml(c.trim())}</th>`).join("");
+  // Kode/tahun: angka identitas, bukan kuantitas -- tanpa pemisah ribuan.
+  const noSeparatorCols = new Set(data.columns.map((c, i) => (/^Kode|^Tahun/.test(c) ? i : -1)).filter((i) => i >= 0));
+  const cell = (v, i) => {
+    if (v === null || v === undefined || v === "") return '<td class="null">—</td>';
+    if (typeof v === "number") return `<td class="num">${noSeparatorCols.has(i) ? v : v.toLocaleString("id-ID")}</td>`;
+    return `<td>${escapeHtml(String(v))}</td>`;
+  };
+  const body = data.rows.map((r) => `<tr>${r.map(cell).join("")}</tr>`).join("");
+  document.getElementById("rsPreviewScroll").innerHTML = data.rows.length
+    ? `<table class="datatable"><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>`
+    : '<div class="datatable-loading">Tidak ada kab/kota yang cocok.</div>';
+
+  const page = Math.floor(data.offset / data.limit) + 1;
+  const pages = Math.max(1, Math.ceil(data.total / data.limit));
+  document.getElementById("rsPreviewPageInfo").textContent = `Halaman ${page} dari ${pages.toLocaleString("id-ID")}`;
+  document.getElementById("rsPreviewPrev").disabled = data.offset <= 0;
+  document.getElementById("rsPreviewNext").disabled = data.offset + data.limit >= data.total;
+}
+
+function bindRsPreview() {
+  const overlay = document.getElementById("rsPreviewOverlay");
+  document.getElementById("btnUsulanRoadSafety").addEventListener("click", () => {
+    rsPreviewOpen(state.usulanBrowse.provinsi || "");
+  });
+  document.getElementById("rsPreviewClose").addEventListener("click", () => (overlay.hidden = true));
+  overlay.addEventListener("click", (e) => {
+    if (e.target === overlay) overlay.hidden = true;
+  });
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && !overlay.hidden) overlay.hidden = true;
+  });
+
+  document.getElementById("rsPreviewPrev").addEventListener("click", () => {
+    rsPreview.offset = Math.max(0, rsPreview.offset - rsPreview.limit);
+    rsPreviewFetchPage();
+  });
+  document.getElementById("rsPreviewNext").addEventListener("click", () => {
+    if (rsPreview.offset + rsPreview.limit < rsPreview.total) {
+      rsPreview.offset += rsPreview.limit;
+      rsPreviewFetchPage();
+    }
+  });
+  document.getElementById("rsPreviewPageSize").addEventListener("change", (e) => {
+    rsPreview.limit = parseInt(e.target.value, 10);
+    rsPreview.offset = 0;
+    rsPreviewFetchPage();
+  });
+  let searchTimer;
+  document.getElementById("rsPreviewSearch").addEventListener("input", (e) => {
+    clearTimeout(searchTimer);
+    searchTimer = setTimeout(() => {
+      rsPreview.q = e.target.value.trim();
+      rsPreview.offset = 0;
+      rsPreviewFetchPage();
+    }, 350);
+  });
+  document.getElementById("rsPreviewExport").addEventListener("click", () => {
+    window.location.href = `/api/road-safety/kabupaten/export/xlsx?${rsPreviewParams()}`;
+  });
+}
+
+document.addEventListener("DOMContentLoaded", bindRsPreview);
 
 /* --- Dashboard Skor IJD Prioritisasi Teknokratik (A-E) -- reuse
    laporanKpiTile/laporanHBar/laporanDonut (didefinisikan di bawah, tapi

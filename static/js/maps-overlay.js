@@ -161,6 +161,10 @@ const MAP_LAYER_CATEGORIES = [
   // Pengumpan, alur pelayaran sungai/danau, dst).
   { id: "rtrw", label: "RTRW (Rencana Tata Ruang)", icon: "bi-map",
     match: (p) => p === "RTRW" },
+  // Kapasitas Lintas KA per petak jalan (scripts/import_kaplin_ka.py): bucket
+  // flat per pulau (kabupaten = Sumatera/Jawa), garis berwarna menurut utilisasi.
+  { id: "kaplin", label: "Kapasitas Lintas KA (KAPLIN)", icon: "bi-train-front",
+    match: (p) => p === "KAPASITAS LINTAS KA" },
   // Arus perdagangan domestik antar provinsi (IRIO, scripts/import_arus_irio_provinsi.py):
   // bucket flat nasional, ketebalan garis = rupiah / ton, ada filter di legend.
   { id: "arus-perdagangan", label: "Arus Perdagangan Antar Provinsi", icon: "bi-arrow-left-right",
@@ -552,6 +556,7 @@ async function showMapLayer(provinsi, kabupaten, layer) {
     state.mapLayers.active[key] = data;
     state.mapLayers.meta[key] = { provinsi, kabupaten, layer };
     applyLayerStyle(key);
+    if (layer === "KAPLIN STASIUN") bindKaplinLabelZoom();
     if (provinsi === "BATAS KECAMATAN") updateKecamatanLintasan();
     updateMapLegend();
   } catch (err) {
@@ -649,6 +654,16 @@ const ARUS_PULAU_COLORS = {
   "Sumatera": "#E69F00", "Jawa": "#0072B2", "Bali & Nusa Tenggara": "#CC79A7",
   "Kalimantan": "#009E73", "Sulawesi": "#D55E00", "Maluku": "#56B4E9", "Papua": "#8E44AD",
 };
+// Legenda KAPLIN (import_kaplin_ka.py) -- nilai warna sama persis dgn skrip.
+const KAPLIN_UTILISASI_LEGEND = [
+  ["#2e9e5b", "Utilisasi rendah (< 60%)"], ["#e0a800", "Utilisasi sedang (60–85%)"],
+  ["#d64545", "Utilisasi tinggi (≥ 85%)"], ["#8a94a6", "Data kapasitas tidak tersedia"],
+];
+const KAPLIN_KORIDOR_LEGEND = [
+  ["#0072B2", "Jakarta – Cirebon"], ["#009E73", "Cirebon – Semarang"], ["#E69F00", "Cirebon – Yogyakarta"],
+  ["#D55E00", "Semarang – Surabaya"], ["#CC79A7", "Bandung – Kroya"],
+];
+const KAPLIN_LABEL_MIN_ZOOM = 9;
 const arusFilter = { pulau: "", provinsi: "", arah: "keduanya", antarPulau: false };
 
 function arusFeatureVisible(f) {
@@ -685,6 +700,20 @@ function applyLayerStyle(key) {
       };
     }
     const type = feature.getGeometry().getType();
+    if ((type === "Point" || type === "MultiPoint") && feature.getProperty("_label")) {
+      // titik dgn label (stasiun KAPLIN): nama tampil di atas titik mulai zoom tertentu
+      const zoom = state.map ? state.map.getZoom() : 0;
+      return {
+        icon: {
+          path: google.maps.SymbolPath.CIRCLE, scale: 4.5, fillColor: "#ffffff", fillOpacity: opacity,
+          strokeColor: "#1f2937", strokeWeight: 1.6, labelOrigin: new google.maps.Point(0, -2.4),
+        },
+        label: zoom >= KAPLIN_LABEL_MIN_ZOOM
+          ? { text: String(feature.getProperty("_label")), fontSize: "11px", fontWeight: "600", color: "#111827" }
+          : null,
+        zIndex: 50,
+      };
+    }
     if (type === "Point" || type === "MultiPoint") {
       const pointColor = mapLayerRawName(key) === STASIUN_LAYER_NAME
         ? stasiunStatusColor(feature.getProperty(STASIUN_STATUS_FIELD))
@@ -706,6 +735,10 @@ function applyLayerStyle(key) {
     // Layer "Arus Perdagangan Antar Provinsi" (import_arus_irio_provinsi.py):
     // ketebalan garis sudah dihitung server-side (skala log rupiah/ton) di
     // properti "Ketebalan garis (px)"; garis tipis digambar di atas yang tebal.
+    const warnaGaris = feature.getProperty("_warna");
+    if (warnaGaris) {
+      return { strokeColor: warnaGaris, strokeWeight: Number(feature.getProperty("_lebar")) || 3, strokeOpacity: 0.92 * opacity };
+    }
     const lebarGaris = Number(feature.getProperty("Ketebalan garis (px)"));
     if (lebarGaris > 0) {
       return {
@@ -715,6 +748,17 @@ function applyLayerStyle(key) {
       };
     }
     return { strokeColor: color, strokeWeight: 1.6, strokeOpacity: 0.9 * opacity };
+  });
+}
+
+// label stasiun KAPLIN bergantung zoom -> gambar ulang saat zoom berubah
+function bindKaplinLabelZoom() {
+  if (state._kaplinZoomBound || !state.map) return;
+  state._kaplinZoomBound = true;
+  state.map.addListener("zoom_changed", () => {
+    Object.keys(state.mapLayers.active).forEach((k) => {
+      if (mapLayerRawName(k) === "KAPLIN STASIUN") applyLayerStyle(k);
+    });
   });
 }
 

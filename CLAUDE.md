@@ -1056,6 +1056,20 @@ upsert, so they're safe to re-run:
   nyasar ke "Peta Koridor"); legenda skala ketebalan + filter Pulau/Provinsi/
   Arah/"Hanya antar pulau" (`renderArusLegend/Controls` di map-tools.js,
   `arusFilter` di maps-overlay.js); atribut berawalan `_` disembunyikan dari popup.
+- `import_kaplin_ka.py` — Kapasitas Lintas (KAPLIN) KA per petak jalan dari
+  `docs/24092026/Data Kapasitas KA.xlsx` (sheet KAPLIN SUMATERA / KAPLIN JAWA;
+  sheet "koridor utama" Jawa dipakai utk kolom koridor utama + layer
+  `KAPLIN KORIDOR UTAMA`). Sheet tanpa koordinat: titik stasiun dari layer
+  "Stasiun Kereta Api" (`KODE PRASARANA`; kode ganda dipilih yg terdekat ke rel;
+  `ALIAS` utk kode yg tak ada; koordinat rusak spt IB CAMBAI (0,0) diabaikan),
+  garis = Dijkstra menyusuri layer `Rel Sumatera`/`Rel Jawa` (fallback garis
+  lurus bila rasio panjang vs JARAK sheet di luar 0,5-2,0), stasiun tanpa
+  koordinat diinterpolasi di rel antar tetangga (ditandai perkiraan); sisa
+  petak yg ujungnya tak ketemu tidak digambar (Sumatera 1, Jawa ~13, tercatat
+  di KAMUS_KOLOM.txt). Bucket flat `KAPASITAS LINTAS KA`, kabupaten=pulau, layer
+  PETAK JALAN / KORIDOR UTAMA / STASIUN. Frontend: properti `_warna`/`_lebar`
+  (garis) dan `_label` (titik, label tampil mulai zoom 9, `bindKaplinLabelZoom`)
+  bersifat generik di `applyLayerStyle`; legenda di map-tools.js.
 - `import_kemantapan_ijd2026.py` — road-soundness per kab/kota
   (`kemantapan_ijd_2026`), the source of IJD pagu component G8.A2; also
   writes the official "Tidak mantap (%)" figure into

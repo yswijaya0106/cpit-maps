@@ -658,6 +658,18 @@ function updateMapLegend() {
     // OPERASI, lihat STASIUN_STATUS_COLORS di maps-overlay.js) -- satu swatch
     // polos di atas tidak cukup mewakilinya, jadi tambahkan sub-daftar
     // kategori di bawahnya, meniru legenda sumber Google My Maps-nya.
+    const kaplinLegend = raw === "KAPLIN PETAK JALAN" ? KAPLIN_UTILISASI_LEGEND
+      : raw === "KAPLIN KORIDOR UTAMA" ? KAPLIN_KORIDOR_LEGEND : null;
+    if (kaplinLegend) {
+      const sub = document.createElement("div");
+      sub.className = "map-legend-subitems";
+      sub.innerHTML = kaplinLegend.map(([c, t]) => `
+        <div class="map-legend-subitem">
+          <span style="display:inline-block;width:28px;height:4px;background:${c};border-radius:2px"></span>
+          <span class="map-legend-subitem-label">${escapeHtml(t)}</span>
+        </div>`).join("");
+      listEl.appendChild(sub);
+    }
     if (raw.startsWith(ARUS_LAYER_PREFIX)) {
       listEl.appendChild(renderArusLegend(key, raw));
       if (key === keys.find((k) => mapLayerRawName(k).startsWith(ARUS_LAYER_PREFIX))) {

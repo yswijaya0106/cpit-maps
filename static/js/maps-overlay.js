@@ -663,6 +663,16 @@ function applyLayerStyle(key) {
     if (type === "Polygon" || type === "MultiPolygon") {
       return { fillColor: color, fillOpacity: 0.18 * opacity, strokeColor: color, strokeWeight: 1.2, strokeOpacity: opacity };
     }
+    // Layer "Arus Perdagangan Antar Provinsi" (import_arus_irio_provinsi.py):
+    // ketebalan garis sudah dihitung server-side (skala log rupiah/ton) di
+    // properti "Ketebalan garis (px)"; garis tipis digambar di atas yang tebal.
+    const lebarGaris = Number(feature.getProperty("Ketebalan garis (px)"));
+    if (lebarGaris > 0) {
+      return {
+        strokeColor: color, strokeWeight: lebarGaris, strokeOpacity: 0.65 * opacity,
+        zIndex: Math.round(100 - lebarGaris * 5),
+      };
+    }
     return { strokeColor: color, strokeWeight: 1.6, strokeOpacity: 0.9 * opacity };
   });
 }

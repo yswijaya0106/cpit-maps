@@ -1025,6 +1025,19 @@ upsert, so they're safe to re-run:
   geometri koridor yg disederhanakan ~50 m (~65 dtk); DELETE + reinsert,
   rerun setelah PETA KORIDOR/simpul diimpor ulang. Pelabuhan penyeberangan
   sengaja tidak dihitung.
+- `import_arus_irio_provinsi.py` (+ parser `irio_arus_parse.py`) — arus
+  perdagangan domestik antar provinsi dari xlsx IRIO 34 provinsi x 52 industri
+  (`docs/24092026/tabel-inter-regional-...`, 34 sheet "Penjualan <Provinsi>":
+  blok juta Rp, blok ton, persentase moda). Menulis SHP polyline
+  (`Maps/ARUS PERDAGANGAN ANTAR PROVINSI/`, ketebalan `LEBAR_PX` skala log per
+  rupiah / per ton) + CSV detail industri, dan layer overlay PostGIS
+  (bucket flat `ARUS PERDAGANGAN ANTAR PROVINSI`, 2 layer x 1.122 garis lengkung
+  antar **ibu kota** provinsi, bukan centroid). Popup identify = atribut
+  lengkap; `applyLayerStyle` (maps-overlay.js) membaca properti
+  `Ketebalan garis (px)`. Persentase moda di sumber hanya terisi ~40 dari 1.156
+  pasangan -> ditampilkan bila ada, tidak diekstrapolasi. "Pembelian Aceh" =
+  hanya permintaan antara (subset Penjualan). Sheet1/KOnversi = HS ekspor-impor
+  luar negeri, tidak dipakai utk garis. Idempotent; butuh xlsx lokal.
 - `import_kemantapan_ijd2026.py` — road-soundness per kab/kota
   (`kemantapan_ijd_2026`), the source of IJD pagu component G8.A2; also
   writes the official "Tidak mantap (%)" figure into

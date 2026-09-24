@@ -1056,6 +1056,16 @@ upsert, so they're safe to re-run:
   nyasar ke "Peta Koridor"); legenda skala ketebalan + filter Pulau/Provinsi/
   Arah/"Hanya antar pulau" (`renderArusLegend/Controls` di map-tools.js,
   `arusFilter` di maps-overlay.js); atribut berawalan `_` disembunyikan dari popup.
+- `import_iri_ruas_nasional.py` — rekap kondisi/kemantapan jalan nasional hasil
+  survei IRI (`docs/250820206/Data_rekap_iri_centerline_km_mean_sk_Semua
+  Provinsi_2026_1_05-08-2026.xlsx`, status Juli 2026) → tabel
+  `iri_ruas_nasional` (kunci `linkid`, 3.306 ruas; paved/unpaved/total x
+  Baik/Sedang/RR/RB/Mantap/TM km+%, rata-rata IRI; menu Data) **dan** atribut
+  ringkas (nilai TOTAL: "IRI rata-rata", "Kondisi Baik (km)/(%)", dst.) digabung ke
+  `map_layers.attrs` semua fitur ber-`LINKID` di bucket `JALAN NASIONAL` ("Jalan
+  Nasional" + 6 layer `LN_JALAN_NASIONAL_PULAU_*`, 100% LINKID cocok) via
+  `attrs || jsonb`. **Restart server setelah rerun** (`_map_layer_geojson_cache`).
+  File kedua `Data_rekap_iri_provinsi_...xlsx` (ringkasan per provinsi) belum diimpor.
 - `import_kaplin_ka.py` — Kapasitas Lintas (KAPLIN) KA per petak jalan dari
   `docs/24092026/Data Kapasitas KA.xlsx` (sheet KAPLIN SUMATERA / KAPLIN JAWA;
   sheet "koridor utama" Jawa dipakai utk kolom koridor utama + layer
@@ -1089,6 +1099,15 @@ upsert, so they're safe to re-run:
   Poligon diwarnai per klaster via properti `_warna` (generik di
   `applyLayerStyle`), legenda `KLASTER_LEGEND`. DELETE + reinsert; restart
   server setelah rerun (cache `_map_layer_geojson_cache`).
+- `import_rtrw_papua_selatan_jaringan_to_postgis.py` — Jaringan Transportasi
+  RTRW Papua Selatan (`docs/250820206/SHP Jaringan Jalan/Jaringan Jalan.shp`,
+  115 garis). Jalan → layer `JARINGAN JALAN RTRW` di bucket provinsi/kabupaten
+  ASLI (kategori "Jalan"), dipotong per poligon BATAS KABUPATEN (sumber tak
+  punya kolom kabupaten; 1 ruas masuk Papua Pegunungan/Yahukimo). Alur
+  pelayaran → bucket `RTRW`/`Papua Selatan`. STSJRN 1=Rencana/
+  2=Eksisting (konvensi KUGI); warna via `_warna`/`_lebar`, legenda
+  `RTRW_PAPSEL_LEGEND`. `Jalan Wanam - Muting.shp` sengaja dilewati (duplikat
+  ruas yg sama, lebih kasar).
 - `import_kemantapan_ijd2026.py` — road-soundness per kab/kota
   (`kemantapan_ijd_2026`), the source of IJD pagu component G8.A2; also
   writes the official "Tidak mantap (%)" figure into

@@ -874,6 +874,7 @@ DATA_TABLES = {
     "jpl_prioritas_djka": "Prioritas Keselamatan Perlintasan Sebidang KA (DJKA)",
     "penanganan_ss_ka_tahap": "Rencana Penanganan Perlintasan Sebidang KA Bertahap (I/II/III)",
     "koridor_simpul_terdekat": "Peta Koridor — Jarak Terdekat ke Simpul Bandara & Pelabuhan",
+    "iri_ruas_nasional": "IRI & Kemantapan Jalan Nasional per Ruas (Survei Juli 2026)",
 }
 # kolom yang tidak ditampilkan (payload besar)
 DATA_TABLE_SKIP_COLS = {"geom_geojson", "detail_fasilitas"}
@@ -7575,12 +7576,18 @@ def provinsi_laka_lantas(provinsi: str):
 @app.get("/api/maps/provinces")
 def maps_provinces():
     with db_cursor() as cur:
+        # kabupaten_count_tanpa_koridor: jumlah kabupaten yg punya layer SELAIN
+        # "PETA KORIDOR" -- dipakai kategori "Jalan" di maps-overlay.js (yang
+        # men-exclude PETA KORIDOR) supaya provinsi yg isinya cuma PETA KORIDOR
+        # tidak tampil sbg node "N kab/kota" yang ternyata "Belum ada data".
         cur.execute(
-            "SELECT provinsi, COUNT(DISTINCT kabupaten) AS kabupaten_count "
+            "SELECT provinsi, COUNT(DISTINCT kabupaten) AS kabupaten_count, "
+            "COUNT(DISTINCT kabupaten) FILTER (WHERE layer <> 'PETA KORIDOR') AS kabupaten_count_tanpa_koridor "
             "FROM map_layer_meta GROUP BY provinsi ORDER BY provinsi"
         )
         rows = cur.fetchall()
-    return [{"provinsi": r["provinsi"], "kabupaten_count": r["kabupaten_count"]} for r in rows]
+    return [{"provinsi": r["provinsi"], "kabupaten_count": r["kabupaten_count"],
+             "kabupaten_count_tanpa_koridor": r["kabupaten_count_tanpa_koridor"]} for r in rows]
 
 
 @app.get("/api/maps/kabupaten")

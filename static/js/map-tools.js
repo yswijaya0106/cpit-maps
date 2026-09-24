@@ -722,11 +722,21 @@ function renderArusLegend(key, raw) {
       <span style="display:inline-block;width:34px;height:${Math.max(1, w)}px;background:${color};opacity:.7;border-radius:2px"></span>
       <span class="map-legend-subitem-label">${t === 0 ? "≤ " : ""}${escapeHtml(fmtNilai(v))}</span>
     </div>`;
-  }).join("") + `<div class="map-legend-subitem-label" style="font-weight:600;margin:6px 0 2px">Warna garis = pulau asal</div>`
-    + Object.entries(ARUS_PULAU_COLORS).map(([nama, c]) => `<div class="map-legend-subitem">
+  }).join("")
+    + `<div class="map-legend-subitem-label" style="font-weight:600;margin:6px 0 2px">Transparansi garis = kelas nilai</div>`
+    + [1, 2, 3, 4, 5].map((k) => {
+      const a = hi > lo ? lo * Math.pow(hi / lo, (k - 1) / 5) : lo, b = hi > lo ? lo * Math.pow(hi / lo, k / 5) : hi;
+      return `<div class="map-legend-subitem">
+        <span style="display:inline-block;width:34px;height:5px;background:#374151;opacity:${0.2 * k};border-radius:2px"></span>
+        <span class="map-legend-subitem-label">Kelas ${k} (${k * 20}%): ${k === 1 ? "≤ " : ""}${escapeHtml(fmtNilai(b))}</span>
+      </div>`;
+    }).join("")
+    + `<div class="map-legend-subitem-label" style="font-weight:600;margin:6px 0 2px">Warna garis = provinsi asal</div>
+      <div style="max-height:150px;overflow:auto;columns:2;column-gap:8px">`
+    + Object.entries(ARUS_PROVINSI_COLORS).map(([nama, c]) => `<div class="map-legend-subitem" style="break-inside:avoid">
       <span class="maplayer-swatch" style="background:${c}"></span>
       <span class="map-legend-subitem-label">${escapeHtml(nama)}</span>
-    </div>`).join("");
+    </div>`).join("") + "</div>";
   return wrap;
 }
 

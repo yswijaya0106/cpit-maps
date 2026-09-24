@@ -648,22 +648,30 @@ function updateKecamatanLintasan() {
    tujuan, atau keduanya menurut `arah`; "antarPulau" menyaring hanya arus
    yang menyeberang pulau (kandidat angkutan laut). */
 const ARUS_LAYER_PREFIX = "ARUS PERDAGANGAN";
-// Warna garis = gugus pulau ASAL arus (palet kategorikal ramah buta warna);
-// ketebalan tetap menurut rupiah/ton. Dipakai juga oleh legenda (map-tools.js).
-const ARUS_PULAU_COLORS = {
-  "Sumatera": "#E69F00", "Jawa": "#0072B2", "Bali & Nusa Tenggara": "#CC79A7",
-  "Kalimantan": "#009E73", "Sulawesi": "#D55E00", "Maluku": "#56B4E9", "Papua": "#8E44AD",
-};
-// Legenda KAPLIN (import_kaplin_ka.py) -- nilai warna sama persis dgn skrip.
-const KAPLIN_UTILISASI_LEGEND = [
-  ["#2e9e5b", "Utilisasi rendah (< 60%)"], ["#e0a800", "Utilisasi sedang (60–85%)"],
-  ["#d64545", "Utilisasi tinggi (≥ 85%)"], ["#8a94a6", "Data kapasitas tidak tersedia"],
+// Warna garis = provinsi ASAL arus (satu warna per provinsi, sebaran hue sudut
+// emas); transparansi = kelas nilai 1-5 (20%..100%, skala log rupiah/ton yang
+// sama dgn ketebalan); ketebalan tetap menurut nilai. Dipakai juga oleh legenda.
+const ARUS_PROVINSI_URUT = [
+  "Aceh", "Sumatera Utara", "Sumatera Barat", "Riau", "Jambi", "Sumatera Selatan", "Bengkulu", "Lampung",
+  "Kep. Bangka Belitung", "Kep. Riau", "DKI Jakarta", "Jawa Barat", "Jawa Tengah", "DI Yogyakarta",
+  "Jawa Timur", "Banten", "Bali", "Nusa Tenggara Barat", "Nusa Tenggara Timur", "Kalimantan Barat",
+  "Kalimantan Tengah", "Kalimantan Selatan", "Kalimantan Timur", "Kalimantan Utara", "Sulawesi Utara",
+  "Sulawesi Tengah", "Sulawesi Selatan", "Sulawesi Tenggara", "Gorontalo", "Sulawesi Barat", "Maluku",
+  "Maluku Utara", "Papua Barat", "Papua",
 ];
-const KAPLIN_KORIDOR_LEGEND = [
-  ["#0072B2", "Jakarta – Cirebon"], ["#009E73", "Cirebon – Semarang"], ["#E69F00", "Cirebon – Yogyakarta"],
-  ["#D55E00", "Semarang – Surabaya"], ["#CC79A7", "Bandung – Kroya"],
-];
-const KAPLIN_LABEL_MIN_ZOOM = 9;
+const ARUS_PROVINSI_COLORS = Object.fromEntries(ARUS_PROVINSI_URUT.map((n, i) => {
+  const hue = (i * 137.508) % 360, light = i % 2 ? 38 : 48; // selang-seling terang agar hue berdekatan tetap beda
+  return [n, `hsl(${hue.toFixed(0)}, 72%, ${light}%)`];
+}));
+
+// kelas 1-5 dari nilai (skala log lo..hi yang dibawa tiap fitur); opacity = 0.2 x kelas
+function arusKelas(feature) {
+  const v = Number(feature.getProperty("_nilai")), lo = Number(feature.getProperty("_skala_lo")),
+    hi = Number(feature.getProperty("_skala_hi"));
+  if (!(v > 0) || !(hi > lo)) return 1;
+  const t = Math.log(Math.max(v, lo) / lo) / Math.log(hi / lo);
+  return Math.min(5, 1 + Math.floor(t * 5));
+}
 const arusFilter = { pulau: "", provinsi: "", arah: "keduanya", antarPulau: false };
 
 function arusFeatureVisible(f) {
@@ -742,8 +750,8 @@ function applyLayerStyle(key) {
     const lebarGaris = Number(feature.getProperty("Ketebalan garis (px)"));
     if (lebarGaris > 0) {
       return {
-        strokeColor: ARUS_PULAU_COLORS[feature.getProperty("Pulau Asal")] || color,
-        strokeWeight: lebarGaris, strokeOpacity: 0.7 * opacity,
+        strokeColor: ARUS_PROVINSI_COLORS[feature.getProperty("Provinsi Asal")] || color,
+        strokeWeight: lebarGaris, strokeOpacity: 0.2 * arusKelas(feature) * opacity,
         zIndex: Math.round(100 - lebarGaris * 5),
       };
     }

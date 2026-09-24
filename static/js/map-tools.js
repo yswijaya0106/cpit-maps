@@ -112,6 +112,7 @@ function showIdentifyInfo(layerName, feature, latLng) {
   const rows = [];
   feature.forEachProperty((value, key) => {
     if (value === null || value === undefined || value === "") return;
+    if (String(key).startsWith("_")) return; // atribut teknis (legenda/filter), bukan utk ditampilkan
     rows.push(`<tr><th>${escapeHtml(key)}</th><td>${formatIdentifyValue(String(value))}</td></tr>`);
   });
   const body = rows.length
@@ -657,6 +658,12 @@ function updateMapLegend() {
     // OPERASI, lihat STASIUN_STATUS_COLORS di maps-overlay.js) -- satu swatch
     // polos di atas tidak cukup mewakilinya, jadi tambahkan sub-daftar
     // kategori di bawahnya, meniru legenda sumber Google My Maps-nya.
+    if (raw.startsWith(ARUS_LAYER_PREFIX)) {
+      listEl.appendChild(renderArusLegend(key, raw));
+      if (key === keys.find((k) => mapLayerRawName(k).startsWith(ARUS_LAYER_PREFIX))) {
+        listEl.appendChild(renderArusControls(key));
+      }
+    }
     if (raw === STASIUN_LAYER_NAME) {
       const sub = document.createElement("div");
       sub.className = "map-legend-subitems";
@@ -669,4 +676,74 @@ function updateMapLegend() {
       listEl.appendChild(sub);
     }
   });
+}
+
+
+/* ---------- Legend & filter layer Arus Perdagangan Antar Provinsi ---------- */
+
+// Skala ketebalan: 5 contoh garis dari nilai terkecil (di atas batas bawah
+// skala) sampai terbesar, dengan interpolasi log seperti di
+// scripts/import_arus_irio_provinsi.py (0.8-12 px).
+function renderArusLegend(key, raw) {
+  const data = state.mapLayers.active[key];
+  const perTon = raw.endsWith("TON");
+  let lo = Infinity, hi = 0;
+  data.forEach((f) => {
+    const v = Number(f.getProperty("_nilai")), w = Number(f.getProperty("Ketebalan garis (px)"));
+    if (!(v > 0)) return;
+    if (w > 0.81 && v < lo) lo = v;
+    if (v > hi) hi = v;
+  });
+  if (!isFinite(lo)) lo = hi;
+  const fmtNilai = (v) => {
+    if (perTon) return `${Math.round(v).toLocaleString("id-ID")} ton`;
+    return v >= 1e6 ? `Rp ${(v / 1e6).toLocaleString("id-ID", { maximumFractionDigits: 1 })} triliun`
+      : `Rp ${Math.round(v).toLocaleString("id-ID")} juta`;
+  };
+  const wrap = document.createElement("div");
+  wrap.className = "map-legend-subitems";
+  const color = mapLayerColor(raw);
+  wrap.innerHTML = [0, 0.25, 0.5, 0.75, 1].map((t) => {
+    const w = 0.8 + (12 - 0.8) * t;
+    const v = hi > lo ? lo * Math.pow(hi / lo, t) : hi;
+    return `<div class="map-legend-subitem">
+      <span style="display:inline-block;width:34px;height:${Math.max(1, w)}px;background:${color};opacity:.7;border-radius:2px"></span>
+      <span class="map-legend-subitem-label">${t === 0 ? "≤ " : ""}${escapeHtml(fmtNilai(v))}</span>
+    </div>`;
+  }).join("");
+  return wrap;
+}
+
+function renderArusControls(key) {
+  const data = state.mapLayers.active[key];
+  const pulau = new Set(), prov = new Set();
+  data.forEach((f) => {
+    [f.getProperty("Pulau Asal"), f.getProperty("Pulau Tujuan")].forEach((p) => p && pulau.add(p));
+    [f.getProperty("Provinsi Asal"), f.getProperty("Provinsi Tujuan")].forEach((p) => p && prov.add(p));
+  });
+  const opts = (set, semua, sel) => `<option value="">${semua}</option>`
+    + [...set].sort((a, b) => a.localeCompare(b, "id"))
+      .map((v) => `<option value="${escapeHtml(v)}"${v === sel ? " selected" : ""}>${escapeHtml(v)}</option>`).join("");
+  const wrap = document.createElement("div");
+  wrap.className = "map-legend-subitems arus-filter";
+  wrap.innerHTML = `
+    <div class="map-legend-subitem-label" style="font-weight:600;margin:6px 0 2px">Filter arus</div>
+    <select class="laporan-moda-select" data-f="pulau" title="Filter gugus pulau">${opts(pulau, "Nasional (semua pulau)", arusFilter.pulau)}</select>
+    <select class="laporan-moda-select" data-f="provinsi" title="Filter provinsi">${opts(prov, "Semua provinsi", arusFilter.provinsi)}</select>
+    <select class="laporan-moda-select" data-f="arah" title="Pulau/provinsi sebagai...">
+      <option value="keduanya">Asal atau tujuan</option>
+      <option value="keluar">Asal saja (keluar)</option>
+      <option value="masuk">Tujuan saja (masuk)</option>
+    </select>
+    <label class="map-legend-subitem-label" style="display:block;margin-top:4px">
+      <input type="checkbox" data-f="antarPulau" ${arusFilter.antarPulau ? "checked" : ""}/> Hanya antar pulau
+    </label>`;
+  wrap.querySelector('[data-f="arah"]').value = arusFilter.arah;
+  wrap.addEventListener("change", (e) => {
+    const f = e.target.dataset.f;
+    if (!f) return;
+    arusFilter[f] = e.target.type === "checkbox" ? e.target.checked : e.target.value;
+    applyArusFilter();
+  });
+  return wrap;
 }

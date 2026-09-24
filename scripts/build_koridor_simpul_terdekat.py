@@ -4,7 +4,7 @@
 Satu baris per (NO_KORIDOR, kabupaten) di layer 'PETA KORIDOR' (map_layers);
 geometri koridor = gabungan semua ruasnya (disederhanakan ~50 m supaya cepat;
 galat jarak << 1 km). Simpul: layer BANDARA/Bandara dan
-PELABUHAN/Pelabuhan Nasional (titik, di map_layers). Kandidat terdekat dicari
+PELABUHAN/Pelabuhan Nasional dan PELABUHAN PENYEBERANGAN/PP (titik, di map_layers). Kandidat terdekat dicari
 dengan KNN (<->) atas CTE titik (256 bandara/359 pelabuhan, tanpa indeks), lalu jaraknya dihitung geodesik
 (::geography). Hasil -> koridor_simpul_terdekat, ditampilkan di menu "Data".
 kode_kab diambil dari bappenas_koridor (via no_koridor); pulau dari
@@ -43,6 +43,10 @@ band AS MATERIALIZED (
   SELECT attrs->>'Name' AS nama, attrs->>'Kelas' AS kelas, geom, geom::geography AS geog
   FROM map_layers WHERE provinsi = 'BANDARA' AND layer = 'Bandara'
 ),
+pen AS MATERIALIZED (
+  SELECT COALESCE(attrs->>'NAMOBJ', attrs->>'LINTAS') AS nama, attrs->>'LINTAS' AS lintas, geom, geom::geography AS geog
+  FROM map_layers WHERE provinsi = 'PELABUHAN PENYEBRANGAN' AND layer = 'PP'
+),
 pel AS MATERIALIZED (
   SELECT attrs->>'Name' AS nama, attrs->>'hierarki' AS hierarki, geom, geom::geography AS geog
   FROM map_layers WHERE provinsi = 'PELABUHAN' AND layer = 'Pelabuhan Nasional'
@@ -50,12 +54,17 @@ pel AS MATERIALIZED (
 SELECT k.no_koridor, k.nama_koridor, k.provinsi, k.kabupaten, k.jumlah_ruas, k.panjang_km,
        b.nama AS bandara, b.kelas AS kelas_bandara,
        ROUND((ST_Distance(k.g::geography, b.geog) / 1000)::numeric, 2) AS jarak_bandara_km,
+       n.nama AS penyeberangan, n.lintas AS lintas_penyeberangan,
+       ROUND((ST_Distance(k.g::geography, n.geog) / 1000)::numeric, 2) AS jarak_penyeberangan_km,
        p.nama AS pelabuhan, p.hierarki AS hierarki_pelabuhan,
        ROUND((ST_Distance(k.g::geography, p.geog) / 1000)::numeric, 2) AS jarak_pelabuhan_km
 FROM kor k
 LEFT JOIN LATERAL (
   SELECT * FROM band ORDER BY band.geom <-> k.g LIMIT 1
 ) b ON TRUE
+LEFT JOIN LATERAL (
+  SELECT * FROM pen ORDER BY pen.geom <-> k.g LIMIT 1
+) n ON TRUE
 LEFT JOIN LATERAL (
   SELECT * FROM pel ORDER BY pel.geom <-> k.g LIMIT 1
 ) p ON TRUE
@@ -82,10 +91,14 @@ def main():
                 r["kabupaten"], kab_by_kor.get(r["no_koridor"]), r["jumlah_ruas"], r["panjang_km"],
                 r["bandara"], r["kelas_bandara"], r["jarak_bandara_km"],
                 r["pelabuhan"], r["hierarki_pelabuhan"], r["jarak_pelabuhan_km"],
+                r["penyeberangan"], r["lintas_penyeberangan"], r["jarak_penyeberangan_km"],
             ))
         cur.execute("DELETE FROM koridor_simpul_terdekat")
         cur.executemany(
-            "INSERT INTO koridor_simpul_terdekat VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+            "INSERT INTO koridor_simpul_terdekat (no_koridor, nama_koridor, pulau, provinsi, kode_provinsi, kabupaten_kota, kode_kab, "
+            "jumlah_ruas, panjang_km, bandara_terdekat, kelas_bandara, jarak_bandara_km, pelabuhan_terdekat, "
+            "hierarki_pelabuhan, jarak_pelabuhan_km, penyeberangan_terdekat, lintas_penyeberangan, "
+            "jarak_penyeberangan_km) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
             out,
         )
     tanpa_pulau = sum(1 for o in out if o[2] is None)

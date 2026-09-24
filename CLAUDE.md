@@ -1038,7 +1038,7 @@ upsert, so they're safe to re-run:
   `wilayah_pulau.py`, param `pulau`). Jarak geodesik garis lurus dari
   geometri koridor yg disederhanakan ~50 m (~65 dtk); DELETE + reinsert,
   rerun setelah PETA KORIDOR/simpul diimpor ulang. Pelabuhan penyeberangan
-  sengaja tidak dihitung.
+  (`PELABUHAN PENYEBRANGAN/PP`) ikut dihitung (kolom `penyeberangan_terdekat`).
 - `import_arus_irio_provinsi.py` (+ parser `irio_arus_parse.py`) — arus
   perdagangan domestik antar provinsi dari xlsx IRIO 34 provinsi x 52 industri
   (`docs/24092026/tabel-inter-regional-...`, 34 sheet "Penjualan <Provinsi>":
@@ -1051,7 +1051,11 @@ upsert, so they're safe to re-run:
   `Ketebalan garis (px)`. Persentase moda di sumber hanya terisi ~40 dari 1.156
   pasangan -> ditampilkan bila ada, tidak diekstrapolasi. "Pembelian Aceh" =
   hanya permintaan antara (subset Penjualan). Sheet1/KOnversi = HS ekspor-impor
-  luar negeri, tidak dipakai utk garis. Idempotent; butuh xlsx lokal.
+  luar negeri, tidak dipakai utk garis. Idempotent; butuh xlsx lokal. Kategori tree sendiri (`arus-perdagangan` di
+  `MAP_LAYER_CATEGORIES`, sebelum catch-all "jalan" — kalau tidak, bucket ini
+  nyasar ke "Peta Koridor"); legenda skala ketebalan + filter Pulau/Provinsi/
+  Arah/"Hanya antar pulau" (`renderArusLegend/Controls` di map-tools.js,
+  `arusFilter` di maps-overlay.js); atribut berawalan `_` disembunyikan dari popup.
 - `import_kemantapan_ijd2026.py` — road-soundness per kab/kota
   (`kemantapan_ijd_2026`), the source of IJD pagu component G8.A2; also
   writes the official "Tidak mantap (%)" figure into

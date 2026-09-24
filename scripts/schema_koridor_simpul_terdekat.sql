@@ -1,5 +1,5 @@
 -- Jarak terdekat tiap koridor (layer PETA KORIDOR, per NO_KORIDOR x kabupaten)
--- ke simpul transportasi bandara & pelabuhan laut. Diisi
+-- ke simpul transportasi bandara, pelabuhan laut & pelabuhan penyeberangan. Diisi
 -- scripts/build_koridor_simpul_terdekat.py (DELETE + reinsert, idempotent).
 -- Jarak = jarak geodesik (geography) dari titik terdekat pada jalur koridor
 -- ke titik simpul, dalam km -- garis lurus, bukan jarak tempuh jalan.
@@ -19,5 +19,12 @@ CREATE TABLE IF NOT EXISTS koridor_simpul_terdekat (
   pelabuhan_terdekat  TEXT,
   hierarki_pelabuhan  TEXT,
   jarak_pelabuhan_km  NUMERIC(10, 2),
+  penyeberangan_terdekat  TEXT,
+  lintas_penyeberangan    TEXT,
+  jarak_penyeberangan_km  NUMERIC(10, 2),
   PRIMARY KEY (no_koridor, kabupaten_kota)
 );
+-- tabel yg sudah terlanjur dibuat sebelum kolom penyeberangan ditambah
+ALTER TABLE koridor_simpul_terdekat ADD COLUMN IF NOT EXISTS penyeberangan_terdekat TEXT;
+ALTER TABLE koridor_simpul_terdekat ADD COLUMN IF NOT EXISTS lintas_penyeberangan TEXT;
+ALTER TABLE koridor_simpul_terdekat ADD COLUMN IF NOT EXISTS jarak_penyeberangan_km NUMERIC(10, 2);

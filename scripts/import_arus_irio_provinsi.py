@@ -46,6 +46,7 @@ from shapely.geometry import LineString  # noqa: E402
 
 from db import db_cursor  # noqa: E402
 from irio_arus_parse import parse  # noqa: E402
+from wilayah_pulau import PULAU_BY_KODE_PROVINSI  # noqa: E402
 
 BUCKET = "ARUS PERDAGANGAN ANTAR PROVINSI"
 OUT_DIR = ROOT / "Maps" / BUCKET
@@ -175,7 +176,12 @@ def main():
                 continue
             w = lebar(d[k], *rng[k])
             attrs = dict(base)
+            attrs["Pulau Asal"] = PULAU_BY_KODE_PROVINSI.get(ka)
+            attrs["Pulau Tujuan"] = PULAU_BY_KODE_PROVINSI.get(kt)
             attrs["Ketebalan garis (px)"] = w
+            # awalan "_" = atribut teknis utk legenda/filter frontend, tidak
+            # ditampilkan di popup identify (map-tools.js)
+            attrs["_nilai"] = round(d[k], 2)
             shp = {
                 "ASAL": na, "TUJUAN": nt, "KODE_ASAL": ka, "KODE_TUJ": kt,
                 "RP_JUTA": round(d["rp"], 2), "TON": round(d["ton"], 2),
@@ -184,6 +190,7 @@ def main():
                 "TON_MP": round(d["ton_mp"], 2), "RP_BALIK": round(d["rp_balik"], 2),
                 "TON_BALIK": round(d["ton_balik"], 2), "RANK_RP": rank_rp[(ka, kt)],
                 "RANK_TON": rank_ton[(ka, kt)], "LEBAR_PX": w,
+                "PULAU_ASAL": PULAU_BY_KODE_PROVINSI.get(ka), "PULAU_TUJ": PULAU_BY_KODE_PROVINSI.get(kt),
                 "TOP_RP": "; ".join(top_rp)[:250], "TOP_TON": "; ".join(top_ton)[:250],
                 "MODA": (moda or "")[:250], "geometry": geom,
             }
@@ -211,6 +218,7 @@ def main():
         "RP_JUTA : total transaksi (juta rupiah), RP_BARANG barang berwujud, RP_JASA jasa\n"
         "TON : total volume (ton) = rupiah x faktor ton/rupiah per industri (sheet); TON_KONT/TON_CURAH/TON_MP per jenis muatan\n"
         "RP_BALIK/TON_BALIK : arus sebaliknya (tujuan->asal); RANK_RP/RANK_TON : peringkat dari semua pasangan\n"
+        "PULAU_ASAL/PULAU_TUJ : gugus pulau (Sumatera, Jawa, Bali & Nusa Tenggara, Kalimantan, Sulawesi, Maluku, Papua)\n"
         "LEBAR_PX : ketebalan garis (skala log, 0.8-12 px) menurut rupiah (file _rupiah) atau ton (file _ton)\n"
         "TOP_RP/TOP_TON : 5 industri terbesar (dipotong 250 karakter); MODA : persentase moda bila ada di sumber (sebagian kecil pasangan)\n"
         "Detail lengkap industri: arus_perdagangan_detail_industri.csv\n", encoding="utf-8")

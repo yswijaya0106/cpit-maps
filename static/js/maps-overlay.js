@@ -161,6 +161,10 @@ const MAP_LAYER_CATEGORIES = [
   // Pengumpan, alur pelayaran sungai/danau, dst).
   { id: "rtrw", label: "RTRW (Rencana Tata Ruang)", icon: "bi-map",
     match: (p) => p === "RTRW" },
+  // Arus perdagangan domestik antar provinsi (IRIO, scripts/import_arus_irio_provinsi.py):
+  // bucket flat nasional, ketebalan garis = rupiah / ton, ada filter di legend.
+  { id: "arus-perdagangan", label: "Arus Perdagangan Antar Provinsi", icon: "bi-arrow-left-right",
+    match: (p) => p === "ARUS PERDAGANGAN ANTAR PROVINSI" },
   { id: "jalan", label: "Jalan", icon: "bi-signpost-2", match: () => true }, // catch-all, HARUS terakhir
 ];
 
@@ -632,12 +636,40 @@ function updateKecamatanLintasan() {
   });
 }
 
+/* Filter layer "Arus Perdagangan Antar Provinsi" (kontrolnya di legend,
+   map-tools.js renderArusControls): pulau/provinsi dicocokkan ke sisi asal,
+   tujuan, atau keduanya menurut `arah`; "antarPulau" menyaring hanya arus
+   yang menyeberang pulau (kandidat angkutan laut). */
+const ARUS_LAYER_PREFIX = "ARUS PERDAGANGAN";
+const arusFilter = { pulau: "", provinsi: "", arah: "keduanya", antarPulau: false };
+
+function arusFeatureVisible(f) {
+  const pa = f.getProperty("Pulau Asal"), pt = f.getProperty("Pulau Tujuan");
+  const va = f.getProperty("Provinsi Asal"), vt = f.getProperty("Provinsi Tujuan");
+  if (arusFilter.antarPulau && pa === pt) return false;
+  const cocok = (asal, tujuan, nilai) => {
+    if (!nilai) return true;
+    if (arusFilter.arah === "keluar") return asal === nilai;
+    if (arusFilter.arah === "masuk") return tujuan === nilai;
+    return asal === nilai || tujuan === nilai;
+  };
+  return cocok(pa, pt, arusFilter.pulau) && cocok(va, vt, arusFilter.provinsi);
+}
+
+function applyArusFilter() {
+  Object.keys(state.mapLayers.active).forEach((k) => {
+    if (mapLayerRawName(k).startsWith(ARUS_LAYER_PREFIX)) applyLayerStyle(k);
+  });
+}
+
 function applyLayerStyle(key) {
   const data = state.mapLayers.active[key];
   if (!data) return;
   const color = mapLayerColor(mapLayerRawName(key));
   const opacity = state.mapLayers.opacity[key] ?? 1;
+  const isArus = mapLayerRawName(key).startsWith(ARUS_LAYER_PREFIX);
   data.setStyle((feature) => {
+    if (isArus && !arusFeatureVisible(feature)) return { visible: false };
     if (feature.getProperty("DILINTASI_RUTE") === "YA") {
       return {
         fillColor: KEC_LINTAS_COLOR, fillOpacity: 0.28 * opacity,

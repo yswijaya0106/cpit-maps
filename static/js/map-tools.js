@@ -113,7 +113,10 @@ function showIdentifyInfo(layerName, feature, latLng) {
   // induknya di "Nama Kantor SAR" (lihat scripts/import_basarnas_to_postgis.py)
   // -- keduanya di-join ke tabel referensi BASARNAS yang sama.
   const namaKantorSar = feature.getProperty("nama_kantor") || feature.getProperty("Nama Kantor SAR");
-  if (namaKantorSar) attachKantorSarJoin(container, namaKantorSar);
+  if (namaKantorSar) {
+    attachKantorSarWilayah(container, namaKantorSar);
+    attachKantorSarJoin(container, namaKantorSar);
+  }
   if (layerName.startsWith("BATAS PROVINSI::")) {
     const namaProvinsi = feature.getProperty("PROVINSI");
     if (namaProvinsi) attachLakaLantasJoin(container, namaProvinsi);
@@ -261,6 +264,66 @@ function attachKantorSarJoin(container, namaKantor) {
   load();
 }
 
+/* Wilayah tanggung jawab SAR: klik titik Kantor SAR/Pos SAR (mode Identify)
+   -> poligon wilayah kerja kantornya digambar di layer Data khusus, terpisah
+   dari overlay "Wilayah Tanggung Jawab SAR" di panel layer (yang memuat 43
+   poligon sekaligus, ~22 MB). Dibersihkan lewat clearIdentifyHighlight.
+   Kantor Pos SAR memakai wilayah kantor induknya. */
+let kantorSarWilayahData = null;
+let kantorSarWilayahToken = 0;
+
+function clearKantorSarWilayah() {
+  kantorSarWilayahToken++; // batalkan fetch yang masih jalan
+  if (kantorSarWilayahData) {
+    kantorSarWilayahData.forEach((f) => kantorSarWilayahData.remove(f));
+  }
+}
+
+function zoomKantorSarWilayah() {
+  if (!kantorSarWilayahData) return;
+  const bounds = new google.maps.LatLngBounds();
+  kantorSarWilayahData.forEach((f) => f.getGeometry().forEachLatLng((ll) => bounds.extend(ll)));
+  if (!bounds.isEmpty()) state.map.fitBounds(bounds);
+}
+
+function attachKantorSarWilayah(container, namaKantor) {
+  const wrap = document.createElement("div");
+  wrap.className = "identify-join";
+  wrap.innerHTML = `
+    <div class="identify-join-head"><i class="bi bi-bounding-box-circles"></i> Wilayah tanggung jawab</div>
+    <div class="identify-join-body hint">Memuat...</div>`;
+  container.appendChild(wrap);
+  const bodyEl = wrap.querySelector(".identify-join-body");
+  const token = ++kantorSarWilayahToken;
+
+  (async () => {
+    try {
+      const res = await fetch(`/api/kantor-sar/wilayah?nama_kantor=${encodeURIComponent(namaKantor)}`);
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || "Gagal memuat");
+      if (token !== kantorSarWilayahToken) return; // popup sudah ditutup/pindah ke fitur lain
+      if (!data.tersedia) {
+        bodyEl.textContent = data.catatan;
+        return;
+      }
+      if (!kantorSarWilayahData) kantorSarWilayahData = new google.maps.Data({ map: state.map });
+      kantorSarWilayahData.forEach((f) => kantorSarWilayahData.remove(f));
+      kantorSarWilayahData.addGeoJson(data.geojson);
+      kantorSarWilayahData.setStyle({
+        fillColor: "#3b82f6", fillOpacity: 0.12, strokeColor: "#3b82f6", strokeWeight: 2,
+        clickable: false, zIndex: 1,
+      });
+      bodyEl.className = "identify-join-body";
+      bodyEl.innerHTML = `Ditampilkan di peta (${data.call_sign ? escapeHtml(data.call_sign) + " · " : ""}Kelas ${escapeHtml(data.tipe_kelas || "-")} ·
+        ${data.luas_km2.toLocaleString("id-ID")} km²)
+        <button type="button" class="btn btn-ghost btn-sm identify-wilayah-zoom"><i class="bi bi-zoom-in"></i> Zoom ke wilayah</button>`;
+      bodyEl.querySelector(".identify-wilayah-zoom").addEventListener("click", zoomKantorSarWilayah);
+    } catch (err) {
+      bodyEl.textContent = String(err.message || err);
+    }
+  })();
+}
+
 /* Join layer "BATAS PROVINSI" ke anev_laka_lantas_polda (statistik
    kecelakaan lalu lintas Korlantas POLRI per POLDA, 2020-2025) -- beda dari
    attachKecamatanJoin/attachKantorSarJoin di atas krn cuma 1 sumber (tidak
@@ -338,6 +401,7 @@ function attachBandaraKemenhubJoin(container, fetchUrl) {
 }
 
 function clearIdentifyHighlight() {
+  clearKantorSarWilayah();
   if (!state.identifyHighlight) return;
   const { layer, feature } = state.identifyHighlight;
   state.mapLayers.active[layer]?.revertStyle(feature);

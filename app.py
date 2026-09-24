@@ -7458,6 +7458,45 @@ def kantor_sar_join_data(nama_kantor: str, tabel: str = "basarnas_alut"):
     }
 
 
+# Wilayah tanggung jawab SAR untuk satu Kantor SAR (24 Sep 2026): klik titik
+# Kantor SAR/Pos SAR di peta (mode Identify) -> poligon wilayah kerjanya
+# ditampilkan. Kunci = nama kota (prefix "Kantor Pencarian dan Pertolongan"
+# dibuang, sama _kantor_sar_kota di atas) ke attrs "Nama Kantor Pencarian dan
+# Pertolongan" layer WILAYAH TANGGUNG JAWAB SAR (43 poligon, 43/47 Kantor SAR
+# cocok; Banyuwangi, Surakarta, Kantor Pusat, Balai SDM PP tidak punya poligon
+# -> tersedia=false). Poligon aslinya ~20 MB total (maks 1,8 MB per kantor),
+# jadi disederhanakan server-side (toleransi 0.002 derajat ~ 200 m) dan
+# di-cache per kota di memori (restart untuk menyegarkan re-import).
+_sar_wilayah_cache = {}
+
+
+@app.get("/api/kantor-sar/wilayah")
+def kantor_sar_wilayah(nama_kantor: str):
+    kota = _kantor_sar_kota(nama_kantor)
+    key = kota.lower()
+    if key not in _sar_wilayah_cache:
+        with db_cursor() as cur:
+            cur.execute(
+                "SELECT attrs, ST_AsGeoJSON(ST_SimplifyPreserveTopology(geom, 0.002)) AS gj, "
+                "ST_Area(geom::geography) / 1e6 AS luas_km2 "
+                "FROM map_layers WHERE provinsi = 'BASARNAS' AND layer = 'WILAYAH TANGGUNG JAWAB SAR' "
+                "AND lower(attrs->>'Nama Kantor Pencarian dan Pertolongan') = %s LIMIT 1",
+                (key,),
+            )
+            row = cur.fetchone()
+        if row is None:
+            _sar_wilayah_cache[key] = {"tersedia": False, "kantor": kota,
+                                       "catatan": "Poligon wilayah tanggung jawab untuk kantor ini tidak ada di data sumber."}
+        else:
+            _sar_wilayah_cache[key] = {
+                "tersedia": True, "kantor": kota,
+                "call_sign": row["attrs"].get("Call Sign"), "tipe_kelas": row["attrs"].get("Tipe Kelas"),
+                "luas_km2": round(float(row["luas_km2"]), 1),
+                "geojson": {"type": "Feature", "properties": {}, "geometry": json.loads(row["gj"])},
+            }
+    return _sar_wilayah_cache[key]
+
+
 # Join identify-popup layer "BATAS PROVINSI" (attrs.PROVINSI, nama provinsi
 # lengkap) ke anev_laka_lantas_polda (scripts/schema_anev_laka_lantas.sql,
 # statistik kecelakaan lalu lintas Korlantas POLRI per POLDA 2020-2025) --

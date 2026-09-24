@@ -767,6 +767,15 @@ scripts/tables/layers out to staging.
   best-effort city-name text match since each source table spells the same
   city inconsistently (e.g. "AMBON" vs "Ambon" vs "KANTOR PENCARIAN DAN
   PERTOLONGAN AMBON") — not 100% reliable by design.
+- **`GET /api/kantor-sar/wilayah?nama_kantor=`** (24 Sep 2026) — klik titik
+  Kantor SAR/Pos SAR di peta (mode Identify) → poligon wilayah tanggung
+  jawabnya digambar otomatis (layer `google.maps.Data` khusus di map-tools.js,
+  dibersihkan saat popup ditutup) + tombol "Zoom ke wilayah". Kunci = nama
+  kota ↔ attrs `Nama Kantor Pencarian dan Pertolongan` layer `WILAYAH TANGGUNG
+  JAWAB SAR`; 43/47 Kantor SAR cocok (Banyuwangi, Surakarta, Kantor Pusat,
+  Balai SDM PP tidak punya poligon → `tersedia:false`); Pos SAR memakai wilayah
+  kantor induknya. Poligon disederhanakan server-side (0.002°) karena aslinya
+  ~20 MB total; cache per kota in-memory.
 - **`GET /api/provinsi/{provinsi}/laka-lantas`** — yearly traffic-accident
   stats (`anev_laka_lantas_polda`) for a province, keyed by POLDA name via
   a hardcoded `PROVINSI_POLDA_MAP` (POLDA naming doesn't align with

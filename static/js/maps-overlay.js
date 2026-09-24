@@ -648,8 +648,7 @@ function updateKecamatanLintasan() {
    tujuan, atau keduanya menurut `arah`; "antarPulau" menyaring hanya arus
    yang menyeberang pulau (kandidat angkutan laut). */
 const ARUS_LAYER_PREFIX = "ARUS PERDAGANGAN";
-// Warna garis = provinsi ASAL arus (satu warna per provinsi, sebaran hue sudut
-// emas); transparansi = kelas nilai 1-5 (20%..100%, skala log rupiah/ton yang
+// Warna garis = satu warna per layer (lihat arusLayerColor); transparansi = kelas nilai 1-5 (20%..100%, skala log rupiah/ton yang
 // sama dgn ketebalan); ketebalan tetap menurut nilai. Dipakai juga oleh legenda.
 const ARUS_PROVINSI_URUT = [
   "Aceh", "Sumatera Utara", "Sumatera Barat", "Riau", "Jambi", "Sumatera Selatan", "Bengkulu", "Lampung",
@@ -659,10 +658,18 @@ const ARUS_PROVINSI_URUT = [
   "Sulawesi Tengah", "Sulawesi Selatan", "Sulawesi Tenggara", "Gorontalo", "Sulawesi Barat", "Maluku",
   "Maluku Utara", "Papua Barat", "Papua",
 ];
-const ARUS_PROVINSI_COLORS = Object.fromEntries(ARUS_PROVINSI_URUT.map((n, i) => {
-  const hue = (i * 137.508) % 360, light = i % 2 ? 38 : 48; // selang-seling terang agar hue berdekatan tetap beda
-  return [n, `hsl(${hue.toFixed(0)}, 72%, ${light}%)`];
-}));
+// Warna per LAYER (bukan per garis): satu warna untuk semua garis dalam satu layer.
+// "Seluruh Indonesia": Rupiah biru, Ton oranye. Layer per provinsi: warna khas
+// provinsi itu (hue sudut emas; Ton = hue komplementer) -- jadi warna baru
+// muncul ketika provinsi lain dipilih. Rupiah & Ton selalu beda warna.
+function arusLayerColor(key) {
+  const meta = state.mapLayers.meta[key] || {};
+  const perTon = mapLayerRawName(key).endsWith("TON");
+  const idx = ARUS_PROVINSI_URUT.indexOf(meta.kabupaten);
+  if (idx < 0) return perTon ? "#d97706" : "#1d4ed8";
+  const hue = ((idx * 137.508) + (perTon ? 180 : 0)) % 360;
+  return `hsl(${hue.toFixed(0)}, 72%, ${perTon ? 44 : 40}%)`;
+}
 
 // kelas 1-5 dari nilai (skala log lo..hi yang dibawa tiap fitur); opacity = 0.2 x kelas
 function arusKelas(feature) {
@@ -750,7 +757,7 @@ function applyLayerStyle(key) {
     const lebarGaris = Number(feature.getProperty("Ketebalan garis (px)"));
     if (lebarGaris > 0) {
       return {
-        strokeColor: ARUS_PROVINSI_COLORS[feature.getProperty("Provinsi Asal")] || color,
+        strokeColor: isArus ? arusLayerColor(key) : color,
         strokeWeight: lebarGaris, strokeOpacity: 0.2 * arusKelas(feature) * opacity,
         zIndex: Math.round(100 - lebarGaris * 5),
       };

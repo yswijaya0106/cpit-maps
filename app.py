@@ -7649,12 +7649,18 @@ def maps_layers(provinsi: str, kabupaten: str = ""):
 # unduh ulang payload besar (mis. Jalan Nasional ~10MB) tiap buka halaman/
 # pindah tab -- cuma sekali per jam per browser, bukan tiap request.
 _MAP_LAYER_CACHE_HEADERS = {"Cache-Control": "public, max-age=3600"}
+# Bucket hasil olahan yang sering dihitung ulang (scripts/import_kaplin_ka.py,
+# import_arus_irio_provinsi.py): TANPA cache server maupun browser, supaya hasil
+# import ulang langsung terlihat (tanpa restart server / tunggu 1 jam). Payload kecil (<1 MB).
+_MAP_LAYER_TANPA_CACHE = {"KAPASITAS LINTAS KA", "ARUS PERDAGANGAN ANTAR PROVINSI"}
+_MAP_LAYER_NO_CACHE_HEADERS = {"Cache-Control": "no-cache"}
 
 
 @app.get("/api/maps/layer")
 def maps_layer(provinsi: str, layer: str, kabupaten: str = ""):
     key = (provinsi, kabupaten, layer)
-    if key in _map_layer_geojson_cache:
+    tanpa_cache = provinsi in _MAP_LAYER_TANPA_CACHE
+    if not tanpa_cache and key in _map_layer_geojson_cache:
         return JSONResponse(content=_map_layer_geojson_cache[key], headers=_MAP_LAYER_CACHE_HEADERS)
 
     with db_cursor() as cur:
@@ -7688,6 +7694,8 @@ def maps_layer(provinsi: str, layer: str, kabupaten: str = ""):
         geojson = cur.fetchone()["fc"]
 
     geojson["label"] = meta["label"] or _map_layer_label(layer)
+    if tanpa_cache:
+        return JSONResponse(content=geojson, headers=_MAP_LAYER_NO_CACHE_HEADERS)
     _map_layer_geojson_cache[key] = geojson
     return JSONResponse(content=geojson, headers=_MAP_LAYER_CACHE_HEADERS)
 

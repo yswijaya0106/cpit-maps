@@ -344,6 +344,81 @@ def jalur_lokal(cur, xy, a, b, jarak_m):
     return None
 
 
+def _rangkai(edges_by_node, kunci_awal, kunci_akhir, dilarang):
+    """Dijkstra atas jarak sheet: daftar kunci petak (awal, akhir) yg menyambung awal->akhir, tanpa `dilarang`."""
+    dist, prev, pq, n = {kunci_awal: 0.0}, {}, [(0.0, 0, kunci_awal)], 0
+    while pq:
+        d, _, u = heapq.heappop(pq)
+        if u == kunci_akhir:
+            break
+        if d > dist.get(u, 1e18):
+            continue
+        for v, w, kp in edges_by_node.get(u, ()):
+            if kp in dilarang:
+                continue
+            if d + w < dist.get(v, 1e18):
+                dist[v], prev[v] = d + w, (u, kp)
+                n += 1
+                heapq.heappush(pq, (d + w, n, v))
+    if kunci_akhir not in dist:
+        return None, None
+    rantai, u = [], kunci_akhir
+    while u != kunci_awal:
+        u, kp = prev[u]
+        rantai.append(kp)
+    return list(reversed(rantai)), dist[kunci_akhir]
+
+
+def gabung_agregat(fitur, fitur_utama, xy):
+    geo = {}
+    for at, g, shp in fitur:
+        geo.setdefault((shp["AWAL"], shp["AKHIR"]), (g, shp["JARAK_M"]))
+    def graf(tanpa):
+        e = {}
+        for kp, (g, j) in geo.items():
+            if kp in tanpa or not j:
+                continue
+            e.setdefault(kp[0], []).append((kp[1], j, kp))
+            e.setdefault(kp[1], []).append((kp[0], j, kp))
+        return e
+    def cari(kp, tanpa):
+        j = geo[kp][1]
+        if not j:
+            return None
+        rantai, tot = _rangkai(graf(tanpa | {kp}), kp[0], kp[1], set())
+        return rantai if rantai and len(rantai) >= 2 and abs(tot - j) / j <= 0.15 else None
+    agregat = {kp for kp in geo if cari(kp, set())}
+    baru = {}
+    for kp in agregat:
+        rantai = cari(kp, agregat)
+        if not rantai:
+            continue
+        coords, cur = [], kp[0]
+        for k in rantai:
+            g = list(geo[k][0].coords)
+            (x0, y0), (x1, y1) = g[0], g[-1]
+            asal = cur == k[0]
+            g = g if asal else g[::-1]
+            coords += g if not coords else g[1:]
+            cur = k[1] if asal else k[0]
+        baru[kp] = (LineString(coords), " + ".join(f"{a}-{b}" for a, b in rantai))
+    def ganti(daftar):
+        out = []
+        for at, g, shp in daftar:
+            kp = (shp["AWAL"], shp["AKHIR"])
+            if kp in baru:
+                ng = baru[kp][0]
+                at = dict(at)
+                at["Sumber geometri"] = f"Rangkaian petak per-stasiun ({baru[kp][1]})"
+                at["Panjang garis (km)"] = fmt(sum(math.hypot((x2 - x1) * xy.kx, (y2 - y1) * xy.ky)
+                                                    for (x1, y1), (x2, y2) in zip(ng.coords, ng.coords[1:])) / 1000, 2)
+                g, shp = ng, {**shp, "GEOM_SRC": "rangkaian"}
+            out.append((at, g, shp))
+        return out
+    print(f"  petak agregat digantikan rangkaian petak per-stasiun: {len(baru)} dari {len(agregat)} terdeteksi")
+    return ganti(fitur), ganti(fitur_utama)
+
+
 def proses(pulau, cfg, stasiun_all, cur):
     xy = Xy(cfg["lat0"])
     # cfg["rel"]: satu nama layer rel, atau daftar (layer_provinsi, layer) untuk menggabung beberapa
@@ -507,6 +582,10 @@ def proses(pulau, cfg, stasiun_all, cur):
         for kode in (p["awal"], p["akhir"]):
             stasiun_petak.setdefault(kode, []).append(f"{p['awal']}–{p['akhir']}: {fmt(p['program']) if p['program'] is not None else '-'}/"
                                                       f"{fmt(p['kapasitas']) if p['kapasitas'] else '-'} KA/hari")
+    # Petak AGREGAT (mis. Jatinegara-Bekasi 14,8 km) ada di sheet bersama petak per-stasiun di rel yang sama.
+    # Susur rel langsung utk agregat bisa melompati jalur (layer rel kasar) -> geometrinya diganti dengan
+    # RANGKAIAN petak per-stasiun (yang sudah menyusuri rel), bila jumlah jarak sheet-nya cocok (+-15%).
+    fitur, fitur_utama = gabung_agregat(fitur, fitur_utama, xy)
     st_fitur = []
     for kode, s in pilih.items():
         if kode not in stasiun_petak:

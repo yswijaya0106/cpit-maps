@@ -7649,41 +7649,48 @@ def maps_layers(provinsi: str, kabupaten: str = ""):
     ]
 
 
-# Layer peta (dulu SHP statis selama proses server jalan, kini PostGIS --
-# masih di-cache in-process karena payload besar tak berubah dalam masa
-# hidup satu proses; restart server utk lihat hasil impor ulang). Aman
-# dikasih Cache-Control lumayan panjang supaya klien intranet tidak perlu
-# unduh ulang payload besar (mis. Jalan Nasional ~10MB) tiap buka halaman/
-# pindah tab -- cuma sekali per jam per browser, bukan tiap request.
-_MAP_LAYER_CACHE_HEADERS = {"Cache-Control": "public, max-age=3600"}
-# Bucket hasil olahan yang sering dihitung ulang (scripts/import_kaplin_ka.py,
-# import_arus_irio_provinsi.py): TANPA cache server maupun browser, supaya hasil
-# import ulang langsung terlihat (tanpa restart server / tunggu 1 jam). Payload kecil (<1 MB).
-_MAP_LAYER_TANPA_CACHE = {"KAPASITAS LINTAS KA", "ARUS PERDAGANGAN ANTAR PROVINSI"}
-_MAP_LAYER_NO_CACHE_HEADERS = {"Cache-Control": "no-cache"}
+# Layer peta (PostGIS map_layers). Payload GeoJSON layer besar (Jalan Nasional
+# ~9 MB, Subklaster ~11 MB) mahal dihitung (Jalan Nasional ~7 dtk di staging 2
+# vCPU), jadi hasilnya disimpan sbg berkas .json.gz di DISK (.cache/maplayer/),
+# BERSAMA semua worker uvicorn -- bukan dict per-proses spt dulu (tiap worker
+# menghitung & menyimpan salinan sendiri di RAM). Kunci cache = hash
+# (provinsi, kabupaten, layer) + map_layer_meta.imported_at + feature_count
+# + versi format, jadi impor ulang (yang selalu mengisi ulang meta) OTOMATIS
+# membuat cache lama tak terpakai -- tak perlu restart server. Klien selalu
+# revalidasi lewat ETag (304 tanpa unduh ulang, Cache-Control: no-cache).
+# Skrip yang mengubah attrs TANPA menyentuh meta (mis. import_iri_ruas_nasional.py)
+# wajib memperbarui imported_at.
+_MAP_LAYER_CACHE_DIR = Path(__file__).resolve().parent / ".cache" / "maplayer"
+_MAP_LAYER_CACHE_VERSI = "v2-5dec"  # ubah bila format payload berubah
+_MAP_LAYER_WARM = [
+    ("JALAN NASIONAL", "", "Jalan Nasional"), ("JALAN PROVINSI", "", "Jalan Provinsi_up"),
+    ("JALAN TOL", "", "Jalan_Tol"), ("BANDARA", "", "Bandara"),
+]
 
 
-@app.get("/api/maps/layer")
-def maps_layer(provinsi: str, layer: str, kabupaten: str = ""):
-    key = (provinsi, kabupaten, layer)
-    tanpa_cache = provinsi in _MAP_LAYER_TANPA_CACHE
-    if not tanpa_cache and key in _map_layer_geojson_cache:
-        return JSONResponse(content=_map_layer_geojson_cache[key], headers=_MAP_LAYER_CACHE_HEADERS)
-
+def _map_layer_payload(provinsi: str, kabupaten: str, layer: str):
+    """(etag, bytes_gzip) payload GeoJSON layer; dibangun dari PostGIS bila belum ada di cache disk."""
+    import gzip
+    import hashlib
     with db_cursor() as cur:
         cur.execute(
-            "SELECT label, feature_count FROM map_layer_meta "
+            "SELECT label, feature_count, imported_at FROM map_layer_meta "
             "WHERE provinsi=%s AND kabupaten=%s AND layer=%s",
             (provinsi, kabupaten, layer),
         )
         meta = cur.fetchone()
         if not meta:
             raise HTTPException(404, "Layer tidak ditemukan")
+        awalan = hashlib.sha1(f"{provinsi}|{kabupaten}|{layer}".encode()).hexdigest()[:16]
+        etag = f'"{awalan}-{hashlib.sha1(f"{meta['imported_at']}|{meta['feature_count']}|{_MAP_LAYER_CACHE_VERSI}".encode()).hexdigest()[:12]}"'
+        berkas = _MAP_LAYER_CACHE_DIR / (etag.strip('"') + ".json.gz")
+        if berkas.exists():
+            return etag, berkas.read_bytes()
 
         # Heavy layers (e.g. KONTUR, tens of MB of contour lines) are
         # simplified so the browser doesn't choke on rendering; tolerance is
         # in degrees (~0.00015 deg ~ 15-17m at this latitude), fine for
-        # on-screen display.
+        # on-screen display. Koordinat dibulatkan 5 desimal (~1 m): ~30% lebih kecil.
         simplify = (meta["feature_count"] or 0) > 3000
         geom_expr = "ST_SimplifyPreserveTopology(geom, 0.00015)" if simplify else "geom"
         cur.execute(
@@ -7691,7 +7698,7 @@ def maps_layer(provinsi: str, layer: str, kabupaten: str = ""):
                     'type', 'FeatureCollection',
                     'features', COALESCE(jsonb_agg(jsonb_build_object(
                         'type', 'Feature',
-                        'geometry', ST_AsGeoJSON({geom_expr})::jsonb,
+                        'geometry', ST_AsGeoJSON({geom_expr}, 5)::jsonb,
                         'properties', attrs
                     )), '[]'::jsonb)
                 ) AS fc
@@ -7701,10 +7708,55 @@ def maps_layer(provinsi: str, layer: str, kabupaten: str = ""):
         geojson = cur.fetchone()["fc"]
 
     geojson["label"] = meta["label"] or _map_layer_label(layer)
-    if tanpa_cache:
-        return JSONResponse(content=geojson, headers=_MAP_LAYER_NO_CACHE_HEADERS)
-    _map_layer_geojson_cache[key] = geojson
-    return JSONResponse(content=geojson, headers=_MAP_LAYER_CACHE_HEADERS)
+    gz = gzip.compress(json.dumps(geojson, ensure_ascii=False, separators=(",", ":")).encode("utf-8"), 6)
+    try:
+        _MAP_LAYER_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        tmp = berkas.with_name(berkas.name + f".{os.getpid()}.tmp")
+        tmp.write_bytes(gz)
+        os.replace(tmp, berkas)
+        for lama in _MAP_LAYER_CACHE_DIR.glob(f"{awalan}-*.json.gz"):  # buang versi lama layer yg sama
+            if lama != berkas:
+                lama.unlink(missing_ok=True)
+    except OSError as e:  # cache disk hanya optimasi; gagal tulis tak boleh menggagalkan request
+        print(f"  [map-layer-cache] gagal menyimpan {berkas.name}: {e}")
+    return etag, gz
+
+
+@app.on_event("startup")
+async def _warm_map_layer_cache():
+    """Bangun cache disk layer populer di thread terpisah begitu server nyala (pertama kali
+    Jalan Nasional ~7 dtk). Berkas kunci mencegah dua worker menghitung bersamaan."""
+    loop = asyncio.get_event_loop()
+
+    def _warm():
+        kunci = _MAP_LAYER_CACHE_DIR / ".warm.lock"
+        try:
+            _MAP_LAYER_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+            if kunci.exists() and time.time() - kunci.stat().st_mtime < 600:
+                return
+            kunci.write_text(str(os.getpid()))
+            for prov, kab, lay in _MAP_LAYER_WARM:
+                try:
+                    _map_layer_payload(prov, kab, lay)
+                except Exception as e:
+                    print(f"  [warm-cache] layer {lay}: {e}")
+            kunci.unlink(missing_ok=True)
+        except Exception as e:
+            print(f"  [warm-cache] gagal: {e}")
+
+    loop.run_in_executor(None, _warm)
+
+
+@app.get("/api/maps/layer")
+def maps_layer(request: Request, provinsi: str, layer: str, kabupaten: str = ""):
+    import gzip
+    etag, gz = _map_layer_payload(provinsi, kabupaten, layer)
+    kepala = {"ETag": etag, "Cache-Control": "no-cache", "Vary": "Accept-Encoding"}
+    if request.headers.get("if-none-match") == etag:
+        return Response(status_code=304, headers=kepala)
+    if "gzip" in request.headers.get("accept-encoding", "").lower():
+        return Response(content=gz, media_type="application/json", headers={**kepala, "Content-Encoding": "gzip"})
+    return Response(content=gzip.decompress(gz), media_type="application/json", headers=kepala)
 
 
 # Sumber referensi Darat/Laut (angkutan_perintis, bps_kinerja_pelabuhan) TIDAK

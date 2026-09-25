@@ -111,6 +111,10 @@ CREATE TABLE IF NOT EXISTS iri_ruas_nasional (
                 "WHERE provinsi='JALAN NASIONAL' AND attrs->>'LINKID' = %s", (Json(at), lid))
             diperbarui += cur.rowcount
         print(f"atribut IRI ditambahkan ke {diperbarui} fitur layer jalan nasional")
+        # cache layer peta di server (app.py _map_layer_payload) berkunci imported_at -> perbarui
+        # supaya payload lama tak terpakai tanpa restart server
+        cur.execute("UPDATE map_layer_meta SET imported_at = now() WHERE provinsi='JALAN NASIONAL' AND layer IN "
+                    "(SELECT DISTINCT layer FROM map_layers WHERE provinsi='JALAN NASIONAL' AND attrs ? 'IRI rata-rata')")
         cur.execute("SELECT COUNT(*) n FROM map_layers WHERE provinsi='JALAN NASIONAL' AND attrs->>'LINKID' IS NOT NULL "
                     "AND NOT (attrs ? 'IRI rata-rata')")
         print(f"fitur ber-LINKID TANPA data IRI: {cur.fetchone()['n']}")

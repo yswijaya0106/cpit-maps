@@ -1065,7 +1065,7 @@ upsert, so they're safe to re-run:
   `map_layers.attrs` semua fitur ber-`LINKID` di bucket `JALAN NASIONAL` ("Jalan
   Nasional" + 6 layer `LN_JALAN_NASIONAL_PULAU_*`, 100% LINKID cocok) via
   `attrs || jsonb`. **Restart server setelah rerun** (`_map_layer_geojson_cache`).
-  File kedua `Data_rekap_iri_provinsi_...xlsx` (ringkasan per provinsi) belum diimpor.
+  File `Data_rekap_iri_provinsi_...xlsx` (ringkasan per provinsi) sengaja TIDAK diimpor (keputusan user).
 - `import_kaplin_ka.py` — Kapasitas Lintas (KAPLIN) KA per petak jalan dari
   `docs/24092026/Data Kapasitas KA.xlsx` (sheet KAPLIN SUMATERA / KAPLIN JAWA;
   sheet "koridor utama" Jawa dipakai utk kolom koridor utama + layer

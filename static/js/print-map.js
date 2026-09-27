@@ -27,11 +27,14 @@ function bindPrintMap() {
     if (e.target.id === "printMapOverlay") closePrintMapDialog();
   });
   document.addEventListener("keydown", (e) => {
-    if (e.key === "Escape" && !document.getElementById("printMapOverlay").hidden) closePrintMapDialog();
+    if (e.key !== "Escape") return;
+    if (document.getElementById("printPreviewOverlay")) closePrintPreview();
+    else if (!document.getElementById("printMapOverlay").hidden) closePrintMapDialog();
   });
+  document.getElementById("printMapPreview").addEventListener("click", previewPrintMap);
   document.getElementById("printMapForm").addEventListener("submit", (e) => {
     e.preventDefault();
-    submitPrintMap();
+    submitPrintMap(buildPrintPayload());
   });
 }
 
@@ -396,40 +399,126 @@ function buildPrintPayload() {
   };
 }
 
-async function submitPrintMap() {
-  const btn = document.getElementById("printMapSubmit");
-  const status = document.getElementById("printStatus");
-  const payload = buildPrintPayload();
+// Pratinjau terakhir (selalu PDF): dipakai ulang oleh "Cetak"/"Unduh" kalau
+// format PDF & pengaturan/fitur tidak berubah, supaya tidak render dua kali.
+let printPreviewCache = null; // {key, blob, filename, url}
+
+function printPayloadKey(payload) {
+  return JSON.stringify({ ...payload, format: "pdf" });
+}
+
+async function requestPrintFile(payload) {
+  const res = await fetch("/api/peta/cetak", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) {
+    let msg = await res.text();
+    try { msg = JSON.parse(msg).detail || msg; } catch (_) { /* teks biasa */ }
+    throw new Error(msg);
+  }
+  const blob = await res.blob();
+  const match = (res.headers.get("Content-Disposition") || "").match(/filename="?([^";]+)"?/);
+  return { blob, filename: match ? match[1] : `peta.${payload.format}` };
+}
+
+function setPrintBusy(busy, text) {
+  ["printMapSubmit", "printMapPreview"].forEach((id) => { document.getElementById(id).disabled = busy; });
+  if (text) document.getElementById("printStatus").textContent = text;
+}
+
+function printBusyText(payload, aksi) {
+  const n = payload.layers.reduce((acc, l) => acc + l.features.length, 0);
+  return `${aksi} — memuat basemap & menggambar ${n.toLocaleString("id-ID")} fitur...`;
+}
+
+async function submitPrintMap(payload = buildPrintPayload()) {
   const fmt = payload.format.toUpperCase();
-  btn.disabled = true;
-  status.textContent = `Membuat ${fmt} — memuat basemap & menggambar ${payload.layers.reduce((n, l) => n + l.features.length, 0).toLocaleString("id-ID")} fitur...`;
+  setPrintBusy(true, printBusyText(payload, `Membuat ${fmt}`));
   setStatus(`Mencetak peta (${fmt})...`);
   try {
-    const res = await fetch("/api/peta/cetak", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    });
-    if (!res.ok) {
-      let msg = await res.text();
-      try { msg = JSON.parse(msg).detail || msg; } catch (_) { /* teks biasa */ }
-      throw new Error(msg);
+    let file;
+    if (payload.format === "pdf" && printPreviewCache && printPreviewCache.key === printPayloadKey(payload)) {
+      file = printPreviewCache;
+    } else {
+      file = await requestPrintFile(payload);
     }
-    const blob = await res.blob();
-    const match = (res.headers.get("Content-Disposition") || "").match(/filename="?([^";]+)"?/);
-    const filename = match ? match[1] : `peta.${payload.format}`;
-    downloadBlob(blob, filename);
-    toast(`Peta tersimpan: ${filename}`);
+    downloadBlob(file.blob, file.filename);
+    toast(`Peta tersimpan: ${file.filename}`);
     setStatus("Peta siap");
+    closePrintPreview();
     closePrintMapDialog();
   } catch (err) {
     console.error(err);
-    status.textContent = `Gagal: ${String(err.message || err).slice(0, 200)}`;
+    document.getElementById("printStatus").textContent = `Gagal: ${String(err.message || err).slice(0, 200)}`;
     toast("Gagal mencetak peta", true);
     setStatus("Gagal mencetak peta");
   } finally {
-    btn.disabled = false;
+    setPrintBusy(false);
   }
+}
+
+async function previewPrintMap() {
+  const payload = buildPrintPayload();
+  const key = printPayloadKey(payload);
+  if (!printPreviewCache || printPreviewCache.key !== key) {
+    setPrintBusy(true, printBusyText(payload, "Membuat pratinjau"));
+    setStatus("Membuat pratinjau peta...");
+    try {
+      const file = await requestPrintFile({ ...payload, format: "pdf" });
+      if (printPreviewCache) URL.revokeObjectURL(printPreviewCache.url);
+      printPreviewCache = { key, ...file, url: URL.createObjectURL(file.blob) };
+      setStatus("Peta siap");
+    } catch (err) {
+      console.error(err);
+      document.getElementById("printStatus").textContent = `Gagal pratinjau: ${String(err.message || err).slice(0, 200)}`;
+      toast("Gagal membuat pratinjau", true);
+      setStatus("Gagal membuat pratinjau");
+      return;
+    } finally {
+      setPrintBusy(false);
+    }
+  }
+  document.getElementById("printStatus").textContent = "Pratinjau siap.";
+  openPrintPreview(payload);
+}
+
+// Overlay pratinjau di atas dialog cetak (dialog tetap terbuka di belakang,
+// jadi "Ubah pengaturan" cukup menutup overlay ini).
+function openPrintPreview(payload) {
+  closePrintPreview();
+  const fmt = payload.format.toUpperCase();
+  const overlay = document.createElement("div");
+  overlay.className = "pdf-modal-overlay print-preview-overlay";
+  overlay.id = "printPreviewOverlay";
+  overlay.innerHTML = `
+    <div class="pdf-modal print-preview-modal">
+      <div class="pdf-modal-header">
+        <span><i class="bi bi-eye"></i> Pratinjau — ${escapeHtml(payload.judul)}</span>
+        <div class="print-preview-actions">
+          <button type="button" class="btn btn-ghost btn-sm" data-act="back"><i class="bi bi-sliders"></i> Ubah pengaturan</button>
+          <button type="button" class="btn btn-primary btn-sm" data-act="download"><i class="bi bi-download"></i> Unduh ${fmt}</button>
+        </div>
+      </div>
+      ${payload.format === "docx" ? `<div class="print-preview-note"><i class="bi bi-info-circle"></i>
+        Pratinjau ditampilkan sebagai PDF. Isi DOCX sama (peta, label, legenda, info, tabel atribut);
+        hanya penempatan panel legenda di halaman Word yang sedikit berbeda.</div>` : ""}
+      <div class="pdf-modal-body"><iframe src="${printPreviewCache.url}#view=FitH" title="Pratinjau cetak peta"></iframe></div>
+    </div>`;
+  overlay.addEventListener("click", (e) => { if (e.target === overlay) closePrintPreview(); });
+  overlay.querySelector('[data-act="back"]').addEventListener("click", closePrintPreview);
+  const btnUnduh = overlay.querySelector('[data-act="download"]');
+  btnUnduh.addEventListener("click", () => {
+    btnUnduh.disabled = true;
+    submitPrintMap(payload).finally(() => { btnUnduh.disabled = false; });
+  });
+  document.body.appendChild(overlay);
+}
+
+function closePrintPreview() {
+  const el = document.getElementById("printPreviewOverlay");
+  if (el) el.remove();
 }
 
 bindPrintMap();

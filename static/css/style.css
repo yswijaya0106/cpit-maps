@@ -1554,3 +1554,11 @@ html::-webkit-scrollbar, body::-webkit-scrollbar, .sidebar::-webkit-scrollbar, .
   .print-layer-row { grid-template-columns: minmax(0, 1fr) auto; }
   .print-layer-row select { grid-column: span 2; }
 }
+/* Pratinjau cetak peta: di atas dialog cetak (.datatable-overlay z 90) */
+.print-preview-overlay { z-index: 210; }
+.print-preview-modal { width: min(1200px, 100%); height: min(92vh, 1100px); }
+.print-preview-actions { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+.print-preview-note {
+  padding: 8px 14px; font-size: 12px; color: var(--text-dim);
+  background: rgba(79,124,255,.08); border-bottom: 1px solid var(--border);
+}

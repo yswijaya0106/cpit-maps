@@ -1493,3 +1493,64 @@ html::-webkit-scrollbar, body::-webkit-scrollbar, .sidebar::-webkit-scrollbar, .
 .identify-panel.collapsed .identify-panel-head { border-bottom: 0; }
 .identify-panel .identify-info { max-width: none; }
 .identify-panel .identify-join-scroll { max-width: none; }
+
+/* ---------- Cetak peta (print-map.js) ---------- */
+.print-modal {
+  display: flex; flex-direction: column; width: min(820px, 96vw); max-height: min(90vh, 900px);
+  background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius);
+  box-shadow: var(--shadow); overflow: hidden;
+}
+.print-modal .datatable-head .icon-btn { display: flex; flex: 0 0 auto; }
+.print-body { padding: 14px 16px; overflow-y: auto; flex: 1 1 auto; }
+.print-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 14px; }
+.print-span2 { grid-column: span 2; }
+.print-field { display: flex; flex-direction: column; gap: 5px; font-size: 12px; color: var(--text-dim); }
+.print-field input[type="text"], .print-field textarea, .print-field select, .print-checks input[type="number"] {
+  background: rgba(255,255,255,.05); color: var(--text); border: 1px solid var(--border);
+  border-radius: 8px; padding: 7px 10px; font-family: inherit; font-size: 13px; outline: none;
+}
+.print-field textarea { resize: vertical; }
+.print-field input:focus, .print-field textarea:focus, .print-field select:focus { border-color: var(--primary); }
+.print-inline { display: flex; gap: 8px; }
+.print-inline select { flex: 1 1 0; min-width: 0; }
+.print-seg { display: flex; gap: 6px; }
+.print-seg label { flex: 1 1 0; }
+.print-seg input { position: absolute; opacity: 0; pointer-events: none; }
+.print-seg span {
+  display: flex; align-items: center; justify-content: center; gap: 6px; padding: 7px 10px;
+  border: 1px solid var(--border); border-radius: 8px; cursor: pointer; color: var(--text); font-size: 13px;
+}
+.print-seg input:checked + span { border-color: var(--primary); background: rgba(79,124,255,.18); }
+.print-seg input:focus-visible + span { outline: 2px solid var(--primary); outline-offset: 1px; }
+.print-checks { flex-direction: row; flex-wrap: wrap; align-items: center; gap: 8px 18px; color: var(--text); }
+.print-checks label { display: flex; align-items: center; gap: 6px; cursor: pointer; }
+.print-checks input[type="number"] { width: 84px; padding: 5px 8px; }
+.print-layers-head { margin: 16px 0 6px; font-size: 12.5px; font-weight: 700; color: var(--text); }
+.print-layers-head span { font-weight: 400; color: var(--text-dim); }
+.print-layers { display: flex; flex-direction: column; gap: 6px; }
+.print-layer-row {
+  display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(120px, 190px) auto; align-items: center;
+  gap: 10px; padding: 7px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--panel);
+  font-size: 12.5px;
+}
+.print-layer-row.is-empty { opacity: .55; }
+.print-layer-include { display: flex; align-items: center; gap: 8px; min-width: 0; cursor: pointer; }
+.print-layer-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.print-layer-count { color: var(--text-dim); font-size: 11.5px; white-space: nowrap; }
+.print-layer-row select {
+  background: rgba(255,255,255,.05); color: var(--text); border: 1px solid var(--border);
+  border-radius: 6px; padding: 4px 6px; font-family: inherit; font-size: 12px; min-width: 0;
+}
+.print-layer-table { display: flex; align-items: center; gap: 4px; color: var(--text-dim); cursor: pointer; white-space: nowrap; }
+.print-empty { font-size: 12.5px; color: var(--text-dim); padding: 10px; border: 1px dashed var(--border); border-radius: 8px; }
+.print-foot {
+  display: flex; align-items: center; gap: 8px; padding: 10px 16px; border-top: 1px solid var(--border);
+  background: var(--panel); flex: 0 0 auto;
+}
+.print-hint { flex: 1 1 auto; font-size: 12px; color: var(--text-dim); min-width: 0; }
+@media (max-width: 720px) {
+  .print-grid { grid-template-columns: 1fr; }
+  .print-span2 { grid-column: span 1; }
+  .print-layer-row { grid-template-columns: minmax(0, 1fr) auto; }
+  .print-layer-row select { grid-column: span 2; }
+}

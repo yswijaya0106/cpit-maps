@@ -134,7 +134,8 @@ Deps: `requirements.txt`, venv at `.venv/` (already gitignored).
   `dalam-angka.js` (topbar "Dalam Angka" BPS publication search/preview
   panel; independent of Google Maps, same pattern as data-viewer.js) →
   `chat.js` (chat panel, grounded in the currently viewed route) →
-  `export.js` → `main.js` (reset, top-level event binding, and the
+  `export.js` → `print-map.js` (toolbar "Cetak peta" dialog, see
+  `POST /api/peta/cetak`) → `main.js` (reset, top-level event binding, and the
   mobile "..." topbar dropdown — `.topbar-more`, `display:contents` on
   desktop so it's visually a no-op there, collapses secondary nav buttons
   into a dropdown under 900px). All files share the same global
@@ -150,6 +151,21 @@ Deps: `requirements.txt`, venv at `.venv/` (already gitignored).
 - `POST /api/export` — dispatches on `format` (geojson/csv/gpx/wkt/shp) to
   `_build_*` helper functions. Add a new export format by adding a helper +
   a branch here.
+- `POST /api/peta/cetak` — print the current map view to PDF (reportlab) or
+  DOCX (python-docx); logic in [map_print.py](map_print.py). The frontend
+  (`print-map.js`) sends only what's inside the viewport: every active
+  overlay layer's features + the *same* per-feature style its `setStyle`
+  function returns on screen (so `_warna`/category colors carry over), plus
+  usulan polylines (`pl.get("printInfo")`, set in usulan-inpres.js), routes
+  and route markers. Server stitches an XYZ basemap (OSM / Esri Light Gray /
+  Esri imagery — Google tiles can't be fetched server-side, and CARTO
+  returns placeholder tiles without a registered Referer), draws vectors
+  with Pillow (2x supersampled), places labels (polygon/line-rotated/point,
+  simple collision check) and adds grid, north arrow, scale bar, legend,
+  index map and attribute-table appendix. Label mode "nomor" numbers
+  features (A1, B3…) to match the table rows. Gotcha: `ImageDraw` on an
+  RGBA image *replaces* pixels instead of alpha-blending — draw semi-
+  transparent things on a separate overlay then `alpha_composite`.
 - `POST /api/analyze/road-classification` — samples up to 60 points along a
   route, queries OSM Overpass API (falls back across 3 mirrors, see
   `OVERPASS_MIRRORS`), nearest-way match via `shapely.strtree.STRtree`,

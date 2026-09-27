@@ -110,6 +110,74 @@
       </form>
     </div>
 
+    <!-- Cetak peta (static/js/print-map.js, POST /api/peta/cetak -> map_print.py) -->
+    <div class="datatable-overlay" id="printMapOverlay" hidden>
+      <form class="print-modal" id="printMapForm">
+        <div class="datatable-head">
+          <div class="datatable-head-title">
+            <h3><i class="bi bi-printer-fill"></i> Cetak Peta</h3>
+            <span class="datatable-meta">Area cetak = tampilan peta saat ini</span>
+          </div>
+          <button type="button" class="icon-btn" id="printMapClose" aria-label="Tutup"><i class="bi bi-x-lg"></i></button>
+        </div>
+        <div class="print-body">
+          <div class="print-grid">
+            <label class="print-field print-span2">Judul peta
+              <input type="text" id="printJudul" maxlength="140" required />
+            </label>
+            <label class="print-field print-span2">Subjudul
+              <input type="text" id="printSubjudul" maxlength="200" placeholder="Opsional, mis. wilayah atau sumber data" />
+            </label>
+            <div class="print-field">Format
+              <div class="print-seg" role="radiogroup">
+                <label><input type="radio" name="printFormat" value="pdf" checked /><span><i class="bi bi-file-earmark-pdf"></i> PDF</span></label>
+                <label><input type="radio" name="printFormat" value="docx" /><span><i class="bi bi-file-earmark-word"></i> DOCX</span></label>
+              </div>
+            </div>
+            <div class="print-field">Kertas &amp; orientasi
+              <div class="print-inline">
+                <select id="printKertas"><option value="A4">A4</option><option value="A3">A3</option></select>
+                <select id="printOrientasi"><option value="landscape">Lanskap</option><option value="portrait">Potret</option></select>
+              </div>
+            </div>
+            <label class="print-field">Basemap
+              <select id="printBasemap">
+                <option value="osm">OpenStreetMap</option>
+                <option value="terang">Terang (abu-abu)</option>
+                <option value="satelit">Citra satelit</option>
+                <option value="none">Tanpa basemap</option>
+              </select>
+            </label>
+            <div class="print-field">Label fitur
+              <div class="print-inline">
+                <select id="printLabelMode">
+                  <option value="atribut">Nama / atribut</option>
+                  <option value="nomor">Nomor (rujuk tabel)</option>
+                  <option value="none">Tanpa label</option>
+                </select>
+                <select id="printUkuranLabel"><option value="kecil">Kecil</option><option value="sedang" selected>Sedang</option><option value="besar">Besar</option></select>
+              </div>
+            </div>
+            <div class="print-field print-span2 print-checks">
+              <label><input type="checkbox" id="printTabel" checked /> Lampirkan tabel atribut</label>
+              <label><input type="checkbox" id="printGrid" checked /> Grid koordinat</label>
+              <label>Maks. baris/layer <input type="number" id="printMaksBaris" min="10" max="2000" step="10" value="300" /></label>
+            </div>
+            <label class="print-field print-span2">Catatan
+              <textarea id="printCatatan" rows="2" maxlength="600" placeholder="Opsional, dicetak di panel informasi peta"></textarea>
+            </label>
+          </div>
+          <div class="print-layers-head">Layer yang dicetak <span id="printLayerMeta"></span></div>
+          <div class="print-layers" id="printLayerList"></div>
+        </div>
+        <div class="print-foot">
+          <span class="print-hint" id="printStatus">Geser/zoom peta dulu untuk mengatur area cetak.</span>
+          <button type="button" class="btn btn-ghost btn-sm" id="printMapCancel">Batal</button>
+          <button type="submit" class="btn btn-primary btn-sm" id="printMapSubmit"><i class="bi bi-printer"></i> Cetak</button>
+        </div>
+      </form>
+    </div>
+
     <div class="datatable-overlay" id="dataTableOverlay" hidden>
       <div class="datatable-modal">
         <div class="datatable-head">
@@ -824,6 +892,8 @@
           <div class="maptool-sep"></div>
           <button class="maptool-btn" id="btnMapLegend" title="Legend layer aktif"><i
               class="bi bi-list-ul"></i></button>
+          <button class="maptool-btn" id="btnPrintMap" title="Cetak peta (PDF/DOCX) dengan label &amp; tabel atribut"><i
+              class="bi bi-printer-fill"></i></button>
         </div>
 
         <div class="map-legend" id="mapLegend" hidden>
@@ -905,6 +975,7 @@
   <script src="/js/pelabuhan-urgensi.js"></script>
   <script src="/js/chat.js"></script>
   <script src="/js/export.js"></script>
+  <script src="/js/print-map.js"></script>
   <script src="/js/main.js"></script>
 </body>
 

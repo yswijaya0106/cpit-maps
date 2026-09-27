@@ -90,6 +90,24 @@ async function analyzeUsulanInpres() {
   });
 }
 
+// Label + atribut polyline usulan utk cetak peta (print-map.js membaca
+// pl.get("printInfo"); Polyline Google tidak menyimpan metadata sendiri).
+function usulanPrintInfo(u, kmlLengthKm) {
+  return {
+    id: u.id,
+    label: u.nama_ruas || u.nama_kegiatan || `Usulan ${u.id}`,
+    properties: {
+      "ID": u.id,
+      "Nama Kegiatan": u.nama_kegiatan || "",
+      "Nama Ruas": u.nama_ruas || "",
+      "Kabupaten/Kota": u.kabupaten_kota || "",
+      "Provinsi": u.provinsi || "",
+      "Jenis Penanganan": u.jenis_penanganan || "",
+      "Panjang KML (km)": Number(kmlLengthKm.toFixed(2)),
+    },
+  };
+}
+
 async function showUsulanGeometry(usulan, btn) {
   btn.disabled = true;
   const originalText = btn.innerHTML;
@@ -119,6 +137,7 @@ async function showUsulanGeometry(usulan, btn) {
       const info = new google.maps.InfoWindow({
         content: `<div class="usulan-info-tooltip"><strong>${escapeHtml(usulan.nama_kegiatan || usulan.nama_ruas)}</strong><br/>ID: ${usulan.id}<br/>${escapeHtml(usulan.jenis_penanganan || "")} · ${formatRupiah(usulan.alokasi_usulan_pemda)}<br/>Panjang KML: ${kmlLengthKm.toFixed(2)} km</div>`,
       });
+      pl.set("printInfo", usulanPrintInfo(usulan, kmlLengthKm)); // dipakai cetak peta (print-map.js)
       pl.addListener("click", (e) => {
         info.setPosition(e.latLng);
         info.open(state.map);
@@ -1087,6 +1106,7 @@ async function flyToUsulanGeometry(u) {
         map: state.map,
         zIndex: 25,
       });
+      pl.set("printInfo", usulanPrintInfo(u, kmlLengthKm)); // dipakai cetak peta (print-map.js)
       pl.addListener("click", (e) => {
         info.setPosition(e.latLng);
         info.open(state.map);

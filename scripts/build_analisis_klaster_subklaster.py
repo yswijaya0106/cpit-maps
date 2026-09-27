@@ -116,6 +116,28 @@ def fmt(x, d=2):
     return s.replace(",", "X").replace(".", ",").replace("X", ".")
 
 
+CANDIDATE_MAX_COBA = 5  # coba OSRM ke N kandidat terdekat (garis lurus), berhenti di yang pertama tersambung
+
+
+def pilih_reachable(kandidat):
+    """kandidat: list baris terurut jarak garis lurus menaik (masing2 py 'ref_lat'/'ref_lon'/'lat'/'lon').
+    Coba OSRM ke tiap kandidat (maks CANDIDATE_MAX_COBA) sampai yg PERTAMA tersambung -> (kandidat, rute).
+    Kalau semua yg dicoba gagal, kembalikan (kandidat_terdekat, None) -- garis lurus tetap dipakai sbg
+    fallback, tapi ditandai eksplisit "tidak ditemukan" (lihat label_rute), bukan diam-diam disembunyikan.
+    Ini krn bandara/pelabuhan yg SECARA GEODESIK terdekat kadang tak punya akses jalan sama sekali
+    (banyak bandara perintis pedalaman Papua), padahal kandidat berikutnya yg sedikit lebih jauh
+    justru tersambung jalan -- ditemukan dari kasus nyata (Bandara Bade tak tersambung jalan dari satu
+    subklaster, padahal Bandara Okaba yg sedikit lebih jauh justru bisa, 25 Sep 2026)."""
+    if not kandidat:
+        return None, None
+    for kand in kandidat[:CANDIDATE_MAX_COBA]:
+        rute = rute_osrm(kand["ref_lon"], kand["ref_lat"], kand["lon"], kand["lat"])
+        time.sleep(OSRM_JEDA_DETIK)
+        if rute:
+            return kand, rute
+    return kandidat[0], None
+
+
 def main():
     t0 = time.time()
     with db_cursor() as cur:
@@ -211,9 +233,9 @@ CREATE TABLE IF NOT EXISTS subklaster_analisis_transportasi (
                        ST_Y(b.geom) AS lat, ST_X(b.geom) AS lon,
                        ST_Y(ST_ClosestPoint(%(g)s::geometry, b.geom)) AS ref_lat, ST_X(ST_ClosestPoint(%(g)s::geometry, b.geom)) AS ref_lon
                 FROM map_layers b WHERE provinsi = 'BANDARA' AND layer = 'Bandara'
-                ORDER BY b.geom <-> %(g)s::geometry LIMIT 1
-            """, {"g": g})
-            bandara = cur.fetchone()
+                ORDER BY b.geom <-> %(g)s::geometry LIMIT %(n)s
+            """, {"g": g, "n": CANDIDATE_MAX_COBA})
+            kandidat_bandara = cur.fetchall()
 
             cur.execute("""
                 SELECT p.attrs->>'Name' AS nama, p.attrs->>'hierarki' AS hierarki,
@@ -221,9 +243,9 @@ CREATE TABLE IF NOT EXISTS subklaster_analisis_transportasi (
                        ST_Y(p.geom) AS lat, ST_X(p.geom) AS lon,
                        ST_Y(ST_ClosestPoint(%(g)s::geometry, p.geom)) AS ref_lat, ST_X(ST_ClosestPoint(%(g)s::geometry, p.geom)) AS ref_lon
                 FROM map_layers p WHERE provinsi = 'PELABUHAN' AND layer = 'Pelabuhan Nasional'
-                ORDER BY p.geom <-> %(g)s::geometry LIMIT 1
-            """, {"g": g})
-            pelabuhan = cur.fetchone()
+                ORDER BY p.geom <-> %(g)s::geometry LIMIT %(n)s
+            """, {"g": g, "n": CANDIDATE_MAX_COBA})
+            kandidat_pelabuhan = cur.fetchall()
 
             cur.execute("""
                 SELECT jaringan, kode, nama, klasifikasi, kondisi,
@@ -243,20 +265,17 @@ CREATE TABLE IF NOT EXISTS subklaster_analisis_transportasi (
                        ST_Y(ST_ClosestPoint(geom, %(g)s::geometry)) AS lat, ST_X(ST_ClosestPoint(geom, %(g)s::geometry)) AS lon,
                        ST_Y(ST_ClosestPoint(%(g)s::geometry, geom)) AS ref_lat, ST_X(ST_ClosestPoint(%(g)s::geometry, geom)) AS ref_lon
                 FROM tmp_koridor_subklaster
-                ORDER BY geom <-> %(g)s::geometry LIMIT 1
-            """, {"g": g})
-            koridor = cur.fetchone()
+                ORDER BY geom <-> %(g)s::geometry LIMIT %(n)s
+            """, {"g": g, "n": CANDIDATE_MAX_COBA})
+            kandidat_koridor = cur.fetchall()
 
-            rute_b = rute_p = rute_k = None
-            if bandara:
-                rute_b = rute_osrm(bandara["ref_lon"], bandara["ref_lat"], bandara["lon"], bandara["lat"])
-                time.sleep(OSRM_JEDA_DETIK)
-            if pelabuhan:
-                rute_p = rute_osrm(pelabuhan["ref_lon"], pelabuhan["ref_lat"], pelabuhan["lon"], pelabuhan["lat"])
-                time.sleep(OSRM_JEDA_DETIK)
-            if koridor:
-                rute_k = rute_osrm(koridor["ref_lon"], koridor["ref_lat"], koridor["lon"], koridor["lat"])
-                time.sleep(OSRM_JEDA_DETIK)
+            # Bandara/pelabuhan/koridor yg SECARA GARIS LURUS terdekat kadang tak tersambung jalan
+            # sama sekali -- coba beberapa kandidat terdekat berikutnya, pakai yg PERTAMA tersambung
+            # (lihat pilih_reachable). "bandara"/"pelabuhan"/"koridor" di bawah = kandidat TERPILIH
+            # (belum tentu yg tergeodesik terdekat kalau kandidat itu ternyata tak tersambung jalan).
+            bandara, rute_b = pilih_reachable(kandidat_bandara)
+            pelabuhan, rute_p = pilih_reachable(kandidat_pelabuhan)
+            koridor, rute_k = pilih_reachable(kandidat_koridor)
             n_osrm_ok += sum(1 for x in (rute_b, rute_p, rute_k) if x)
             n_osrm_gagal += sum(1 for x in (rute_b, rute_p, rute_k) if x is None)
 
@@ -289,6 +308,8 @@ CREATE TABLE IF NOT EXISTS subklaster_analisis_transportasi (
                 "row": row, "bandara": bandara, "pelabuhan": pelabuhan, "jalan": jalan, "koridor": koridor,
                 "rute_b": rute_b, "rute_p": rute_p, "rute_k": rute_k,
                 "semua_bandara": semua_bandara, "semua_pelabuhan": semua_pelabuhan,
+                "kandidat_bandara": kandidat_bandara, "kandidat_pelabuhan": kandidat_pelabuhan,
+                "kandidat_koridor": kandidat_koridor,
             })
         print(f"  OSRM: {n_osrm_ok} rute ditemukan, {n_osrm_gagal} tidak ({time.time() - t_osrm:.1f}s)")
 
@@ -335,18 +356,32 @@ CREATE TABLE IF NOT EXISTS subklaster_analisis_transportasi (
                 lama = f"{jam} jam {menit} menit" if jam else f"{menit} menit"
                 return f"{fmt(jarak)} km, ~{lama} (rute jalan OSRM/OpenStreetMap, estimasi berkendara)"
 
+            def catatan_lompat(kandidat, dipilih, nama_jenis):
+                """Catatan kalau kandidat TERPILIH (tersambung jalan) BUKAN yg tergeodesik terdekat --
+                yg terdekat dilewati krn OSRM tak menemukan rute ke situ."""
+                if not kandidat or not dipilih or kandidat[0]["nama"] == dipilih["nama"]:
+                    return None
+                terdekat = kandidat[0]
+                return (f"{terdekat['nama']} sebenarnya lebih dekat garis lurus ({fmt(terdekat['jarak_km'])} km) tapi "
+                        f"OSRM tak menemukan rute jalan ke situ -- dipakai {nama_jenis} berikutnya yg tersambung jalan")
+
             at = {
                 "Bandara Terdekat": b["nama"] if b else None, "Kelas Bandara Terdekat": b["kelas"] if b else None,
                 "Jarak Bandara Terdekat (km, garis lurus)": fmt(b["jarak_km"]) if b else None,
                 "Rute Jalan ke Bandara Terdekat": label_rute(rb, b["nama"]) if b else None,
+                "Catatan Bandara Terdekat": catatan_lompat(h["kandidat_bandara"], b, "bandara"),
                 "Pelabuhan Terdekat": p["nama"] if p else None,
                 "Hierarki Pelabuhan Terdekat": p["hierarki"] if p else None,
                 "Jarak Pelabuhan Terdekat (km, garis lurus)": fmt(p["jarak_km"]) if p else None,
                 "Rute Jalan ke Pelabuhan Terdekat": label_rute(rp, p["nama"]) if p else None,
+                "Catatan Pelabuhan Terdekat": catatan_lompat(h["kandidat_pelabuhan"], p, "pelabuhan"),
                 "Koridor IJD Terdekat": (f"{kor['no_koridor']} - {kor['nama_koridor']}" if kor and kor["nama_koridor"]
                                          else (kor["no_koridor"] if kor else None)),
                 "Jarak Koridor IJD Terdekat (km, garis lurus)": fmt(kor["jarak_km"]) if kor else None,
                 "Rute Jalan ke Koridor IJD Terdekat": label_rute(rk, kor["no_koridor"]) if kor else None,
+                "Catatan Koridor IJD Terdekat": catatan_lompat(
+                    [{"nama": x["no_koridor"], "jarak_km": x["jarak_km"]} for x in h["kandidat_koridor"]],
+                    {"nama": kor["no_koridor"]} if kor else None, "koridor"),
                 "Jaringan Jalan Terdekat": j["jaringan"] if j else None,
                 "Ruas Jalan Terdekat": (j["nama"] or j["kode"]) if j else None,
                 "Klasifikasi Jalan Terdekat": j["klasifikasi"] if j else None,

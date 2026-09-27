@@ -1,9 +1,26 @@
 # -*- coding: utf-8 -*-
 """Analisis konektivitas per Klaster/Subklaster Merauke (layer "SUBKLASTER",
-32 poligon dari `scripts/import_subklaster_to_postgis.py`): bandara terdekat,
-pelabuhan terdekat, ruas jalan terdekat (dari SEMUA jaringan yang tersedia di
-sekitar Merauke -- Jalan Nasional beserta kondisi IRI-nya, JARINGAN JALAN
-RTRW Papua Selatan, Jalan Provinsi/Tol/Kabupaten-Kota) + jaraknya.
+32 poligon dari `scripts/import_subklaster_to_postgis.py`): bandara TERDEKAT,
+pelabuhan TERDEKAT, koridor IJD TERDEKAT (layer "PETA KORIDOR"), ruas jalan
+terdekat (dari SEMUA jaringan yang tersedia di sekitar Merauke -- Jalan
+Nasional beserta kondisi IRI-nya, JARINGAN JALAN RTRW Papua Selatan, Jalan
+Provinsi/Tol/Kabupaten-Kota) + jaraknya, PLUS rute jalan sungguhan (OSRM,
+data OpenStreetMap -- jarak tempuh, estimasi durasi, geometri) ke bandara/
+pelabuhan/koridor terdekat itu, dan daftar SEMUA bandara + pelabuhan di
+pulau Papua (bukan cuma yang terdekat) dengan jarak garis lurusnya masing-
+masing (25 Sep 2026, permintaan user).
+
+**Kenapa rute jalan sungguhan cuma dihitung utk yang TERDEKAT, bukan
+ke SEMUA ~106 bandara+pelabuhan di pulau**: memanggil OSRM ribuan kali
+(32 subklaster x 106 target) tidak realistis (server demo publik, bukan
+infrastruktur proyek ini) dan sebagian besar bandara perintis pedalaman
+Papua memang TIDAK punya akses jalan sama sekali di OSM -- rutenya pasti
+gagal ("NoRoute"). Jadi: SEMUA bandara/pelabuhan pulau ditampilkan sbg
+titik dengan jarak garis lurus (murah, selalu ada), sedang rute jalan
+sungguhan (jarak tempuh + durasi + polyline) hanya utk 3 target yang sudah
+ditentukan sbg "terdekat" (bandara/pelabuhan/koridor) -- kalau OSRM tak
+menemukan rute utk salah satunya, ditandai eksplisit "tidak ditemukan",
+BUKAN fallback diam-diam ke garis lurus tanpa keterangan.
 
 Hasil disimpan di:
   1. Tabel `subklaster_analisis_transportasi` (kunci klaster+subklaster) --
@@ -13,24 +30,29 @@ Hasil disimpan di:
      dicocokkan per (Klaster, Subklaster) yang sama -- nilai per grup, bukan
      dihitung ulang per poligon detail, karena semua poligon detail dalam
      satu grup Klaster+Subklaster cukup dekat utk berbagi hasil yang sama).
-     Atribut berlabel jelas utk popup identify ("Bandara Terdekat", "Jarak
-     Pelabuhan Terdekat (km)", "Kondisi Jalan Terdekat", dst.) + koordinat
-     tersembunyi (awalan "_", tak tampil di popup, dipakai frontend
-     menggambar titik bandara/pelabuhan & garis rute lurus saat poligon
-     diklik -- lihat attachSubklasterAnalisis di map-tools.js).
+     Atribut berlabel jelas utk popup identify ("Bandara Terdekat", "Rute
+     Jalan ke Bandara Terdekat", "Kondisi Jalan Terdekat", dst.) + koordinat/
+     array tersembunyi (awalan "_", tak tampil di popup: `_bandara_rute`/
+     `_pelabuhan_rute`/`_koridor_rute` = polyline OSRM, `_semua_bandara`/
+     `_semua_pelabuhan` = array SEMUA titik pulau) dipakai frontend
+     menggambar titik + rute saat poligon diklik -- lihat
+     attachSubklasterAnalisis di map-tools.js.
 
-Jarak SEMUA garis lurus (geodesik, BUKAN jarak tempuh jalan) -- konsisten
-dgn pola "terdekat" lain di repo ini (build_koridor_simpul_terdekat.py,
-spatial_join_pelabuhan_urgensi.py). "Kondisi jalan": hanya tersedia utk ruas
-Jalan Nasional (dari survei IRI, sudah tergabung di attrs-nya oleh
-import_iri_ruas_nasional.py) dan JARINGAN JALAN RTRW (Status Jaringan
-Rencana/Eksisting, BUKAN kondisi fisik) -- jaringan lain (Provinsi/Tol/
-Kabupaten-Kota) tidak punya data kondisi, ditandai apa adanya, bukan
-diasumsikan.
+Jarak "garis lurus" = geodesik (BUKAN jarak tempuh jalan), konsisten dgn
+pola "terdekat" lain di repo ini (build_koridor_simpul_terdekat.py,
+spatial_join_pelabuhan_urgensi.py); jarak "rute jalan" dari OSRM (lihat di
+atas). "Kondisi jalan": hanya tersedia utk ruas Jalan Nasional (dari survei
+IRI, sudah tergabung di attrs-nya oleh import_iri_ruas_nasional.py) dan
+JARINGAN JALAN RTRW (Status Jaringan Rencana/Eksisting, BUKAN kondisi
+fisik) -- jaringan lain (Provinsi/Tol/Kabupaten-Kota) tidak punya data
+kondisi, ditandai apa adanya, bukan diasumsikan.
 
 Idempotent (DELETE + reinsert tabel; attrs merge selalu menimpa kunci yang
-sama). **Restart server / rerun cukup** -- cache layer peta (app.py
-_map_layer_payload) berkunci `imported_at`, yang di-bump skrip ini sendiri.
+sama). Butuh akses internet ke router.project-osrm.org (server demo publik
+OSRM) -- runtime didominasi jeda OSRM (~96 panggilan x 0,3 dtk jeda +
+latensi jaringan, biasanya 1-3 menit total). **Restart server / rerun
+cukup** -- cache layer peta (app.py `_map_layer_payload`) berkunci
+`imported_at`, yang di-bump skrip ini sendiri.
 
 Usage (venv aktif):
     python scripts/build_analisis_klaster_subklaster.py
@@ -45,6 +67,7 @@ sys.path.insert(0, str(ROOT))
 if sys.stdout.encoding and sys.stdout.encoding.lower() != "utf-8":
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
 
+import requests  # noqa: E402
 from psycopg.types.json import Json  # noqa: E402
 
 from db import db_cursor  # noqa: E402
@@ -55,6 +78,35 @@ FUNGSI_NAS_SQL = (
     "CASE attrs->>'ROAD_FUNCT' WHEN 'A' THEN 'Arteri' WHEN 'K1' THEN 'Kolektor 1' "
     "WHEN 'K2' THEN 'Kolektor 2' WHEN 'K3' THEN 'Kolektor 3' ELSE attrs->>'ROAD_FUNCT' END"
 )
+# "Pulau itu" (Papua) -- SHP RBI sumber layer BANDARA/PELABUHAN masih memakai label provinsi
+# PRA-pemekaran 2022 ("Papua", "Papua Barat" saja), jadi 2 label ini SUDAH mencakup seluruh
+# pulau (Papua Selatan/Tengah/Pegunungan/Barat Daya belum punya label sendiri di sumber ini).
+PULAU_PROVINSI_BANDARA = ("Papua", "Papua Barat")
+PULAU_PROVINSI_PELABUHAN = ("Papua", "Papua Barat")
+
+OSRM_BASE = "https://router.project-osrm.org/route/v1/driving"
+OSRM_TIMEOUT_DETIK = 8
+OSRM_JEDA_DETIK = 0.3  # sopan ke server demo publik OSRM (OpenStreetMap), bukan API berbayar
+
+
+def rute_osrm(lon1, lat1, lon2, lat2):
+    """Rute jalan (OSRM, data OpenStreetMap) antara 2 titik -> (jarak_km, durasi_menit, [[lon,lat],...])
+    atau None kalau OSRM tak menemukan rute (umum di Papua pedalaman -- banyak bandara perintis
+    TANPA akses jalan sama sekali) / server tak terjangkau. Server demo publik OSRM, dipakai
+    apa adanya (bukan infrastruktur milik proyek ini) -- jeda antar panggilan & timeout pendek
+    supaya gagal cepat, bukan menggantung proses import."""
+    try:
+        r = requests.get(
+            f"{OSRM_BASE}/{lon1},{lat1};{lon2},{lat2}",
+            params={"overview": "full", "geometries": "geojson"}, timeout=OSRM_TIMEOUT_DETIK,
+        )
+        d = r.json()
+        if d.get("code") != "Ok":
+            return None
+        leg = d["routes"][0]
+        return leg["distance"] / 1000.0, leg["duration"] / 60.0, leg["geometry"]["coordinates"]
+    except Exception:
+        return None
 
 
 def fmt(x, d=2):
@@ -76,6 +128,13 @@ CREATE TABLE IF NOT EXISTS subklaster_analisis_transportasi (
   jalan_kondisi TEXT, jarak_jalan_km NUMERIC(10, 2),
   PRIMARY KEY (klaster, subklaster)
 )""")
+        for kol, tipe in (
+            ("koridor_terdekat", "TEXT"), ("koridor_nama", "TEXT"), ("jarak_koridor_km", "NUMERIC(10,2)"),
+            ("rute_bandara_jarak_km", "NUMERIC(10,2)"), ("rute_bandara_durasi_menit", "NUMERIC(10,1)"),
+            ("rute_pelabuhan_jarak_km", "NUMERIC(10,2)"), ("rute_pelabuhan_durasi_menit", "NUMERIC(10,1)"),
+            ("rute_koridor_jarak_km", "NUMERIC(10,2)"), ("rute_koridor_durasi_menit", "NUMERIC(10,1)"),
+        ):
+            cur.execute(f"ALTER TABLE subklaster_analisis_transportasi ADD COLUMN IF NOT EXISTS {kol} {tipe}")
 
         cur.execute(f"""
             CREATE TEMP TABLE tmp_jalan_subklaster AS
@@ -118,6 +177,20 @@ CREATE TABLE IF NOT EXISTS subklaster_analisis_transportasi (
         cur.execute("SELECT jaringan, count(*) n FROM tmp_jalan_subklaster GROUP BY 1 ORDER BY 1")
         print(f"  tabel temp jalan siap: {[(r['jaringan'], r['n']) for r in cur.fetchall()]}")
 
+        # koridor IJD (layer "PETA KORIDOR") didissolve per NO_KORIDOR SEKALI di sini (bukan di
+        # dalam loop per-subklaster) -- ST_Collect atas ~11.612 ruas nasional itu mahal; dipanggil
+        # 32x dlm loop (versi awal) bikin skrip nyaris tak selesai dlm 280 dtk.
+        cur.execute("""
+            CREATE TEMP TABLE tmp_koridor_subklaster AS
+            SELECT attrs->>'NO_KORIDOR' AS no_koridor, MAX(attrs->>'NAMA_KORID') AS nama_koridor, ST_Collect(geom) AS geom
+            FROM map_layers WHERE layer = 'PETA KORIDOR' AND attrs->>'NO_KORIDOR' IS NOT NULL
+            GROUP BY 1
+        """)
+        cur.execute("CREATE INDEX ON tmp_koridor_subklaster USING GIST (geom)")
+        cur.execute("ANALYZE tmp_koridor_subklaster")
+        cur.execute("SELECT count(*) n FROM tmp_koridor_subklaster")
+        print(f"  tabel temp koridor siap: {cur.fetchone()['n']} koridor")
+
         cur.execute("""
             SELECT attrs->>'Klaster' AS klaster, attrs->>'Subklaster' AS subklaster,
                    attrs->>'Keterangan AOI' AS keterangan_aoi, (attrs->>'Luas (ha)')::numeric AS luas_ha,
@@ -128,7 +201,9 @@ CREATE TABLE IF NOT EXISTS subklaster_analisis_transportasi (
         print(f"  {len(subklaster)} subklaster (layer SUBKLASTER)")
 
         hasil = []
-        for row in subklaster:
+        t_osrm = time.time()
+        n_osrm_ok = n_osrm_gagal = 0
+        for i, row in enumerate(subklaster, 1):
             g = row["g"]
             cur.execute("""
                 SELECT b.attrs->>'Name' AS nama, b.attrs->>'Kelas' AS kelas,
@@ -159,21 +234,88 @@ CREATE TABLE IF NOT EXISTS subklaster_analisis_transportasi (
             """, {"g": g, "radius": RADIUS_DERAJAT})
             jalan = cur.fetchone()
 
-            hasil.append({"row": row, "bandara": bandara, "pelabuhan": pelabuhan, "jalan": jalan})
+            # koridor IJD terdekat (layer "PETA KORIDOR", overlay yang sama dipakai parameter D
+            # skoring IJD) -- ambil dari tmp_koridor_subklaster (sudah didissolve per koridor +
+            # ber-index sekali di atas, lihat komentarnya).
+            cur.execute("""
+                SELECT no_koridor, nama_koridor,
+                       ST_Distance(geom::geography, %(g)s::geometry::geography) / 1000.0 AS jarak_km,
+                       ST_Y(ST_ClosestPoint(geom, %(g)s::geometry)) AS lat, ST_X(ST_ClosestPoint(geom, %(g)s::geometry)) AS lon,
+                       ST_Y(ST_ClosestPoint(%(g)s::geometry, geom)) AS ref_lat, ST_X(ST_ClosestPoint(%(g)s::geometry, geom)) AS ref_lon
+                FROM tmp_koridor_subklaster
+                ORDER BY geom <-> %(g)s::geometry LIMIT 1
+            """, {"g": g})
+            koridor = cur.fetchone()
+
+            rute_b = rute_p = rute_k = None
+            if bandara:
+                rute_b = rute_osrm(bandara["ref_lon"], bandara["ref_lat"], bandara["lon"], bandara["lat"])
+                time.sleep(OSRM_JEDA_DETIK)
+            if pelabuhan:
+                rute_p = rute_osrm(pelabuhan["ref_lon"], pelabuhan["ref_lat"], pelabuhan["lon"], pelabuhan["lat"])
+                time.sleep(OSRM_JEDA_DETIK)
+            if koridor:
+                rute_k = rute_osrm(koridor["ref_lon"], koridor["ref_lat"], koridor["lon"], koridor["lat"])
+                time.sleep(OSRM_JEDA_DETIK)
+            n_osrm_ok += sum(1 for x in (rute_b, rute_p, rute_k) if x)
+            n_osrm_gagal += sum(1 for x in (rute_b, rute_p, rute_k) if x is None)
+
+            # SEMUA bandara & pelabuhan di pulau Papua (jarak garis lurus saja -- rute jalan OSRM
+            # hanya dihitung utk yang TERDEKAT di atas, memanggil OSRM ratusan kali lagi utk tiap
+            # pasangan tidak realistis & kebanyakan bandara perintis pedalaman memang tanpa akses
+            # jalan sama sekali).
+            cur.execute("""
+                SELECT attrs->>'Name' AS nama, attrs->>'Kelas' AS kelas,
+                       ST_Y(geom) AS lat, ST_X(geom) AS lon,
+                       ST_Distance(geom::geography, %(g)s::geometry::geography) / 1000.0 AS jarak_km
+                FROM map_layers WHERE provinsi = 'BANDARA' AND layer = 'Bandara' AND attrs->>'provinsi' = ANY(%(prov)s)
+                ORDER BY jarak_km
+            """, {"g": g, "prov": list(PULAU_PROVINSI_BANDARA)})
+            semua_bandara = cur.fetchall()
+            cur.execute("""
+                SELECT attrs->>'Name' AS nama, attrs->>'hierarki' AS hierarki,
+                       ST_Y(geom) AS lat, ST_X(geom) AS lon,
+                       ST_Distance(geom::geography, %(g)s::geometry::geography) / 1000.0 AS jarak_km
+                FROM map_layers WHERE provinsi = 'PELABUHAN' AND layer = 'Pelabuhan Nasional' AND attrs->>'Provinsi' = ANY(%(prov)s)
+                ORDER BY jarak_km
+            """, {"g": g, "prov": list(PULAU_PROVINSI_PELABUHAN)})
+            semua_pelabuhan = cur.fetchall()
+
+            print(f"  [{i}/{len(subklaster)}] {row['klaster']} / {row['subklaster']}: "
+                  f"rute OSRM {'bandara ok' if rute_b else 'bandara gagal'}, "
+                  f"{'pelabuhan ok' if rute_p else 'pelabuhan gagal'}, {'koridor ok' if rute_k else 'koridor gagal'}")
+
+            hasil.append({
+                "row": row, "bandara": bandara, "pelabuhan": pelabuhan, "jalan": jalan, "koridor": koridor,
+                "rute_b": rute_b, "rute_p": rute_p, "rute_k": rute_k,
+                "semua_bandara": semua_bandara, "semua_pelabuhan": semua_pelabuhan,
+            })
+        print(f"  OSRM: {n_osrm_ok} rute ditemukan, {n_osrm_gagal} tidak ({time.time() - t_osrm:.1f}s)")
 
         cur.execute("DELETE FROM subklaster_analisis_transportasi")
         insert_rows = []
         for h in hasil:
-            r, b, p, j = h["row"], h["bandara"], h["pelabuhan"], h["jalan"]
+            r, b, p, j, k = h["row"], h["bandara"], h["pelabuhan"], h["jalan"], h["koridor"]
+            rb, rp, rk = h["rute_b"], h["rute_p"], h["rute_k"]
             insert_rows.append((
                 r["klaster"], r["subklaster"], r["keterangan_aoi"], r["luas_ha"],
                 b["nama"] if b else None, b["kelas"] if b else None, round(b["jarak_km"], 2) if b else None,
                 p["nama"] if p else None, p["hierarki"] if p else None, round(p["jarak_km"], 2) if p else None,
                 j["jaringan"] if j else None, j["kode"] if j else None, j["nama"] if j else None,
                 j["klasifikasi"] if j else None, j["kondisi"] if j else None, round(j["jarak_km"], 2) if j else None,
+                k["no_koridor"] if k else None, k["nama_koridor"] if k else None, round(k["jarak_km"], 2) if k else None,
+                round(rb[0], 2) if rb else None, round(rb[1], 1) if rb else None,
+                round(rp[0], 2) if rp else None, round(rp[1], 1) if rp else None,
+                round(rk[0], 2) if rk else None, round(rk[1], 1) if rk else None,
             ))
         cur.executemany(
-            "INSERT INTO subklaster_analisis_transportasi VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+            "INSERT INTO subklaster_analisis_transportasi ("
+            "klaster, subklaster, keterangan_aoi, luas_ha, bandara_terdekat, kelas_bandara, jarak_bandara_km, "
+            "pelabuhan_terdekat, hierarki_pelabuhan, jarak_pelabuhan_km, jalan_jaringan, jalan_kode, jalan_nama, "
+            "jalan_klasifikasi, jalan_kondisi, jarak_jalan_km, koridor_terdekat, koridor_nama, jarak_koridor_km, "
+            "rute_bandara_jarak_km, rute_bandara_durasi_menit, rute_pelabuhan_jarak_km, rute_pelabuhan_durasi_menit, "
+            "rute_koridor_jarak_km, rute_koridor_durasi_menit"
+            ") VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
             insert_rows,
         )
         print(f"  tabel subklaster_analisis_transportasi: {len(insert_rows)} baris")
@@ -181,26 +323,56 @@ CREATE TABLE IF NOT EXISTS subklaster_analisis_transportasi (
         # atribut ditambahkan ke layer SUBKLASTER (32) & SUBKLASTER DETAIL - * (per Klaster+Subklaster yg sama)
         n_ringkas = n_detail = 0
         for h in hasil:
-            r, b, p, j = h["row"], h["bandara"], h["pelabuhan"], h["jalan"]
+            r, b, p, j, kor = h["row"], h["bandara"], h["pelabuhan"], h["jalan"], h["koridor"]
+            rb, rp, rk = h["rute_b"], h["rute_p"], h["rute_k"]
+
+            def label_rute(rute, nama_sasaran):
+                if not rute:
+                    return f"Rute jalan (OSRM/OpenStreetMap) tidak ditemukan ke {nama_sasaran} -- kemungkinan tak ada akses jalan"
+                jarak, durasi, _ = rute
+                jam = int(durasi // 60)
+                menit = round(durasi % 60)
+                lama = f"{jam} jam {menit} menit" if jam else f"{menit} menit"
+                return f"{fmt(jarak)} km, ~{lama} (rute jalan OSRM/OpenStreetMap, estimasi berkendara)"
+
             at = {
                 "Bandara Terdekat": b["nama"] if b else None, "Kelas Bandara Terdekat": b["kelas"] if b else None,
-                "Jarak Bandara Terdekat (km)": fmt(b["jarak_km"]) if b else None,
+                "Jarak Bandara Terdekat (km, garis lurus)": fmt(b["jarak_km"]) if b else None,
+                "Rute Jalan ke Bandara Terdekat": label_rute(rb, b["nama"]) if b else None,
                 "Pelabuhan Terdekat": p["nama"] if p else None,
                 "Hierarki Pelabuhan Terdekat": p["hierarki"] if p else None,
-                "Jarak Pelabuhan Terdekat (km)": fmt(p["jarak_km"]) if p else None,
+                "Jarak Pelabuhan Terdekat (km, garis lurus)": fmt(p["jarak_km"]) if p else None,
+                "Rute Jalan ke Pelabuhan Terdekat": label_rute(rp, p["nama"]) if p else None,
+                "Koridor IJD Terdekat": (f"{kor['no_koridor']} - {kor['nama_koridor']}" if kor and kor["nama_koridor"]
+                                         else (kor["no_koridor"] if kor else None)),
+                "Jarak Koridor IJD Terdekat (km, garis lurus)": fmt(kor["jarak_km"]) if kor else None,
+                "Rute Jalan ke Koridor IJD Terdekat": label_rute(rk, kor["no_koridor"]) if kor else None,
                 "Jaringan Jalan Terdekat": j["jaringan"] if j else None,
                 "Ruas Jalan Terdekat": (j["nama"] or j["kode"]) if j else None,
                 "Klasifikasi Jalan Terdekat": j["klasifikasi"] if j else None,
                 "Kondisi Jalan Terdekat": (j["kondisi"] if j and j["kondisi"] else
                                            ("Data kondisi tidak tersedia utk jaringan ini" if j else None)),
                 "Jarak Jalan Terdekat (km)": fmt(j["jarak_km"]) if j else None,
-                "Catatan Jarak": "Seluruh jarak garis lurus (geodesik), bukan jarak tempuh jalan",
+                "Catatan Jarak": "Jarak 'garis lurus' = geodesik, bukan jarak tempuh jalan; jarak 'rute jalan' dari OSRM (OpenStreetMap)",
                 "_bandara_lat": b["lat"] if b else None, "_bandara_lon": b["lon"] if b else None,
                 "_bandara_ref_lat": b["ref_lat"] if b else None, "_bandara_ref_lon": b["ref_lon"] if b else None,
+                "_bandara_rute": [[round(x, 5), round(y, 5)] for x, y in rb[2]] if rb else None,
                 "_pelabuhan_lat": p["lat"] if p else None, "_pelabuhan_lon": p["lon"] if p else None,
                 "_pelabuhan_ref_lat": p["ref_lat"] if p else None, "_pelabuhan_ref_lon": p["ref_lon"] if p else None,
+                "_pelabuhan_rute": [[round(x, 5), round(y, 5)] for x, y in rp[2]] if rp else None,
+                "_koridor_lat": kor["lat"] if kor else None, "_koridor_lon": kor["lon"] if kor else None,
+                "_koridor_ref_lat": kor["ref_lat"] if kor else None, "_koridor_ref_lon": kor["ref_lon"] if kor else None,
+                "_koridor_rute": [[round(x, 5), round(y, 5)] for x, y in rk[2]] if rk else None,
+                "_semua_bandara": [
+                    {"nama": x["nama"], "kelas": x["kelas"], "lat": x["lat"], "lon": x["lon"], "jarak_km": round(x["jarak_km"], 1)}
+                    for x in h["semua_bandara"]
+                ],
+                "_semua_pelabuhan": [
+                    {"nama": x["nama"], "hierarki": x["hierarki"], "lat": x["lat"], "lon": x["lon"], "jarak_km": round(x["jarak_km"], 1)}
+                    for x in h["semua_pelabuhan"]
+                ],
             }
-            at = {k: v for k, v in at.items() if v is not None}
+            at = {k2: v for k2, v in at.items() if v is not None}
             cur.execute(
                 "UPDATE map_layers SET attrs = attrs || %s::jsonb "
                 "WHERE provinsi=%s AND layer='SUBKLASTER' AND attrs->>'Klaster'=%s AND attrs->>'Subklaster'=%s",

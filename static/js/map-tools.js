@@ -373,31 +373,55 @@ function clearSubklasterAnalisis() {
 
 function attachSubklasterAnalisis(container, feature) {
   clearSubklasterAnalisis();
-  const titik = (lat, lon, label, warna) => new google.maps.Marker({
+  // titik kecil (referensi, semua bandara/pelabuhan di pulau -- hanya jarak garis lurus)
+  const titikKecil = (lat, lon, warna, judul) => new google.maps.Marker({
+    position: { lat, lng: lon }, map: state.map, title: judul,
+    icon: { path: google.maps.SymbolPath.CIRCLE, scale: 4, fillColor: warna, fillOpacity: 0.85, strokeColor: "#0f1420", strokeWeight: 1 },
+    zIndex: 150,
+  });
+  // titik besar berlabel (yang TERDEKAT -- bandara/pelabuhan/koridor terpilih)
+  const titikBesar = (lat, lon, label, warna) => new google.maps.Marker({
     position: { lat, lng: lon }, map: state.map, title: label,
     icon: { path: google.maps.SymbolPath.CIRCLE, scale: 7, fillColor: warna, fillOpacity: 1, strokeColor: "#ffffff", strokeWeight: 2 },
     label: { text: label, color: "#0f1420", fontSize: "11px", fontWeight: "700", className: "subklaster-marker-label" },
     zIndex: 200,
   });
-  const garis = (lat1, lon1, lat2, lon2, warna) => new google.maps.Polyline({
+  // garis putus-putus = perkiraan (garis lurus, dipakai kalau rute jalan OSRM tak ditemukan)
+  const garisLurus = (lat1, lon1, lat2, lon2, warna) => new google.maps.Polyline({
     path: [{ lat: lat1, lng: lon1 }, { lat: lat2, lng: lon2 }], map: state.map,
     strokeColor: warna, strokeOpacity: 0.85, strokeWeight: 2.5,
     icons: [{ icon: { path: "M 0,-1 0,1", strokeOpacity: 1, scale: 3 }, offset: "0", repeat: "14px" }],
     zIndex: 190,
   });
+  // garis utuh = rute jalan sungguhan (OSRM/OpenStreetMap), lebih dipercaya drpd garis lurus
+  const garisRute = (coordsLonLat, warna) => new google.maps.Polyline({
+    path: coordsLonLat.map(([lon, lat]) => ({ lat, lng: lon })), map: state.map,
+    strokeColor: warna, strokeOpacity: 0.9, strokeWeight: 3.5, zIndex: 195,
+  });
   const overlay = [];
-  const bLat = feature.getProperty("_bandara_lat"), bLon = feature.getProperty("_bandara_lon");
-  const bRefLat = feature.getProperty("_bandara_ref_lat"), bRefLon = feature.getProperty("_bandara_ref_lon");
-  if (bLat != null) {
-    overlay.push(titik(bLat, bLon, feature.getProperty("Bandara Terdekat") || "Bandara", "#2563eb"));
-    if (bRefLat != null) overlay.push(garis(bRefLat, bRefLon, bLat, bLon, "#2563eb"));
-  }
-  const pLat = feature.getProperty("_pelabuhan_lat"), pLon = feature.getProperty("_pelabuhan_lon");
-  const pRefLat = feature.getProperty("_pelabuhan_ref_lat"), pRefLon = feature.getProperty("_pelabuhan_ref_lon");
-  if (pLat != null) {
-    overlay.push(titik(pLat, pLon, feature.getProperty("Pelabuhan Terdekat") || "Pelabuhan", "#0d9488"));
-    if (pRefLat != null) overlay.push(garis(pRefLat, pRefLon, pLat, pLon, "#0d9488"));
-  }
+  const gambarTarget = (labelKey, latKey, lonKey, refLatKey, refLonKey, ruteKey, warna) => {
+    const lat = feature.getProperty(latKey), lon = feature.getProperty(lonKey);
+    if (lat == null) return;
+    overlay.push(titikBesar(lat, lon, feature.getProperty(labelKey) || "?", warna));
+    const rute = feature.getProperty(ruteKey);
+    if (rute) {
+      overlay.push(garisRute(rute, warna));
+    } else {
+      const refLat = feature.getProperty(refLatKey), refLon = feature.getProperty(refLonKey);
+      if (refLat != null) overlay.push(garisLurus(refLat, refLon, lat, lon, warna));
+    }
+  };
+  gambarTarget("Bandara Terdekat", "_bandara_lat", "_bandara_lon", "_bandara_ref_lat", "_bandara_ref_lon", "_bandara_rute", "#2563eb");
+  gambarTarget("Pelabuhan Terdekat", "_pelabuhan_lat", "_pelabuhan_lon", "_pelabuhan_ref_lat", "_pelabuhan_ref_lon", "_pelabuhan_rute", "#0d9488");
+  gambarTarget("Koridor IJD Terdekat", "_koridor_lat", "_koridor_lon", "_koridor_ref_lat", "_koridor_ref_lon", "_koridor_rute", "#d97706");
+
+  // SEMUA bandara & pelabuhan di pulau Papua (titik kecil, jarak garis lurus di title/tooltip saja)
+  (feature.getProperty("_semua_bandara") || []).forEach((b) => {
+    overlay.push(titikKecil(b.lat, b.lon, "#93c5fd", `${b.nama} (${b.jarak_km} km garis lurus)`));
+  });
+  (feature.getProperty("_semua_pelabuhan") || []).forEach((p) => {
+    overlay.push(titikKecil(p.lat, p.lon, "#5eead4", `${p.nama} (${p.jarak_km} km garis lurus)`));
+  });
   subklasterAnalisisOverlay = overlay;
 
   const wrap = document.createElement("div");
@@ -405,8 +429,11 @@ function attachSubklasterAnalisis(container, feature) {
   wrap.innerHTML = `
     <div class="identify-join-head"><i class="bi bi-signpost-split"></i> Analisis konektivitas</div>
     <div class="identify-join-body hint">
-      Titik bandara (biru) dan pelabuhan (hijau) terdekat, serta garis rute lurus (perkiraan, bukan
-      jarak tempuh jalan) dari titik itu ke poligon ini sudah digambar di peta.
+      Titik besar berlabel = bandara (biru), pelabuhan (hijau tua), dan koridor IJD (oranye)
+      TERDEKAT — garis utuh di antaranya adalah rute jalan sungguhan (OSRM/OpenStreetMap, arah
+      berkendara); garis putus-putus dipakai hanya kalau OSRM tidak menemukan rute jalan (garis
+      lurus, perkiraan). Titik-titik kecil biru muda/hijau muda = SEMUA bandara/pelabuhan lain di
+      pulau Papua (arahkan kursor utk nama & jaraknya).
     </div>`;
   container.appendChild(wrap);
 }

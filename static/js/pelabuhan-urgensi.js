@@ -61,9 +61,11 @@ const PELABUHAN_URGENSI_KOLOM = [
   ["Provinsi", "provinsi", "text"],
   ["Kab/Kota", "kabupaten_kota", "text"],
   ["Hirarki", "hirarki_kode", "text"],
+  ["Sumber Koordinat", "koordinat_sumber", "text"],
   ["Pelabuhan Sehirarki Terdekat", "kedekatan_pelabuhan_terdekat", "text"],
   ["Jarak Terdekat (km)", "kedekatan_jarak_km", "num"],
   ["Ambang Hirarki (km)", "kedekatan_ambang_km", "num"],
+  ["Dasar Skor Kedekatan", "kedekatan_dasar", "text"],
   ["Skor Kedekatan", "kedekatan_skor", "num"],
   ["Klasifikasi 3TP", "tiga_tp_kategori", "text"],
   ["Program 3TP", "tiga_tp_program", "prosa"],
@@ -74,8 +76,9 @@ const PELABUHAN_URGENSI_KOLOM = [
   ["Wilayah Tercakup", "penduduk_wilayah_tercakup", "prosa"],
   ["Total Penduduk", "penduduk_total", "num"],
   ["Skor Penduduk", "penduduk_skor", "num"],
-  ["Ruas Jalan Terdekat", "jalan_kode_ruas", "text"],
-  ["Nama Jalan", "jalan_nama", "text"],
+  // jalan_ruas = kode + nama (fallback nama saja / alasan kosong) -- bukan kode saja, krn
+  // mayoritas ruas jalan kab/kota di sumber SHP tidak punya kode ruas.
+  ["Ruas Jalan Terdekat", "jalan_ruas", "text"],
   ["Klasifikasi Jalan", "jalan_klasifikasi", "text"],
   ["Jarak ke Ruas Jalan (km)", "jalan_jarak_km", "num"],
   ["% Mantap (ruas usulan IJD)", "akses_pct_mantap", "num"],

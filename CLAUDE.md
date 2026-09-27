@@ -898,7 +898,18 @@ scripts/tables/layers out to staging.
   usulan IJD terdekat (`ruas_ijd_*`, satu-satunya sumber kondisi jalan;
   header kolomnya kini berlabel "ruas usulan IJD"). Skor Kedekatan
   (jarak sehirarki terdekat) tidak berubah: < ambang → 0, ≥ ambang → skala 0-10
-  min-max per hirarki, makin jauh makin tinggi (diverifikasi terhadap data).
+  min-max per hirarki, makin jauh makin tinggi (diverifikasi terhadap data);
+  min/max per hirarki + kolom "Dasar Skor Kedekatan" (rumus terisi) ikut
+  ditampilkan (27 Sep 2026). Kolom "Ruas Jalan Terdekat" = kode + nama
+  (`_pelabuhan_ruas_jalan_label`), BUKAN kode saja — mayoritas ruas kab/kota
+  di SHP tak punya kode; sel kosong diberi alasan. **Koordinat**: 216
+  pelabuhan laut "Tidak input data" di xlsx sumber; `spatial_join_pelabuhan_
+  urgensi.py` kini mengisi 31 di antaranya dari titik layer PELABUHAN
+  PENUMPANG / Pelabuhan Nasional (cocok nama + provinsi, kandidat ganda
+  berjauhan >5 km dilewati), ditandai kolom `koordinat_sumber` (kolom
+  "Sumber Koordinat" di preview/export); sisa 185 tetap kosong.
+  `import_pelabuhan_daerah.py` (DELETE+INSERT) menghapusnya — jalankan ulang
+  skrip spatial join setelah reimpor.
   DB baru wajib menjalankan skrip itu (SELECT app.py membaca kolom baru).
 - `scripts/lhr_spatial_join.py` — ad-hoc (not part of the rerun-safe
   pipeline) spatial join of each LHR ruas against BATAS KECAMATAN polygons,

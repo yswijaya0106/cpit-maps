@@ -20,6 +20,11 @@ saja, dst) via geography::ST_Distance, HANYA di antara baris yang punya
 lat/lon (~66% dari total, lihat checklist "Temuan tambahan") -- baris
 tanpa koordinat dibiarkan NULL, bukan error.
 
+Koordinat kosong di sumber diisi dulu dari titik layer peta PELABUHAN /
+PELABUHAN PENUMPANG (cocok nama + provinsi, ditandai di kolom
+koordinat_sumber) -- import_pelabuhan_daerah.py (DELETE+INSERT) menghapusnya
+lagi, jadi selalu jalankan skrip ini setelah reimpor.
+
 Idempotent: hanya mengisi baris yang jarak_sehirarki_terdekat_km-nya masih
 NULL, kecuali --force (hitung ulang semua -- perlu setelah reimport
 pelabuhan_daerah dgn koordinat baru).
@@ -30,6 +35,8 @@ Usage (venv aktif):
 """
 import argparse
 import io
+import math
+import re
 import sys
 import time
 from pathlib import Path
@@ -72,6 +79,109 @@ def _isi_hirarki_kode():
         cur.execute(
             "UPDATE pelabuhan_daerah SET hirarki_kode = NULL WHERE hirarki_pelabuhan NOT LIKE 'Laut -%'"
         )
+
+
+# --- Koordinat pengganti dari layer peta (27 Sep 2026) -----------------------------------------
+# 216 pelabuhan laut tanpa koordinat di xlsx sumber ("Tidak input data") -> jarak, penduduk radius,
+# ruas jalan terdekat semuanya kosong. Diisi dari titik layer peta yg NAMA + PROVINSI-nya cocok.
+# Konservatif: kandidat ganda dalam satu provinsi hanya dipakai bila titiknya berdekatan (<= 5 km)
+# atau kabupatennya bisa membedakan; selebihnya dibiarkan kosong, tidak ditebak.
+KOORDINAT_LAYER = [
+    # (provinsi map_layers, layer, kolom nama, kolom provinsi, kolom kabupaten, label sumber)
+    ("PELABUHAN PENUMPANG", "PELABUHAN PENUMPANG", "nama_pelabuhan", "provinsi", "kabupaten_kota",
+     "Layer peta PELABUHAN PENUMPANG (cocok nama)"),
+    ("PELABUHAN", "Pelabuhan Nasional", "Name", "Provinsi", "KABUPATEN",
+     "Layer peta Pelabuhan Nasional (cocok nama)"),
+]
+KOORDINAT_SUMBER_ASLI = "Sumber data (Titik Koordinat Lokasi)"
+_KATA_UMUM_PELABUHAN = r"\b(PELABUHAN|TERMINAL|DERMAGA|TAMBATAN PERAHU|TAMBATAN|PPI|RORO|LAUT|RAKYAT)\b"
+_ALIAS_PROVINSI = {"NTB": "NUSATENGGARABARAT", "NTT": "NUSATENGGARATIMUR", "DKI": "DKIJAKARTA"}
+
+
+def _norm_nama_pelabuhan(s):
+    s = re.sub(_KATA_UMUM_PELABUHAN, " ", (s or "").upper())
+    return re.sub(r"[^A-Z0-9]+", "", s)
+
+
+def _norm_provinsi(s):
+    s = (s or "").upper().strip()
+    s = re.sub(r"^PROVINSI\s+", "", s)
+    s = re.sub(r"^KEP\.\s*", "KEPULAUAN ", s)
+    s = re.sub(r"[^A-Z]+", "", s)
+    s = _ALIAS_PROVINSI.get(s, s)
+    # layer peta sebagian masih memakai provinsi Papua sebelum pemekaran 2022
+    return "PAPUA*" if s.startswith("PAPUA") else s
+
+
+def _norm_kabupaten(s):
+    s = (s or "").upper()
+    s = re.sub(r"^(KAB\.|KABUPATEN|KOTA)\s+", "", s.strip())
+    return re.sub(r"[^A-Z]+", "", s)
+
+
+def _jarak_km(a, b):
+    lat1, lon1, lat2, lon2 = map(math.radians, (a[0], a[1], b[0], b[1]))
+    h = math.sin((lat2 - lat1) / 2) ** 2 + math.cos(lat1) * math.cos(lat2) * math.sin((lon2 - lon1) / 2) ** 2
+    return 6371.0 * 2 * math.asin(math.sqrt(h))
+
+
+def _isi_koordinat_dari_layer():
+    """Isi lat/lon pelabuhan laut yg kosong dari titik layer peta (cocok nama + provinsi).
+    Mengembalikan jumlah baris yg baru diisi."""
+    with db_cursor() as cur:
+        cur.execute("ALTER TABLE pelabuhan_daerah ADD COLUMN IF NOT EXISTS koordinat_sumber TEXT")
+        cur.execute(
+            "UPDATE pelabuhan_daerah SET koordinat_sumber = %s WHERE lat IS NOT NULL AND koordinat_sumber IS NULL",
+            (KOORDINAT_SUMBER_ASLI,),
+        )
+        cur.execute(
+            "SELECT id, nama_pelabuhan, provinsi, kabupaten_kota FROM pelabuhan_daerah "
+            "WHERE hirarki_kode IS NOT NULL AND (lat IS NULL OR lon IS NULL)"
+        )
+        target = cur.fetchall()
+        indeks = {}  # (nama_norm, provinsi_norm) -> [kandidat]
+        for prov_ml, layer, k_nama, k_prov, k_kab, label in KOORDINAT_LAYER:
+            cur.execute(
+                f"SELECT attrs->>'{k_nama}' AS nama, attrs->>'{k_prov}' AS prov, attrs->>'{k_kab}' AS kab, "
+                "ST_Y(geom) AS lat, ST_X(geom) AS lon FROM map_layers "
+                "WHERE provinsi = %s AND layer = %s AND GeometryType(geom) = 'POINT'",
+                (prov_ml, layer),
+            )
+            for t in cur.fetchall():
+                # satu titik bisa punya dua nama ("Bintuhan/ Linau") -> daftarkan tiap bagian
+                for bagian in re.split(r"[/,]", t["nama"] or ""):
+                    kunci = _norm_nama_pelabuhan(bagian)
+                    if len(kunci) < 4:
+                        continue
+                    indeks.setdefault((kunci, _norm_provinsi(t["prov"])), []).append({**t, "sumber": label})
+
+    isi, ambigu, tak_cocok = [], [], 0
+    for p in target:
+        kand = indeks.get((_norm_nama_pelabuhan(p["nama_pelabuhan"]), _norm_provinsi(p["provinsi"])))
+        if not kand:
+            tak_cocok += 1
+            continue
+        kab = _norm_kabupaten(p["kabupaten_kota"])
+        if len(kand) > 1 and kab and not kab.startswith("PROVINSI"):
+            sekab = [k for k in kand if _norm_kabupaten(k["kab"]) == kab]
+            if sekab:
+                kand = sekab
+        titik0 = (kand[0]["lat"], kand[0]["lon"])
+        if any(_jarak_km(titik0, (k["lat"], k["lon"])) > 5.0 for k in kand[1:]):
+            ambigu.append(p["nama_pelabuhan"])
+            continue
+        isi.append((kand[0]["lat"], kand[0]["lon"], kand[0]["sumber"], p["id"]))
+
+    if isi:
+        with db_cursor() as cur:
+            cur.executemany(
+                "UPDATE pelabuhan_daerah SET lat = %s, lon = %s, koordinat_sumber = %s WHERE id = %s", isi
+            )
+    print(f"  koordinat dari layer peta: {len(isi)} diisi, {len(ambigu)} ambigu (dilewati), "
+          f"{tak_cocok} tanpa padanan nama+provinsi")
+    if ambigu:
+        print(f"    ambigu: {', '.join(ambigu)}")
+    return len(isi)
 
 
 def _isi_penduduk_radius(force: bool):
@@ -411,7 +521,11 @@ def main():
     _run_schema()
     _isi_hirarki_kode()
 
-    where_force = "" if args.force else "AND p.jarak_sehirarki_terdekat_km IS NULL"
+    print("Mengisi koordinat kosong dari layer peta (cocok nama + provinsi)...")
+    n_koordinat_baru = _isi_koordinat_dari_layer()
+
+    # Titik baru bisa menjadi "sehirarki terdekat" bagi pelabuhan LAIN -> jarak dihitung ulang semua
+    where_force = "" if (args.force or n_koordinat_baru) else "AND p.jarak_sehirarki_terdekat_km IS NULL"
     t0 = time.time()
     with db_cursor() as cur:
         cur.execute(

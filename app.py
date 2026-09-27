@@ -8629,7 +8629,7 @@ def _compute_pelabuhan_urgensi_score(row, ctx):
 
 PELABUHAN_URGENSI_SELECT_COLS = """
     id, nama_pelabuhan, provinsi, kabupaten_kota, hirarki_pelabuhan, hirarki_kode,
-    lat, lon, ripn,
+    lat, lon, ripn, koordinat_sumber,
     jarak_sehirarki_terdekat_km, pelabuhan_sehirarki_terdekat_nama,
     klasifikasi_3tp_kategori, klasifikasi_3tp_program_json,
     penduduk_radius_total, penduduk_radius_wilayah_json,
@@ -8683,6 +8683,45 @@ def _pelabuhan_jalan_terdekat(r):
             "jarak_km": r["jalan_terdekat_jarak_km"]}
 
 
+def _pelabuhan_berkoordinat(r):
+    return r["lat"] is not None and r["lon"] is not None
+
+
+def _pelabuhan_ruas_jalan_label(r):
+    """Label kolom "Ruas Jalan Terdekat": kode + nama bila ada. Sebagian besar ruas jalan kab/kota
+    di sumber SHP tidak punya kode ruas (hanya nama), jadi kolom ini TIDAK boleh cuma kode --
+    kalau cuma kode, ~170 pelabuhan yg ruas terdekatnya jalan kab/kota tampil kosong. Kosong
+    karena tak ada koordinat / tak ada jalan dalam radius juga diberi alasan eksplisit."""
+    if not _pelabuhan_berkoordinat(r):
+        return "Koordinat pelabuhan tidak tersedia"
+    if r["jalan_terdekat_jaringan"] is None:
+        return "Tidak ada ruas jalan dalam radius ±55 km"
+    kode, nama = r["jalan_terdekat_kode"], r["jalan_terdekat_nama"]
+    if kode and nama:
+        return f"{kode} – {nama}"
+    if kode or nama:
+        return kode or nama
+    return f"Ruas jalan {r['jalan_terdekat_jaringan']} (tanpa kode/nama di sumber)"
+
+
+def _pelabuhan_kedekatan_dasar(r, k):
+    """Penjelasan singkat asal Skor Kedekatan (aturan: < ambang -> 0; >= ambang -> skala 0-10
+    min-max per hirarki, makin jauh makin tinggi)."""
+    kd = k["nilai_mentah"]
+    if kd.get("jarak_km") is None:
+        return ("Koordinat pelabuhan tidak tersedia" if not _pelabuhan_berkoordinat(r)
+                else "Tidak ada pelabuhan sehirarki lain untuk dibandingkan")
+    ambang = PELABUHAN_AMBANG_KEDEKATAN_KM.get(r["hirarki_kode"])
+    if kd.get("ambang_km") is not None:
+        return f"< ambang {ambang} km → 0"
+    lo, hi = kd.get("min_km"), kd.get("max_km")
+    if lo is None or hi is None:
+        return "Data pembanding hirarki tidak cukup"
+    fmt = lambda x: f"{x:,.1f}".replace(",", "X").replace(".", ",").replace("X", ".")
+    return (f"≥ ambang {ambang} km → ({fmt(kd['jarak_km'])} − {fmt(lo)}) / "
+            f"({fmt(hi)} − {fmt(lo)}) × 10")
+
+
 def _pelabuhan_urgensi_row_detail(r, s):
     """Baris ringkas + SELURUH nilai mentah per parameter (nama pelabuhan
     terdekat, ambang, program 3TP, wilayah tercakup penduduk, rincian
@@ -8699,9 +8738,15 @@ def _pelabuhan_urgensi_row_detail(r, s):
     return {
         "id": r["id"], "nama_pelabuhan": r["nama_pelabuhan"], "provinsi": r["provinsi"],
         "kabupaten_kota": r["kabupaten_kota"], "hirarki_kode": r["hirarki_kode"],
+        # koordinat hasil cocok nama ke layer peta (bukan dari xlsx sumber) ditandai, lihat
+        # _isi_koordinat_dari_layer di scripts/spatial_join_pelabuhan_urgensi.py
+        "koordinat_sumber": (r["koordinat_sumber"] if _pelabuhan_berkoordinat(r)
+                             else "Tidak tersedia (sumber: \"Tidak input data\")"),
         "kedekatan_pelabuhan_terdekat": kd.get("pelabuhan_terdekat"),
         "kedekatan_jarak_km": kd.get("jarak_km"),
         "kedekatan_ambang_km": PELABUHAN_AMBANG_KEDEKATAN_KM.get(r["hirarki_kode"]),
+        "kedekatan_min_km": kd.get("min_km"), "kedekatan_max_km": kd.get("max_km"),
+        "kedekatan_dasar": _pelabuhan_kedekatan_dasar(r, k["kedekatan"]),
         "kedekatan_skor": k["kedekatan"]["skor_0_10"],
         "tiga_tp_kategori": tp.get("kategori"),
         "tiga_tp_program": "\n".join(tp.get("program") or []) if tp.get("program") else None,
@@ -8712,6 +8757,7 @@ def _pelabuhan_urgensi_row_detail(r, s):
         "penduduk_wilayah_tercakup": "\n".join(f"{w['nama']} : {w['penduduk']:,}".replace(",", ".") for w in wilayah) if wilayah else None,
         "penduduk_total": pd.get("penduduk_radius_total"),
         "penduduk_skor": k["penduduk"]["skor_0_10"],
+        "jalan_ruas": _pelabuhan_ruas_jalan_label(r),
         "jalan_kode_ruas": r["jalan_terdekat_kode"], "jalan_nama": r["jalan_terdekat_nama"],
         "jalan_klasifikasi": r["jalan_terdekat_klasifikasi"], "jalan_jarak_km": r["jalan_terdekat_jarak_km"],
         "akses_kondisi_baik_km": r["ruas_ijd_kondisi_baik_km"], "akses_kondisi_sedang_km": r["ruas_ijd_kondisi_sedang_km"],
@@ -8734,10 +8780,13 @@ def pelabuhan_urgensi_preview(provinsi: List[str] = Query(default=[])):
 PELABUHAN_URGENSI_EXPORT_KOLOM = [
     # (header, key di _pelabuhan_urgensi_row_detail)
     ("Nama Pelabuhan", "nama_pelabuhan"), ("Provinsi", "provinsi"), ("Kab/Kota", "kabupaten_kota"),
-    ("Hirarki", "hirarki_kode"),
+    ("Hirarki", "hirarki_kode"), ("Sumber Koordinat", "koordinat_sumber"),
     ("Pelabuhan Sehirarki Terdekat", "kedekatan_pelabuhan_terdekat"),
     ("Jarak ke Pelabuhan Terdekat (km)", "kedekatan_jarak_km"),
     ("Ambang \"Sudah Terlayani\" Hirarki Ini (km)", "kedekatan_ambang_km"),
+    ("Jarak Min Hirarki (km, pelabuhan >= ambang)", "kedekatan_min_km"),
+    ("Jarak Max Hirarki (km)", "kedekatan_max_km"),
+    ("Dasar Skor Kedekatan", "kedekatan_dasar"),
     ("Skor Kedekatan (0-10)", "kedekatan_skor"),
     ("Klasifikasi 3TP (Kabupaten)", "tiga_tp_kategori"), ("Program/Status 3TP", "tiga_tp_program"),
     ("Skor 3TP (0-10)", "tiga_tp_skor"),
@@ -8745,7 +8794,7 @@ PELABUHAN_URGENSI_EXPORT_KOLOM = [
     ("Skor Kawasan Strategis (0-5, RIPN saja)", "kawasan_strategis_skor"),
     ("Radius Penduduk (km)", "penduduk_radius_km"), ("Wilayah Tercakup (kab/kota atau kecamatan)", "penduduk_wilayah_tercakup"),
     ("Total Penduduk dalam Radius", "penduduk_total"), ("Skor Penduduk (0-10)", "penduduk_skor"),
-    ("Ruas Jalan Terdekat (kode ruas)", "jalan_kode_ruas"), ("Nama Jalan", "jalan_nama"),
+    ("Ruas Jalan Terdekat", "jalan_ruas"), ("Kode Ruas", "jalan_kode_ruas"), ("Nama Jalan", "jalan_nama"),
     ("Klasifikasi Jalan", "jalan_klasifikasi"), ("Jarak ke Ruas Jalan (km)", "jalan_jarak_km"),
     # Skor Akses tetap dihitung dari kondisi & lebar RUAS USULAN IJD terdekat (satu-satunya sumber kondisi jalan)
     ("Kondisi Baik (km, ruas usulan IJD)", "akses_kondisi_baik_km"), ("Kondisi Sedang (km, ruas usulan IJD)", "akses_kondisi_sedang_km"),

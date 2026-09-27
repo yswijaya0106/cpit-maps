@@ -65,3 +65,10 @@ ALTER TABLE pelabuhan_daerah ADD COLUMN IF NOT EXISTS ruas_ijd_kondisi_sedang_km
 ALTER TABLE pelabuhan_daerah ADD COLUMN IF NOT EXISTS ruas_ijd_kondisi_ringan_km NUMERIC(10, 3);
 ALTER TABLE pelabuhan_daerah ADD COLUMN IF NOT EXISTS ruas_ijd_kondisi_berat_km NUMERIC(10, 3);
 ALTER TABLE pelabuhan_daerah ADD COLUMN IF NOT EXISTS ruas_ijd_lebar_jalan_m NUMERIC(6, 2);
+
+-- 27 Sep 2026: asal lat/lon. 216 pelabuhan laut berisi "Tidak input data" di
+-- kolom "Titik Koordinat Lokasi" xlsx sumber; sebagian diisi dari titik layer
+-- peta PELABUHAN / PELABUHAN PENUMPANG lewat cocok nama + provinsi (lihat
+-- _isi_koordinat_dari_layer di spatial_join_pelabuhan_urgensi.py). Kolom ini
+-- membedakan koordinat asli sumber dari hasil pencocokan (perkiraan).
+ALTER TABLE pelabuhan_daerah ADD COLUMN IF NOT EXISTS koordinat_sumber TEXT;

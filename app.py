@@ -46,6 +46,7 @@ import import_penduduk_kecamatan as penduduk_xlsx  # noqa: E402
 import import_bappenas_lokus_a as bappenas_lokus_xlsx  # noqa: E402
 
 from db import db_cursor  # noqa: E402
+import psycopg.errors  # noqa: E402  (LockNotAvailable di data_tables)
 from map_layer_labels import map_layer_label as _map_layer_label  # noqa: E402
 import auth  # noqa: E402
 import chat_providers  # noqa: E402
@@ -992,6 +993,14 @@ def data_tables():
             (list(DATA_TABLES.keys()),),
         )
         existing = {r["table_name"] for r in cur.fetchall()}
+        # Satu tabel yg sedang dikunci skrip impor/analisis (mis. ALTER TABLE
+        # di transaksi panjang) dulu bikin COUNT(*) menunggu TANPA BATAS ->
+        # seluruh menu "Data" & tombol "Lokus Bappenas" tampak mati di
+        # staging. lock_timeout membatasi tunggu per query; yg kena timeout
+        # memakai perkiraan pg_class.reltuples (ditandai total_perkiraan).
+        # SAVEPOINT wajib: query gagal di PostgreSQL meng-abort transaksi
+        # (lihat komentar di atas) kecuali di-rollback ke savepoint.
+        cur.execute("SET LOCAL lock_timeout = '1500ms'")
         for name, label in DATA_TABLES.items():
             if name not in existing:
                 continue  # tabel belum dibuat — sembunyikan dari daftar
@@ -1001,10 +1010,21 @@ def data_tables():
             # "Data" cocok dgn yg langsung terlihat saat dibuka, bukan
             # total semua baris termasuk duplikat per-tahun.
             where = f'WHERE "{year_col}" IS NULL' if year_col else ""
-            cur.execute(f'SELECT COUNT(*) AS n FROM "{name}" {where}')
-            total = cur.fetchone()["n"]
+            perkiraan = False
+            cur.execute("SAVEPOINT hitung_tabel")
+            try:
+                cur.execute(f'SELECT COUNT(*) AS n FROM "{name}" {where}')
+                total = cur.fetchone()["n"]
+                cur.execute("RELEASE SAVEPOINT hitung_tabel")
+            except psycopg.errors.LockNotAvailable:
+                cur.execute("ROLLBACK TO SAVEPOINT hitung_tabel")
+                cur.execute("SELECT GREATEST(reltuples, 0)::bigint AS n FROM pg_class "
+                            "WHERE oid = to_regclass(%s)", (f'public."{name}"',))
+                row = cur.fetchone()
+                total, perkiraan = (row["n"] if row else None), True
             out.append({
-                "name": name, "label": label, "total": total, "geo": name in DATA_TABLE_GEO,
+                "name": name, "label": label, "total": total, "total_perkiraan": perkiraan,
+                "geo": name in DATA_TABLE_GEO,
                 "has_pulau": name in DATA_TABLE_PULAU_COL,
                 "has_tahun": bool(year_col),
             })

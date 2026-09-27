@@ -45,7 +45,7 @@ function dataViewerRenderMenuItems(query) {
     ? rows.map((t) =>
         `<button type="button" class="datatable-menu-item" data-table="${t.name}">
            <span>${escapeHtml(t.label)}</span>
-           <span class="datatable-menu-count">${t.total.toLocaleString("id-ID")}</span>
+           <span class="datatable-menu-count"${t.total_perkiraan ? ' title="Perkiraan — tabel sedang dikunci proses impor/analisis"' : ""}>${t.total == null ? "–" : (t.total_perkiraan ? "±" : "") + t.total.toLocaleString("id-ID")}</span>
          </button>`).join("")
     : `<div class="datatable-menu-empty hint">Tidak ada tabel/report yang cocok.</div>`;
 }

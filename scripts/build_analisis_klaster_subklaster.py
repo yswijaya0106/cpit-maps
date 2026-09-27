@@ -158,6 +158,12 @@ CREATE TABLE IF NOT EXISTS subklaster_analisis_transportasi (
         ):
             cur.execute(f"ALTER TABLE subklaster_analisis_transportasi ADD COLUMN IF NOT EXISTS {kol} {tipe}")
 
+    # DDL di atas SENGAJA di transaksi sendiri yg langsung commit: ALTER TABLE ... ADD COLUMN IF NOT
+    # EXISTS selalu mengambil kunci ACCESS EXCLUSIVE (walau kolomnya sudah ada) yg baru lepas saat
+    # commit. Kalau ikut transaksi panjang di bawah (OSRM + UPDATE map_layers, bisa puluhan menit),
+    # SEMUA SELECT ke tabel ini ikut menggantung selama skrip jalan -- termasuk menu "Data" navbar
+    # (/api/data/tables menghitung COUNT(*) tiap tabel), yg jadi tampak tidak bisa diklik.
+    with db_cursor() as cur:
         cur.execute(f"""
             CREATE TEMP TABLE tmp_jalan_subklaster AS
             SELECT 'Nasional' AS jaringan, attrs->>'LINKID' AS kode,

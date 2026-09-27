@@ -1001,16 +1001,18 @@ def data_tables():
         # memegang kunci. n_live_tup diperbarui tiap INSERT/DELETE (bukan
         # cuma saat ANALYZE), jadi langsung akurat setelah impor. Angka pasti
         # tetap dihitung viewer saat tabel dibuka (paginasi).
-        # Statistik HANYA dipercaya kalau PostgreSQL pernah mencatat
-        # aktivitas tabel itu: setelah pg_restore/reset statistik n_live_tup
-        # = 0 walau tabelnya berisi -> jatuh ke COUNT(*).
+        # Statistik HANYA dipercaya kalau tabel itu sudah pernah di-ANALYZE/
+        # VACUUM (manual atau autovacuum): setelah pg_restore/reset statistik,
+        # n_live_tup cuma menghitung perubahan SESUDAHNYA (terbukti di
+        # staging: ijd_scoring_rules 90 baris tapi n_live_tup 1) -> tabel yg
+        # belum pernah dianalisis jatuh ke COUNT(*).
         cur.execute(
-            "SELECT relname, n_live_tup, (n_tup_ins + n_tup_upd + n_tup_del) > 0 "
-            "  OR COALESCE(last_vacuum, last_autovacuum, last_analyze, last_autoanalyze) IS NOT NULL AS ada_stat "
-            "FROM pg_stat_user_tables WHERE schemaname = 'public' AND relname = ANY(%s)",
+            "SELECT relname, n_live_tup FROM pg_stat_user_tables "
+            "WHERE schemaname = 'public' AND relname = ANY(%s) "
+            "  AND COALESCE(last_vacuum, last_autovacuum, last_analyze, last_autoanalyze) IS NOT NULL",
             (list(existing),),
         )
-        stat = {r["relname"]: r["n_live_tup"] for r in cur.fetchall() if r["ada_stat"]}
+        stat = {r["relname"]: r["n_live_tup"] for r in cur.fetchall()}
         # Sisa COUNT(*) (tabel ber-filter tahun, view, tabel tanpa
         # statistik) dibatasi lock_timeout: tabel yg sedang dikunci skrip
         # impor/analisis tidak lagi membuat menu "Data" & "Lokus Bappenas"

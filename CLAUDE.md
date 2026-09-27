@@ -1151,6 +1151,27 @@ upsert, so they're safe to re-run:
   putus-putus dari titik itu ke poligon, dibersihkan saat popup ditutup
   (pola sama dgn `clearKantorSarWilayah`). Idempotent; restart server/rerun
   memicu bump `imported_at` sendiri (cache layer, lihat app.py `_map_layer_payload`).
+  **25 Sep 2026, diperluas (permintaan user)**: sekarang juga menghitung koridor
+  IJD terdekat (layer "PETA KORIDOR", didissolve per NO_KORIDOR SEKALI ke temp
+  table `tmp_koridor_subklaster` di luar loop -- awalnya di dalam loop, ST_Collect
+  atas ~11.612 ruas nasional 32x nyaris tak selesai dlm 280 dtk), rute jalan
+  SUNGGUHAN (bukan garis lurus) ke bandara/pelabuhan/koridor terdekat via **OSRM**
+  (`router.project-osrm.org`, data OpenStreetMap, server demo publik -- 8 dtk
+  timeout + 0,3 dtk jeda antar panggilan, total runtime ~4 menit utk 32 subklaster
+  x 3 target; 60/96 rute ditemukan pada run 25 Sep 2026, sisanya "tidak ditemukan"
+  krn banyak bandara perintis Papua pedalaman memang tanpa akses jalan sama
+  sekali -- ditandai eksplisit, BUKAN fallback diam ke garis lurus), dan daftar
+  **SEMUA** bandara (80) + pelabuhan (26) di pulau Papua (`_semua_bandara`/
+  `_semua_pelabuhan`, array jsonb tersembunyi, provinsi "Papua"/"Papua Barat" --
+  label pra-pemekaran 2022 di sumber SHP RBI, sudah mencakup 6 provinsi Papua
+  sekarang) dgn jarak garis lurus masing-masing, digambar sbg titik kecil
+  konteks (bukan cuma yg terdekat) saat poligon diklik. **Rute jalan sungguhan
+  SENGAJA cuma dihitung ke target TERDEKAT** (bandara/pelabuhan/koridor), bukan
+  ke semua ~106 titik pulau x 32 subklaster (~3.400 panggilan OSRM) -- tak
+  realistis ke server demo publik & sebagian besar akan gagal krn memang tak
+  ada jalan. Frontend (`attachSubklasterAnalisis`): garis utuh = rute OSRM
+  (`_bandara_rute`/`_pelabuhan_rute`/`_koridor_rute`, array [lon,lat]), garis
+  putus-putus = fallback garis lurus (hanya kalau OSRM gagal).
 - `import_kemantapan_ijd2026.py` — road-soundness per kab/kota
   (`kemantapan_ijd_2026`), the source of IJD pagu component G8.A2; also
   writes the official "Tidak mantap (%)" figure into

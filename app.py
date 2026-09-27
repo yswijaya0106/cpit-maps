@@ -993,24 +993,49 @@ def data_tables():
             (list(DATA_TABLES.keys()),),
         )
         existing = {r["table_name"] for r in cur.fetchall()}
-        # Satu tabel yg sedang dikunci skrip impor/analisis (mis. ALTER TABLE
-        # di transaksi panjang) dulu bikin COUNT(*) menunggu TANPA BATAS ->
-        # seluruh menu "Data" & tombol "Lokus Bappenas" tampak mati di
-        # staging. lock_timeout membatasi tunggu per query; yg kena timeout
-        # memakai perkiraan pg_class.reltuples (ditandai total_perkiraan).
-        # SAVEPOINT wajib: query gagal di PostgreSQL meng-abort transaksi
-        # (lihat komentar di atas) kecuali di-rollback ke savepoint.
+        # Jumlah baris di menu diambil dari statistik PostgreSQL
+        # (pg_stat_user_tables.n_live_tup): satu query utk semua tabel,
+        # milidetik, dan TIDAK pernah tertahan kunci tabel (dibaca dari
+        # statistik, bukan dari tabelnya) -- dulu COUNT(*) 51 tabel tiap klik
+        # makan ~3 dtk di staging & ikut menggantung saat skrip impor
+        # memegang kunci. n_live_tup diperbarui tiap INSERT/DELETE (bukan
+        # cuma saat ANALYZE), jadi langsung akurat setelah impor. Angka pasti
+        # tetap dihitung viewer saat tabel dibuka (paginasi).
+        # Statistik HANYA dipercaya kalau PostgreSQL pernah mencatat
+        # aktivitas tabel itu: setelah pg_restore/reset statistik n_live_tup
+        # = 0 walau tabelnya berisi -> jatuh ke COUNT(*).
+        cur.execute(
+            "SELECT relname, n_live_tup, (n_tup_ins + n_tup_upd + n_tup_del) > 0 "
+            "  OR COALESCE(last_vacuum, last_autovacuum, last_analyze, last_autoanalyze) IS NOT NULL AS ada_stat "
+            "FROM pg_stat_user_tables WHERE schemaname = 'public' AND relname = ANY(%s)",
+            (list(existing),),
+        )
+        stat = {r["relname"]: r["n_live_tup"] for r in cur.fetchall() if r["ada_stat"]}
+        # Sisa COUNT(*) (tabel ber-filter tahun, view, tabel tanpa
+        # statistik) dibatasi lock_timeout: tabel yg sedang dikunci skrip
+        # impor/analisis tidak lagi membuat menu "Data" & "Lokus Bappenas"
+        # menggantung; yg kena timeout memakai pg_class.reltuples (ditandai
+        # total_perkiraan). SAVEPOINT wajib: query gagal di PostgreSQL
+        # meng-abort transaksi (lihat komentar di atas) kecuali di-rollback.
         cur.execute("SET LOCAL lock_timeout = '1500ms'")
         for name, label in DATA_TABLES.items():
             if name not in existing:
                 continue  # tabel belum dibuat — sembunyikan dari daftar
             year_col = DATA_TABLE_YEAR_COL.get(name)
+            perkiraan = False
+            if not year_col and name in stat:
+                out.append({
+                    "name": name, "label": label, "total": stat[name], "total_perkiraan": False,
+                    "geo": name in DATA_TABLE_GEO,
+                    "has_pulau": name in DATA_TABLE_PULAU_COL,
+                    "has_tahun": False,
+                })
+                continue
             # Kalau tabelnya punya filter tahun, hitung sesuai TAMPILAN
             # DEFAULT (kolom tahun IS NULL) supaya angka di daftar menu
             # "Data" cocok dgn yg langsung terlihat saat dibuka, bukan
             # total semua baris termasuk duplikat per-tahun.
             where = f'WHERE "{year_col}" IS NULL' if year_col else ""
-            perkiraan = False
             cur.execute("SAVEPOINT hitung_tabel")
             try:
                 cur.execute(f'SELECT COUNT(*) AS n FROM "{name}" {where}')

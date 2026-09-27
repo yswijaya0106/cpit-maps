@@ -1108,6 +1108,22 @@ upsert, so they're safe to re-run:
   2=Eksisting (konvensi KUGI); warna via `_warna`/`_lebar`, legenda
   `RTRW_PAPSEL_LEGEND`. `Jalan Wanam - Muting.shp` sengaja dilewati (duplikat
   ruas yg sama, lebih kasar).
+- `build_analisis_klaster_subklaster.py` — analisis konektivitas per
+  Klaster/Subklaster Merauke (layer "SUBKLASTER", 32 poligon): bandara &
+  pelabuhan terdekat (jarak garis lurus) + ruas jalan terdekat dari SEMUA
+  jaringan di sekitar Merauke (Jalan Nasional dgn kondisi IRI-nya yang sudah
+  digabung `import_iri_ruas_nasional.py`, `JARINGAN JALAN RTRW` Papua Selatan
+  dgn Status Jaringan Rencana/Eksisting sbg proksi "kondisi" — BUKAN kondisi
+  fisik, ditandai eksplisit —, Jalan Provinsi/Tol/Kabupaten-Kota tanpa data
+  kondisi). Hasil: tabel `subklaster_analisis_transportasi` (menu Data) DAN
+  atribut + koordinat tersembunyi (awalan `_`) digabung ke `map_layers.attrs`
+  layer "SUBKLASTER" (32) dan tiap "SUBKLASTER DETAIL - <klaster>" (10.328,
+  disamakan per grup Klaster+Subklaster, bukan dihitung ulang per poligon
+  detail). Frontend (`attachSubklasterAnalisis`, map-tools.js): klik poligon
+  (Identify) menggambar titik bandara/pelabuhan terdekat + garis rute lurus
+  putus-putus dari titik itu ke poligon, dibersihkan saat popup ditutup
+  (pola sama dgn `clearKantorSarWilayah`). Idempotent; restart server/rerun
+  memicu bump `imported_at` sendiri (cache layer, lihat app.py `_map_layer_payload`).
 - `import_kemantapan_ijd2026.py` — road-soundness per kab/kota
   (`kemantapan_ijd_2026`), the source of IJD pagu component G8.A2; also
   writes the official "Tidak mantap (%)" figure into

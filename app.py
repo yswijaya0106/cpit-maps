@@ -52,6 +52,7 @@ import chat_providers  # noqa: E402
 import wilayah_pulau  # noqa: E402
 import road_safety  # noqa: E402
 import urban_darat  # noqa: E402
+import map_print  # noqa: E402
 # _llm_plain/_plain_* (penilaian Bappenas AI) masih tinggal di app.py dan
 # butuh konstanta model/URL yang ikut pindah ke chat_providers saat refactor
 # Fase 2 — tanpa import ini semua fitur AI Bappenas NameError.
@@ -411,6 +412,20 @@ def _build_wkt(routes: List[RoutePayload]) -> str:
             f"{r.distance_km}|{r.duration_min}|{line.wkt}"
         )
     return "\n".join(lines)
+
+
+@app.post("/api/peta/cetak")
+def cetak_peta(payload: map_print.CetakPetaRequest, request: Request):
+    """Cetak tampilan peta saat ini ke PDF/DOCX: basemap + layer overlay aktif
+    + rute/usulan yg tergambar, label fitur, legenda, info peta, peta indeks,
+    dan lampiran tabel atribut. Fitur & gayanya dikirim frontend
+    (static/js/print-map.js); logika render/tata letak di map_print.py."""
+    ident = _resolve_identity(request) or {}
+    try:
+        konten, media, nama = map_print.cetak(payload, ident.get("username"))
+    except Exception as e:  # noqa: BLE001 -- tampilkan penyebabnya ke pengguna
+        raise HTTPException(500, f"Gagal membuat berkas cetak peta: {e}")
+    return Response(konten, media_type=media, headers={"Content-Disposition": f'attachment; filename="{nama}"'})
 
 
 @app.post("/api/export")
@@ -875,6 +890,7 @@ DATA_TABLES = {
     "penanganan_ss_ka_tahap": "Rencana Penanganan Perlintasan Sebidang KA Bertahap (I/II/III)",
     "koridor_simpul_terdekat": "Peta Koridor — Jarak Terdekat ke Simpul Bandara & Pelabuhan",
     "iri_ruas_nasional": "IRI & Kemantapan Jalan Nasional per Ruas (Survei Juli 2026)",
+    "subklaster_analisis_transportasi": "Analisis Konektivitas Klaster/Subklaster Merauke (Bandara/Pelabuhan/Jalan Terdekat)",
 }
 # kolom yang tidak ditampilkan (payload besar)
 DATA_TABLE_SKIP_COLS = {"geom_geojson", "detail_fasilitas"}
@@ -8502,15 +8518,19 @@ def _pelabuhan_score_kedekatan(row, ctx):
                  "keterangan": "Tanpa koordinat, atau tidak ada pelabuhan sehirarki lain untuk dibandingkan"}
     jarak = float(jarak)
     ambang = PELABUHAN_AMBANG_KEDEKATAN_KM.get(hk)
+    # Rentang min-max per hirarki: min = jarak terkecil di antara pelabuhan yang >= ambang,
+    # max = jarak terbesar -- skor = (jarak - min) / (max - min) x 10 (rentang dibagi 10),
+    # makin jauh makin tinggi. Ikut dikirim di nilai_mentah supaya dasar skornya bisa diperiksa.
+    lo, hi = ctx["jarak"].get(hk, (None, None))
+    rentang = {"min_km": float(lo) if lo is not None else None, "max_km": float(hi) if hi is not None else None}
     if ambang is not None and jarak < ambang:
         return {"tersedia": True, "skor_0_10": 0.0,
                 "nilai_mentah": {"jarak_km": jarak, "ambang_km": ambang,
-                                  "pelabuhan_terdekat": row["pelabuhan_sehirarki_terdekat_nama"]},
+                                  "pelabuhan_terdekat": row["pelabuhan_sehirarki_terdekat_nama"], **rentang},
                 "keterangan": f"Di bawah ambang {ambang}km ({hk}) -> dianggap sudah terlayani pelabuhan sehirarki terdekat"}
-    lo, hi = ctx["jarak"].get(hk, (None, None))
     skor = _skala_minmax(jarak, lo, hi, 10.0)
     return {"tersedia": skor is not None, "skor_0_10": skor,
-            "nilai_mentah": {"jarak_km": jarak, "pelabuhan_terdekat": row["pelabuhan_sehirarki_terdekat_nama"]},
+            "nilai_mentah": {"jarak_km": jarak, "pelabuhan_terdekat": row["pelabuhan_sehirarki_terdekat_nama"], **rentang},
             "keterangan": (f"Min-max thd pelabuhan {hk} lain yang di atas ambang {ambang}km"
                             if skor is not None else "Data pembanding hirarki tidak cukup")}
 

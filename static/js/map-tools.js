@@ -152,6 +152,13 @@ function showIdentifyInfo(layerName, feature, latLng) {
       attachBandaraKemenhubJoin(container, `/api/maps/bandara-kemenhub-by-nama?nama=${encodeURIComponent(namaBandara)}`);
     }
   }
+  // Layer "SUBKLASTER"/"SUBKLASTER DETAIL - *" (bucket KLASTER SUBKLASTER,
+  // scripts/build_analisis_klaster_subklaster.py): poligon punya atribut
+  // Bandara/Pelabuhan/Jalan terdekat sekaligus koordinat tersembunyi utk
+  // digambar di peta (titik + garis rute lurus).
+  if (feature.getProperty("Klaster") && feature.getProperty("_bandara_lat") != null) {
+    attachSubklasterAnalisis(container, feature);
+  }
 
   openIdentifyPanel(mapLayerDisplayLabel(layerName), container);
 }
@@ -353,6 +360,58 @@ function attachKantorSarJoin(container, namaKantor) {
 let kantorSarWilayahData = null;
 let kantorSarWilayahToken = 0;
 
+/* ---------- Analisis Klaster/Subklaster: titik bandara/pelabuhan terdekat + garis rute lurus ---------- */
+
+let subklasterAnalisisOverlay = null;
+
+function clearSubklasterAnalisis() {
+  if (subklasterAnalisisOverlay) {
+    subklasterAnalisisOverlay.forEach((o) => o.setMap(null));
+    subklasterAnalisisOverlay = null;
+  }
+}
+
+function attachSubklasterAnalisis(container, feature) {
+  clearSubklasterAnalisis();
+  const titik = (lat, lon, label, warna) => new google.maps.Marker({
+    position: { lat, lng: lon }, map: state.map, title: label,
+    icon: { path: google.maps.SymbolPath.CIRCLE, scale: 7, fillColor: warna, fillOpacity: 1, strokeColor: "#ffffff", strokeWeight: 2 },
+    label: { text: label, color: "#0f1420", fontSize: "11px", fontWeight: "700", className: "subklaster-marker-label" },
+    zIndex: 200,
+  });
+  const garis = (lat1, lon1, lat2, lon2, warna) => new google.maps.Polyline({
+    path: [{ lat: lat1, lng: lon1 }, { lat: lat2, lng: lon2 }], map: state.map,
+    strokeColor: warna, strokeOpacity: 0.85, strokeWeight: 2.5,
+    icons: [{ icon: { path: "M 0,-1 0,1", strokeOpacity: 1, scale: 3 }, offset: "0", repeat: "14px" }],
+    zIndex: 190,
+  });
+  const overlay = [];
+  const bLat = feature.getProperty("_bandara_lat"), bLon = feature.getProperty("_bandara_lon");
+  const bRefLat = feature.getProperty("_bandara_ref_lat"), bRefLon = feature.getProperty("_bandara_ref_lon");
+  if (bLat != null) {
+    overlay.push(titik(bLat, bLon, feature.getProperty("Bandara Terdekat") || "Bandara", "#2563eb"));
+    if (bRefLat != null) overlay.push(garis(bRefLat, bRefLon, bLat, bLon, "#2563eb"));
+  }
+  const pLat = feature.getProperty("_pelabuhan_lat"), pLon = feature.getProperty("_pelabuhan_lon");
+  const pRefLat = feature.getProperty("_pelabuhan_ref_lat"), pRefLon = feature.getProperty("_pelabuhan_ref_lon");
+  if (pLat != null) {
+    overlay.push(titik(pLat, pLon, feature.getProperty("Pelabuhan Terdekat") || "Pelabuhan", "#0d9488"));
+    if (pRefLat != null) overlay.push(garis(pRefLat, pRefLon, pLat, pLon, "#0d9488"));
+  }
+  subklasterAnalisisOverlay = overlay;
+
+  const wrap = document.createElement("div");
+  wrap.className = "identify-join";
+  wrap.innerHTML = `
+    <div class="identify-join-head"><i class="bi bi-signpost-split"></i> Analisis konektivitas</div>
+    <div class="identify-join-body hint">
+      Titik bandara (biru) dan pelabuhan (hijau) terdekat, serta garis rute lurus (perkiraan, bukan
+      jarak tempuh jalan) dari titik itu ke poligon ini sudah digambar di peta.
+    </div>`;
+  container.appendChild(wrap);
+}
+
+
 function clearKantorSarWilayah() {
   kantorSarWilayahToken++; // batalkan fetch yang masih jalan
   if (kantorSarWilayahData) {
@@ -492,6 +551,7 @@ function attachBandaraKemenhubJoin(container, fetchUrl) {
 
 function clearIdentifyHighlight() {
   clearKantorSarWilayah();
+  clearSubklasterAnalisis();
   if (!state.identifyHighlight) return;
   const { layer, feature } = state.identifyHighlight;
   state.mapLayers.active[layer]?.revertStyle(feature);
@@ -661,7 +721,8 @@ function updateMapLegend() {
     const isKlaster = meta && meta.provinsi === KLASTER_BUCKET;
     const kaplinLegend = raw === "KAPLIN PETAK JALAN" ? KAPLIN_UTILISASI_LEGEND
       : raw === "KAPLIN KORIDOR UTAMA" ? KAPLIN_KORIDOR_LEGEND
-      : isKlaster ? KLASTER_LEGEND : null;
+      : isKlaster ? KLASTER_LEGEND
+      : RTRW_PAPSEL_LEGEND[raw] || null;
     if (kaplinLegend) {
       const sub = document.createElement("div");
       sub.className = "map-legend-subitems";

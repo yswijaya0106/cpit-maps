@@ -41,9 +41,38 @@ function closePrintMapDialog() {
 
 /* ---------- pengumpulan fitur ---------- */
 
-function printRound(coords) {
-  if (typeof coords[0] === "number") return [Math.round(coords[0] * 1e6) / 1e6, Math.round(coords[1] * 1e6) / 1e6];
-  return coords.map(printRound);
+// google.maps.Data.Geometry -> GeoJSON geometry, SINKRON. Jangan pakai
+// feature.toGeoJson(cb): callback-nya dipanggil asinkron di Maps JS versi
+// sekarang, jadi hasilnya masih kosong saat dibaca -> semua fitur terbuang.
+function printLL(ll) {
+  return [Math.round(ll.lng() * 1e6) / 1e6, Math.round(ll.lat() * 1e6) / 1e6];
+}
+
+function printRing(ring) {
+  const c = ring.getArray().map(printLL);
+  if (c.length && (c[0][0] !== c[c.length - 1][0] || c[0][1] !== c[c.length - 1][1])) c.push(c[0]);
+  return c;
+}
+
+function printGeomToGeoJson(g) {
+  const type = g.getType();
+  switch (type) {
+    case "Point": return { type, coordinates: printLL(g.get()) };
+    case "MultiPoint": return { type, coordinates: g.getArray().map(printLL) };
+    case "LineString": return { type, coordinates: g.getArray().map(printLL) };
+    case "LinearRing": return { type: "LineString", coordinates: printRing(g) };
+    case "MultiLineString": return { type, coordinates: g.getArray().map((ls) => ls.getArray().map(printLL)) };
+    case "Polygon": return { type, coordinates: g.getArray().map(printRing) };
+    case "MultiPolygon": return { type, coordinates: g.getArray().map((p) => p.getArray().map(printRing)) };
+    case "GeometryCollection": return { type, geometries: g.getArray().map(printGeomToGeoJson) };
+    default: return null;
+  }
+}
+
+function printFeatureProps(f) {
+  const props = {};
+  f.forEachProperty((v, k) => { props[k] = v; });
+  return props;
 }
 
 function printGeomBounds(geom) {
@@ -122,9 +151,9 @@ function printCollectOverlay(key, view, dupRaw) {
     if (st && st.visible === false) return;
     if (!view.intersects(printGeomBounds(g))) return;
     if (feats.length >= PRINT_MAX_FEATURES_PER_LAYER) { dilewati++; return; }
-    let gj = null;
-    f.toGeoJson((o) => { gj = o; });
-    if (!gj || !gj.geometry) return;
+    const geometry = printGeomToGeoJson(g);
+    if (!geometry) return;
+    const gj = { geometry, properties: printFeatureProps(f) };
     const jenis = printGeomJenis(g.getType());
     jenisCount[jenis]++;
     Object.keys(gj.properties || {}).forEach((k) => fields.add(k));
@@ -339,7 +368,7 @@ function buildPrintPayload() {
       tabel: row.querySelector(".print-tbl").checked,
       legend: l.legend,
       features: l.feats.map(({ gj, style }) => ({
-        geometry: { type: gj.geometry.type, coordinates: printRound(gj.geometry.coordinates) },
+        geometry: gj.geometry,
         properties: gj.properties || {},
         style,
         label: printLabelText(gj.properties || {}, labelField),

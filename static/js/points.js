@@ -46,6 +46,36 @@ function setDestination(pt) {
   updateMarkers();
 }
 
+// Hapus titik A atau B saja (titik lain & waypoint tetap). Rute yg sudah
+// dihitung tidak lagi cocok dgn titik yg tersisa -> garis & panel hasilnya
+// ikut dibersihkan (sama spt bagian rute di resetAll, main.js).
+function clearPoint(role) {
+  if (role === "origin") {
+    state.origin = null;
+    document.getElementById("inputOrigin").value = "";
+  } else {
+    state.destination = null;
+    document.getElementById("inputDestination").value = "";
+  }
+  if (state.activeField === role) state.activeField = null;
+  updateMarkers();
+  if (state.routes.length) {
+    state.routes = [];
+    state.selectedIndex = 0;
+    clearPolylines();
+    ["routeResultsPanel", "analysisPanel", "advancedPanel", "exportPanel"].forEach((id) => {
+      document.getElementById(id).hidden = true;
+    });
+    clearAdvancedResults();
+  }
+  toast(`Titik ${role === "origin" ? "A (asal)" : "B (tujuan)"} dihapus`);
+}
+
+function bindClearPointButtons() {
+  document.getElementById("btnClearOrigin").addEventListener("click", () => clearPoint("origin"));
+  document.getElementById("btnClearDestination").addEventListener("click", () => clearPoint("destination"));
+}
+
 function addWaypoint(pt) {
   state.waypoints.push(pt);
   renderWaypointList();
@@ -100,6 +130,10 @@ function renderWaypointList() {
 /* ---------- Markers ---------- */
 
 function updateMarkers() {
+  // tombol hapus A/B hanya tampil kalau titiknya terisi (updateMarkers dipanggil tiap titik berubah)
+  document.getElementById("btnClearOrigin").hidden = !state.origin;
+  document.getElementById("btnClearDestination").hidden = !state.destination;
+
   if (state.markers.origin) state.markers.origin.setMap(null);
   if (state.markers.destination) state.markers.destination.setMap(null);
   state.markers.waypoints.forEach((m) => m.setMap(null));
@@ -179,3 +213,5 @@ function bindManualCoord() {
     e.target.value = "";
   });
 }
+
+bindClearPointButtons();

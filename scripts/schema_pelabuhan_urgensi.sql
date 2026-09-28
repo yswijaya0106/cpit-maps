@@ -19,6 +19,12 @@ ALTER TABLE pelabuhan_daerah ADD COLUMN IF NOT EXISTS hirarki_kode TEXT;
 ALTER TABLE pelabuhan_daerah ADD COLUMN IF NOT EXISTS pelabuhan_sehirarki_terdekat_id BIGINT;
 ALTER TABLE pelabuhan_daerah ADD COLUMN IF NOT EXISTS pelabuhan_sehirarki_terdekat_nama TEXT;
 ALTER TABLE pelabuhan_daerah ADD COLUMN IF NOT EXISTS jarak_sehirarki_terdekat_km NUMERIC(10, 3);
+-- Nama pelabuhan LAIN (semua hirarki) yg lat/lon-nya identik persis dgn
+-- baris ini di xlsx sumber (duplikat baris / koordinat salin-tempel, mis.
+-- Dermaga Peres & Pulopanjang-Puloampel). Pelabuhan kembar TIDAK saling
+-- dihitung "sehirarki terdekat" (jaraknya 0 km -> skor kedekatan palsu 0);
+-- kolom ini ditampilkan di preview/export supaya bisa dikoreksi di sumber.
+ALTER TABLE pelabuhan_daerah ADD COLUMN IF NOT EXISTS koordinat_kembar_dengan TEXT;
 
 CREATE INDEX IF NOT EXISTS idx_pelabuhan_daerah_hirarki_kode ON pelabuhan_daerah (hirarki_kode);
 

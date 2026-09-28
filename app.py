@@ -8676,7 +8676,7 @@ def _compute_pelabuhan_urgensi_score(row, ctx):
 
 PELABUHAN_URGENSI_SELECT_COLS = """
     id, nama_pelabuhan, provinsi, kabupaten_kota, hirarki_pelabuhan, hirarki_kode,
-    lat, lon, ripn, koordinat_sumber,
+    lat, lon, ripn, koordinat_sumber, koordinat_kembar_dengan,
     jarak_sehirarki_terdekat_km, pelabuhan_sehirarki_terdekat_nama,
     klasifikasi_3tp_kategori, klasifikasi_3tp_program_json,
     penduduk_radius_total, penduduk_radius_wilayah_json,
@@ -8757,7 +8757,7 @@ def _pelabuhan_kedekatan_dasar(r, k):
     kd = k["nilai_mentah"]
     if kd.get("jarak_km") is None:
         return ("Koordinat pelabuhan tidak tersedia" if not _pelabuhan_berkoordinat(r)
-                else "Tidak ada pelabuhan sehirarki lain untuk dibandingkan")
+                else "Tidak ada pelabuhan sehirarki lain (berbeda lokasi) untuk dibandingkan")
     ambang = PELABUHAN_AMBANG_KEDEKATAN_KM.get(r["hirarki_kode"])
     if kd.get("ambang_km") is not None:
         return f"< ambang {ambang} km → 0"
@@ -8789,6 +8789,9 @@ def _pelabuhan_urgensi_row_detail(r, s):
         # _isi_koordinat_dari_layer di scripts/spatial_join_pelabuhan_urgensi.py
         "koordinat_sumber": (r["koordinat_sumber"] if _pelabuhan_berkoordinat(r)
                              else "Tidak tersedia (sumber: \"Tidak input data\")"),
+        # pelabuhan lain dgn lat/lon identik persis (duplikat/salin-tempel di xlsx sumber) --
+        # sengaja TIDAK dihitung "terdekat" (spatial_join_pelabuhan_urgensi.py), perlu dicek di sumber
+        "koordinat_kembar_dengan": r["koordinat_kembar_dengan"],
         "kedekatan_pelabuhan_terdekat": kd.get("pelabuhan_terdekat"),
         "kedekatan_jarak_km": kd.get("jarak_km"),
         "kedekatan_ambang_km": PELABUHAN_AMBANG_KEDEKATAN_KM.get(r["hirarki_kode"]),
@@ -8828,6 +8831,7 @@ PELABUHAN_URGENSI_EXPORT_KOLOM = [
     # (header, key di _pelabuhan_urgensi_row_detail)
     ("Nama Pelabuhan", "nama_pelabuhan"), ("Provinsi", "provinsi"), ("Kab/Kota", "kabupaten_kota"),
     ("Hirarki", "hirarki_kode"), ("Sumber Koordinat", "koordinat_sumber"),
+    ("Koordinat Identik Dengan (cek duplikat di sumber)", "koordinat_kembar_dengan"),
     ("Pelabuhan Sehirarki Terdekat", "kedekatan_pelabuhan_terdekat"),
     ("Jarak ke Pelabuhan Terdekat (km)", "kedekatan_jarak_km"),
     ("Ambang \"Sudah Terlayani\" Hirarki Ini (km)", "kedekatan_ambang_km"),

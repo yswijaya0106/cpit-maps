@@ -506,6 +506,33 @@ def _isi_jalan_terdekat(force: bool):
             print(f"    {r['j'] or '(tidak ada jalan dalam radius)'}: {r['n']} pelabuhan, {r['bernama']} dengan nama jalan")
 
 
+def _tandai_koordinat_kembar():
+    """Isi koordinat_kembar_dengan = nama pelabuhan lain (semua hirarki) yg lat/lon-nya identik
+    persis. Dihitung ulang penuh tiap run (murah, ~1000 baris) supaya koreksi di sumber ikut
+    terhapus. Per 28 Sep 2026: 31 baris (semua hirarki), 10 di antaranya sebelumnya ber-jarak
+    sehirarki terdekat 0 km, mis. Cera (Provinsi Maluku Utara) & Cera (Kab. Halmahera Utara) --
+    baris dobel; Dermaga Peres & Pulopanjang-Puloampel -- koordinat salin-tempel."""
+    with db_cursor() as cur:
+        cur.execute(
+            """
+            UPDATE pelabuhan_daerah p
+            SET koordinat_kembar_dengan = k.nama
+            FROM (
+                SELECT a.id, string_agg(b.nama_pelabuhan || ' (' || COALESCE(b.kabupaten_kota, '-') || ')',
+                                        '; ' ORDER BY b.nama_pelabuhan) AS nama
+                FROM pelabuhan_daerah a
+                LEFT JOIN pelabuhan_daerah b ON b.id <> a.id AND b.lat = a.lat AND b.lon = a.lon
+                GROUP BY a.id
+            ) k
+            WHERE p.id = k.id AND p.koordinat_kembar_dengan IS DISTINCT FROM k.nama
+            """
+        )
+        cur.execute("SELECT count(*) AS n FROM pelabuhan_daerah WHERE koordinat_kembar_dengan IS NOT NULL")
+        n = cur.fetchone()["n"]
+    print(f"  {n} pelabuhan berkoordinat identik dgn pelabuhan lain (dikecualikan dari 'terdekat' satu sama lain)")
+    return n
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--force", action="store_true", help="hitung ulang termasuk yang sudah terisi")
@@ -524,14 +551,27 @@ def main():
     print("Mengisi koordinat kosong dari layer peta (cocok nama + provinsi)...")
     n_koordinat_baru = _isi_koordinat_dari_layer()
 
-    # Titik baru bisa menjadi "sehirarki terdekat" bagi pelabuhan LAIN -> jarak dihitung ulang semua
-    where_force = "" if (args.force or n_koordinat_baru) else "AND p.jarak_sehirarki_terdekat_km IS NULL"
+    print("Menandai pelabuhan dengan koordinat identik (duplikat / salin-tempel di sumber)...")
+    n_kembar = _tandai_koordinat_kembar()
+
+    # Titik baru bisa menjadi "sehirarki terdekat" bagi pelabuhan LAIN -> jarak dihitung ulang semua.
+    # Baris ber-koordinat kembar selalu dihitung ulang: hasil lama (sebelum pengecualian kembar) = 0 km.
+    where_force = ("" if (args.force or n_koordinat_baru)
+                   else "AND (p.jarak_sehirarki_terdekat_km IS NULL OR p.koordinat_kembar_dengan IS NOT NULL)")
     t0 = time.time()
     with db_cursor() as cur:
+        # Hasil lama baris kembar (0 km ke kembarannya) dikosongkan dulu: kalau tak ada pelabuhan
+        # sehirarki lain yg berbeda lokasi, JOIN LATERAL di bawah tidak menghasilkan baris dan
+        # nilai lama akan tertinggal -> NULL = "tidak ada pembanding" (ditangani scorer).
+        cur.execute(
+            "UPDATE pelabuhan_daerah SET pelabuhan_sehirarki_terdekat_id = NULL, "
+            "pelabuhan_sehirarki_terdekat_nama = NULL, jarak_sehirarki_terdekat_km = NULL "
+            "WHERE koordinat_kembar_dengan IS NOT NULL"
+        )
         cur.execute(
             f"""
             WITH kandidat AS MATERIALIZED (
-                SELECT id, hirarki_kode, nama_pelabuhan,
+                SELECT id, hirarki_kode, nama_pelabuhan, lat, lon,
                        ST_SetSRID(ST_MakePoint(lon, lat), 4326)::geography AS g
                 FROM pelabuhan_daerah
                 WHERE hirarki_kode IS NOT NULL AND lat IS NOT NULL AND lon IS NOT NULL
@@ -546,6 +586,8 @@ def main():
                     SELECT k.id, k.nama_pelabuhan, k.g
                     FROM kandidat k
                     WHERE k.hirarki_kode = p.hirarki_kode AND k.id <> p.id
+                      -- koordinat identik = duplikat/salin-tempel di sumber, bukan pelabuhan tetangga
+                      AND (k.lat, k.lon) IS DISTINCT FROM (p.lat, p.lon)
                     ORDER BY k.g <-> p.g
                     LIMIT 1
                 ) t ON true

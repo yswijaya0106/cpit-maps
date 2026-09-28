@@ -62,6 +62,7 @@ const PELABUHAN_URGENSI_KOLOM = [
   ["Kab/Kota", "kabupaten_kota", "text"],
   ["Hirarki", "hirarki_kode", "text"],
   ["Sumber Koordinat", "koordinat_sumber", "text"],
+  ["Koordinat Identik Dengan", "koordinat_kembar_dengan", "text"],
   ["Pelabuhan Sehirarki Terdekat", "kedekatan_pelabuhan_terdekat", "text"],
   ["Jarak Terdekat (km)", "kedekatan_jarak_km", "num"],
   ["Ambang Hirarki (km)", "kedekatan_ambang_km", "num"],

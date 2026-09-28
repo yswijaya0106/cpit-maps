@@ -800,12 +800,46 @@ def _tool_jalankan_query_sql(sql=None, judul=None, actions=None) -> dict:
         "columns": columns,
         "jumlah_baris": len(rows),
         "terpotong_di_20000": terpotong,
+        # Terbukti di staging 28 Sep 2026: tanpa ini model menyimpulkan "jarak maks 103 km" dari
+        # 40 baris pratinjau, padahal maks seluruh data 360 km.
+        "statistik_seluruh_baris": _statistik_kolom(columns, rows),
+        "catatan_pratinjau": (f"pratinjau_baris hanya {len(pratinjau)} baris PERTAMA dari {len(rows)}. Untuk "
+                              "ringkasan (min/maks/rata-rata/jumlah/terbesar) WAJIB pakai statistik_seluruh_baris "
+                              "atau query agregat/ORDER BY, bukan pratinjau." if len(rows) > len(pratinjau) else None),
         "pratinjau_baris": pratinjau,
         "berlokasi": bool(geo["kolom_geometri"] or geo["kolom_lat"]),
         **({"petunjuk": "0 baris. Kemungkinan filter terlalu ketat/penulisan beda: pakai ILIKE '%...%' dan cek "
                         "nilai yg ada via SELECT DISTINCT <kolom> ... sebelum menyimpulkan data tidak ada."}
            if not rows else {}),
     }
+
+
+def _statistik_kolom(columns, rows) -> dict:
+    """min/maks/rata-rata/jumlah kolom angka (+ baris min & maks) dan jumlah nilai unik kolom teks,
+    dihitung dari SELURUH baris dataset."""
+    out = {}
+    for i, c in enumerate(columns):
+        vals = [r[i] for r in rows if r[i] is not None]
+        angka = []
+        for v in vals:
+            if isinstance(v, bool):
+                continue
+            try:
+                angka.append(float(v)) if isinstance(v, (int, float)) or type(v).__name__ == "Decimal" else None
+            except (TypeError, ValueError):
+                pass
+        if angka and len(angka) >= len(vals) * 0.8:
+            j_min = min(range(len(rows)), key=lambda k: float(rows[k][i]) if isinstance(rows[k][i], (int, float)) or type(rows[k][i]).__name__ == "Decimal" else float("inf"))
+            j_max = max(range(len(rows)), key=lambda k: float(rows[k][i]) if isinstance(rows[k][i], (int, float)) or type(rows[k][i]).__name__ == "Decimal" else float("-inf"))
+            label = next((columns[t] for t in range(len(columns)) if isinstance(rows[0][t], str)), None) if rows else None
+            out[c] = {"min": min(angka), "maks": max(angka), "rata_rata": round(sum(angka) / len(angka), 4),
+                      "jumlah": round(sum(angka), 4), "terisi": len(angka)}
+            if label:
+                out[c]["baris_min"] = rows[j_min][columns.index(label)]
+                out[c]["baris_maks"] = rows[j_max][columns.index(label)]
+        elif vals and all(isinstance(v, str) for v in vals[:50]) and not any(v.lstrip().startswith("{") for v in vals[:5]):
+            out[c] = {"nilai_unik": len(set(vals)), "terisi": len(vals)}
+    return jsonable_encoder(out)
 
 
 def _dataset_atau_error(dataset_id):

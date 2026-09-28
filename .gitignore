@@ -9,4 +9,6 @@ Maps/
 maps.md
 dalam_angka/
 tmp_exports/
-backups/*.dump.cache/
+backups/*.dump
+# cache on-disk (layer peta; dataset & laporan chat analitik)
+.cache/

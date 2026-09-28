@@ -936,6 +936,8 @@
         <div class="chat-panel" id="chatPanel" hidden>
           <div class="map-panel-header">
             <span><i class="bi bi-stars"></i> Asisten The Next - SiJalan</span>
+            <button type="button" class="maplayer-close chat-wide-btn" id="chatWide" title="Perlebar / perkecil panel"
+              aria-label="Perlebar panel asisten"><i class="bi bi-arrows-fullscreen"></i></button>
             <button type="button" class="maplayer-close" id="chatClose" aria-label="Tutup asisten"><i
                 class="bi bi-x-lg"></i></button>
           </div>
@@ -943,7 +945,8 @@
           <button type="button" class="btn btn-ghost btn-block btn-sm" id="btnChatSummary"><i class="bi bi-magic"></i>
             Ringkasan Rute</button>
           <form id="chatForm" class="chat-form">
-            <input type="text" id="chatInput" placeholder="Tanya sesuatu tentang rute ini..." autocomplete="off" />
+            <textarea id="chatInput" rows="1" placeholder="Tanya atau minta analisis data… (Shift+Enter = baris baru)"
+              autocomplete="off"></textarea>
             <button type="submit" class="icon-btn" aria-label="Kirim"><i class="bi bi-send-fill"></i></button>
           </form>
         </div>
@@ -978,6 +981,11 @@
   <script src="/js/analysis.js"></script>
   <script src="/js/usulan-inpres.js"></script>
   <script src="/js/pelabuhan-urgensi.js"></script>
+  <!-- chat analitik: markdown (marked) + sanitasi HTML (DOMPurify) + grafik (Chart.js);
+       chat.js tetap jalan tanpa ketiganya (markdown ringan, tanpa grafik) bila CDN gagal -->
+  <script src="https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/dompurify@3.1.6/dist/purify.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
   <script src="/js/chat.js"></script>
   <script src="/js/export.js"></script>
   <script src="/js/print-map.js"></script>

@@ -678,6 +678,30 @@ Deps: `requirements.txt`, venv at `.venv/` (already gitignored).
     `kabupaten=""`, one layer) needs no resolution at all.
   OpenAI additionally gets `web_search_preview`; the system prompt tells the
   model whether web search is available.
+  **Analytic mode (28 Sep 2026, see `docs/kajian_chat_analitik_kebutuhan_biaya.md`):**
+  every `jalankan_query_sql` result is stored in full (≤20,000 rows) as a
+  *dataset* by [chat_dataset.py](chat_dataset.py) on disk under
+  `.cache/chat_dataset/` (not in memory: staging runs 2 uvicorn workers, so
+  a download can land on the other worker), 7-day expiry. The model only sees
+  a 40-row preview plus `dataset_id`. Hybrid tools `tampilkan_tabel` /
+  `buat_grafik` / `tampilkan_di_peta` / `buat_laporan` validate the dataset
+  server-side and emit UI actions that chat.js renders as cards (table,
+  Chart.js chart, `google.maps.Data` layer, Word download). Download routes
+  are `GET /api/chat/dataset/{id}[/geojson|/export?format=xlsx|csv|geojson]`
+  and `/api/chat/file/{id}`. Chat replies are rendered with marked +
+  DOMPurify (CDN), with `renderMarkdownLite` as the fallback. Claude is now
+  **first** in `_chat_providers` (default `claude-opus-5`).
+  **Guardrails, all motivated by observed gpt-4o-mini failures while the
+  Claude API balance was empty:**
+  (1) the system prompt carries a "PETA DATA" cheat-sheet (which table or
+  `map_layers` group holds pelabuhan, bandara, Basarnas, KA, koridor, jalan)
+  because weak models skip the catalog tool and guess;
+  (2) `_periksa_tabel_karangan` flags markdown tables whose text cells don't
+  appear in any tool result from that request (a fabricated "Pelabuhan 1 |
+  Lokasi 1" table was observed);
+  (3) `_rapikan_jawaban` strips invented image/link markdown and auto-adds a
+  table card when the model forgets `tampilkan_tabel`;
+  (4) `users` / `psc119_layanan` are blocked in SQL.
 - `GET /api/maps/provinces` / `GET /api/maps/kabupaten` / `GET /api/maps/layers`
   / `GET /api/maps/layer` — drive the topbar reference-map overlay. **As of
   24 Jul 2026 these query PostGIS (`map_layers`/`map_layer_meta` tables,

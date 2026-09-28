@@ -50,6 +50,7 @@ import psycopg.errors  # noqa: E402  (LockNotAvailable di data_tables)
 from map_layer_labels import map_layer_label as _map_layer_label  # noqa: E402
 import auth  # noqa: E402
 import chat_providers  # noqa: E402
+import chat_dataset  # noqa: E402
 import wilayah_pulau  # noqa: E402
 import road_safety  # noqa: E402
 import urban_darat  # noqa: E402
@@ -8557,11 +8558,62 @@ def usulan_inpres_export_shp(usulan_id: int):
 
 
 @app.post("/api/chat")
-def chat(payload: ChatRequest):
+def chat(payload: ChatRequest, request: Request):
     if not payload.messages:
         raise HTTPException(400, "Tidak ada pesan")
-    reply, actions = chat_providers._call_chat(payload.messages, payload.context)
+    ident = _resolve_identity(request) or {}
+    reply, actions = chat_providers._call_chat(payload.messages, payload.context, ident.get("username"))
     return {"reply": reply, "actions": actions}
+
+
+# Hasil analisis chat ("dataset", lihat chat_dataset.py): pratinjau tabel,
+# data grafik, GeoJSON peta, dan unduhan -- dibaca langsung dari dataset
+# lengkap di server, bukan dari pratinjau terbatas yang diterima model.
+def _chat_dataset_atau_404(dataset_id: str):
+    ds = chat_dataset.muat(dataset_id)
+    if not ds:
+        raise HTTPException(404, "Dataset tidak ditemukan atau sudah kedaluwarsa (disimpan 7 hari)")
+    return ds
+
+
+@app.get("/api/chat/dataset/{dataset_id}")
+def chat_dataset_rows(dataset_id: str, limit: int = Query(100, ge=1, le=5000), offset: int = Query(0, ge=0)):
+    ds = _chat_dataset_atau_404(dataset_id)
+    geo = chat_dataset.deteksi_geometri(ds)
+    keep = chat_dataset._kolom_tampil(ds)
+    return {
+        "id": ds["id"], "judul": ds["judul"], "sql": ds.get("sql", ""), "dibuat": ds.get("dibuat"),
+        "total": len(ds["rows"]), "terpotong": ds.get("terpotong", False),
+        "columns": [ds["columns"][i] for i in keep],
+        "rows": [[r[i] for i in keep] for r in ds["rows"][offset:offset + limit]],
+        "berlokasi": bool(geo["kolom_geometri"] or geo["kolom_lat"]),
+    }
+
+
+@app.get("/api/chat/dataset/{dataset_id}/geojson")
+def chat_dataset_geojson(dataset_id: str, kolom_geometri: str = "", kolom_lat: str = "", kolom_lon: str = ""):
+    ds = _chat_dataset_atau_404(dataset_id)
+    return chat_dataset.ke_geojson(ds, kolom_geometri or None, kolom_lat or None, kolom_lon or None)
+
+
+@app.get("/api/chat/dataset/{dataset_id}/export")
+def chat_dataset_export(dataset_id: str, format: str = "xlsx"):
+    ds = _chat_dataset_atau_404(dataset_id)
+    fn = {"xlsx": chat_dataset.ekspor_xlsx, "csv": chat_dataset.ekspor_csv, "geojson": chat_dataset.ekspor_geojson}.get(format)
+    if not fn:
+        raise HTTPException(400, "format harus xlsx, csv, atau geojson")
+    konten, media, nama = fn(ds)
+    return Response(konten, media_type=media, headers={"Content-Disposition": f'attachment; filename="{nama}"'})
+
+
+@app.get("/api/chat/file/{file_id}")
+def chat_file(file_id: str):
+    hasil = chat_dataset.muat_file(file_id)
+    if not hasil:
+        raise HTTPException(404, "Berkas laporan tidak ditemukan atau sudah kedaluwarsa (disimpan 7 hari)")
+    konten, nama = hasil
+    return Response(konten, media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                    headers={"Content-Disposition": f'attachment; filename="{nama}"'})
 
 
 # --- Skor "Urgensitas Penanganan Pelabuhan" (Laut) -- DRAF Fase 1, dari

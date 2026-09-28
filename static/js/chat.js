@@ -1,4 +1,6 @@
-/* The Next - SiJalan — asisten chat (Gemini), digroundkan ke data rute/analisis yang sedang aktif */
+/* The Next - SiJalan — asisten chat analitik: jawaban markdown, kartu tabel/
+   grafik/peta/laporan dari dataset hasil analisis (chat_dataset.py), unduhan
+   Excel/CSV/GeoJSON/Word. Konteks rute aktif tetap dikirim spt sebelumnya. */
 
 function buildChatContext() {
   const route = state.routes[state.selectedIndex];
@@ -18,13 +20,11 @@ function buildChatContext() {
   return context;
 }
 
-/* Markdown ringan buat balasan asisten (bold/italic/kode inline, daftar
-   bernomor/poin, paragraf) -- BUKAN parser markdown lengkap, cukup utk gaya
-   jawaban model (mis. "**Nilai:** 60", daftar skor bernomor spt di panel
-   skor IJD). escapeHtml() dijalankan LEBIH DULU, olah markup di ATAS hasil
-   yang sudah di-escape -- jadi HTML mentah apa pun di dalam teks (baik dari
-   user maupun jawaban model) tidak pernah dieksekusi sbg tag; tag <strong>/
-   <ul>/dst. yang ditambahkan di sini sepenuhnya kita yang buat, aman. */
+/* ---------- Markdown ---------- */
+
+/* Markdown ringan (cadangan kalau marked/DOMPurify dari CDN gagal dimuat):
+   bold/italic/kode inline, daftar bernomor/poin, paragraf. escapeHtml()
+   dijalankan LEBIH DULU, jadi HTML mentah dari model tidak pernah dieksekusi. */
 function renderMarkdownLite(text) {
   const inline = (s) => s
     .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
@@ -33,15 +33,12 @@ function renderMarkdownLite(text) {
 
   const lines = escapeHtml(text).split("\n");
   const html = [];
-  // Model sering nulis "1. **X**:" lalu poin "- ..." di baris berikutnya
-  // (dipisah baris kosong) sbg RINCIAN nomor itu, bukan daftar baru --
-  // dilacak dua tingkat (topList/subList) supaya poin itu jadi <ul> BERSARANG
-  // di dalam <li> nomornya, bukan menutup <ol> dan membuat tiap nomor
-  // restart dari "1." lagi (bug yang ditemukan 27 Jul 2026 dari laporan user:
-  // panel skor IJD 5 komponen semua tampil "1.").
-  let topList = null;    // "ol" | "ul" | null
-  let topLiOpen = false; // <li> level atas sedang terbuka, blm ditutup
-  let subList = null;    // "ul" bersarang di dlm <li> level atas yg terbuka
+  // Model sering nulis "1. **X**:" lalu poin "- ..." di baris berikutnya sbg
+  // RINCIAN nomor itu -- dilacak dua tingkat supaya jadi <ul> bersarang, bukan
+  // menutup <ol> (bug 27 Jul 2026: panel skor IJD 5 komponen semua tampil "1.").
+  let topList = null;
+  let topLiOpen = false;
+  let subList = null;
 
   const closeSub = () => { if (subList) { html.push(`</${subList}>`); subList = null; } };
   const closeTopLi = () => { closeSub(); if (topLiOpen) { html.push("</li>"); topLiOpen = false; } };
@@ -49,7 +46,7 @@ function renderMarkdownLite(text) {
 
   for (const raw of lines) {
     const line = raw.trim();
-    if (!line) continue; // baris kosong TIDAK menutup daftar -- lihat catatan di atas
+    if (!line) continue;
     const ol = line.match(/^\d+[.)]\s+(.*)/);
     const ul = line.match(/^[-*]\s+(.*)/);
 
@@ -59,7 +56,6 @@ function renderMarkdownLite(text) {
       html.push(`<li>${inline(ol[1])}`);
       topLiOpen = true;
     } else if (ul && topList === "ol" && topLiOpen) {
-      // poin di bawah nomor yang masih terbuka -> sub-daftar bersarang
       if (!subList) { html.push("<ul>"); subList = "ul"; }
       html.push(`<li>${inline(ul[1])}</li>`);
     } else if (ul) {
@@ -75,16 +71,262 @@ function renderMarkdownLite(text) {
   return html.join("");
 }
 
+let chatMarkdownReady = false;
+function renderMarkdown(text) {
+  // marked (GFM: tabel, judul, daftar, kode) + DOMPurify: HTML hasil model
+  // selalu disanitasi sebelum masuk DOM. Tanpa pustaka itu -> versi ringan.
+  if (window.marked && window.DOMPurify) {
+    if (!chatMarkdownReady) {
+      window.marked.setOptions({ gfm: true, breaks: true });
+      window.DOMPurify.addHook("afterSanitizeAttributes", (node) => {
+        if (node.tagName === "A") { node.setAttribute("target", "_blank"); node.setAttribute("rel", "noopener"); }
+      });
+      chatMarkdownReady = true;
+    }
+    return window.DOMPurify.sanitize(window.marked.parse(text || ""));
+  }
+  return renderMarkdownLite(text || "");
+}
+
+/* ---------- Dataset (hasil analisis tersimpan di server) ---------- */
+
+const chatDatasetCache = new Map(); // `${id}:${limit}` -> Promise(data)
+let chatCharts = []; // instance Chart.js aktif -- di-destroy tiap render ulang (canvas lama dibuang)
+
+function chatFetchDataset(id, limit = 100) {
+  const key = `${id}:${limit}`;
+  if (!chatDatasetCache.has(key)) {
+    chatDatasetCache.set(key, fetch(`/api/chat/dataset/${encodeURIComponent(id)}?limit=${limit}`).then(async (res) => {
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || "Dataset tidak tersedia");
+      return res.json();
+    }));
+  }
+  return chatDatasetCache.get(key);
+}
+
+function chatFmt(v) {
+  if (v === null || v === undefined || v === "") return "—";
+  if (typeof v === "number") return v.toLocaleString("id-ID", { maximumFractionDigits: 3 });
+  if (typeof v === "object") return JSON.stringify(v);
+  return String(v);
+}
+
+function chatExportLinks(id, berlokasi) {
+  const base = `/api/chat/dataset/${encodeURIComponent(id)}/export?format=`;
+  return `<a class="chat-dl" href="${base}xlsx"><i class="bi bi-file-earmark-excel"></i> Excel</a>
+    <a class="chat-dl" href="${base}csv"><i class="bi bi-filetype-csv"></i> CSV</a>
+    ${berlokasi ? `<a class="chat-dl" href="${base}geojson"><i class="bi bi-geo-alt"></i> GeoJSON</a>` : ""}`;
+}
+
+/* ---------- Kartu hasil di dalam pesan ---------- */
+
+function chatCardHtml(action, msgIdx, actIdx) {
+  const a = action.argumen || {};
+  const key = `${msgIdx}-${actIdx}`;
+  if (action.nama === "tampilkan_tabel") {
+    return `<div class="chat-card" data-card="tabel" data-key="${key}" data-id="${escapeHtml(a.dataset_id)}">
+      <div class="chat-card-head"><i class="bi bi-table"></i> <span>${escapeHtml(a.judul || "Tabel hasil")}</span>
+        <small>${(a.jumlah_baris ?? 0).toLocaleString("id-ID")} baris</small></div>
+      <div class="chat-card-body chat-table-wrap"><div class="chat-card-loading">Memuat tabel…</div></div>
+      <div class="chat-card-foot">${chatExportLinks(a.dataset_id, a.berlokasi)}</div>
+    </div>`;
+  }
+  if (action.nama === "buat_grafik") {
+    return `<div class="chat-card" data-card="grafik" data-key="${key}">
+      <div class="chat-card-head"><i class="bi bi-bar-chart-line"></i> <span>${escapeHtml(a.judul || "Grafik")}</span></div>
+      <div class="chat-card-body chat-chart-wrap"><canvas></canvas></div>
+      <div class="chat-card-foot"><button type="button" class="chat-dl" data-act="png"><i class="bi bi-image"></i> Unduh PNG</button>
+        ${chatExportLinks(a.dataset_id, false)}</div>
+    </div>`;
+  }
+  if (action.nama === "tampilkan_di_peta") {
+    return `<div class="chat-card chat-card-inline" data-card="peta" data-key="${key}" data-id="${escapeHtml(a.dataset_id)}">
+      <i class="bi bi-map"></i> <span><strong>${escapeHtml(a.judul || "Hasil")}</strong> — ${(a.jumlah_fitur ?? 0).toLocaleString("id-ID")} fitur di peta</span>
+      <button type="button" class="chat-dl" data-act="zoom"><i class="bi bi-zoom-in"></i> Zoom</button>
+      <button type="button" class="chat-dl" data-act="toggle"><i class="bi bi-eye-slash"></i> <span>Sembunyikan</span></button>
+    </div>`;
+  }
+  if (action.nama === "unduh_laporan") {
+    return `<div class="chat-card chat-card-inline">
+      <i class="bi bi-file-earmark-word"></i> <span><strong>${escapeHtml(a.nama_berkas || "Laporan.docx")}</strong>${a.lampiran ? ` · ${a.lampiran} lampiran tabel` : ""}</span>
+      <a class="chat-dl chat-dl-primary" href="/api/chat/file/${encodeURIComponent(a.file_id)}"><i class="bi bi-download"></i> Unduh Word</a>
+    </div>`;
+  }
+  return "";
+}
+
+// Semua dataset yg dibuat saat menjawab, termasuk query antara yg tidak
+// ditampilkan sbg tabel -- supaya metode (SQL) & datanya tetap bisa dicek/unduh.
+function chatDataListHtml(actions) {
+  const ds = actions.filter((x) => x.nama === "dataset_tersedia").map((x) => x.argumen || {});
+  if (!ds.length) return "";
+  return `<details class="chat-datalist"><summary><i class="bi bi-database"></i> Data &amp; query (${ds.length})</summary>
+    ${ds.map((d) => `<div class="chat-datalist-item">
+      <div><strong>${escapeHtml(d.judul || "Hasil query")}</strong> · ${(d.jumlah_baris ?? 0).toLocaleString("id-ID")} baris
+        <a class="chat-dl" href="/api/chat/dataset/${encodeURIComponent(d.dataset_id)}/export?format=xlsx"><i class="bi bi-file-earmark-excel"></i> Excel</a></div>
+      <pre>${escapeHtml(d.sql || "")}</pre></div>`).join("")}
+  </details>`;
+}
+
+function chatHydrateCards(listEl) {
+  listEl.querySelectorAll('.chat-card[data-card="tabel"]').forEach(async (card) => {
+    const body = card.querySelector(".chat-card-body");
+    try {
+      const d = await chatFetchDataset(card.dataset.id, 100);
+      const lebih = d.total > d.rows.length ? `<div class="chat-table-note">Menampilkan ${d.rows.length} dari ${d.total.toLocaleString("id-ID")} baris — unduh Excel untuk data lengkap.</div>` : "";
+      body.innerHTML = `<table class="chat-table"><thead><tr>${d.columns.map((c) => `<th>${escapeHtml(c)}</th>`).join("")}</tr></thead>
+        <tbody>${d.rows.map((r) => `<tr>${r.map((v) => `<td class="${typeof v === "number" ? "num" : ""}">${escapeHtml(chatFmt(v))}</td>`).join("")}</tr>`).join("")}</tbody></table>${lebih}`;
+    } catch (err) {
+      body.innerHTML = `<div class="chat-card-loading">${escapeHtml(err.message)}</div>`;
+    }
+  });
+
+  listEl.querySelectorAll('.chat-card[data-card="grafik"]').forEach(async (card) => {
+    const [mi, ai] = card.dataset.key.split("-").map(Number);
+    const a = state.chat.messages[mi]?.actions?.[ai]?.argumen;
+    if (!a) return;
+    const canvas = card.querySelector("canvas");
+    card.querySelector('[data-act="png"]').onclick = () => {
+      const link = document.createElement("a");
+      link.href = canvas.toDataURL("image/png");
+      link.download = `${(a.judul || "grafik").replace(/[^\w]+/g, "_")}.png`;
+      link.click();
+    };
+    if (!window.Chart) { card.querySelector(".chat-card-body").textContent = "Pustaka grafik gagal dimuat."; return; }
+    try {
+      const d0 = await chatFetchDataset(a.dataset_id, 1000);
+      const idx = (c) => d0.columns.indexOf(c);
+      // urutan & batas kategori dari tool buat_grafik ("10 terbesar" dst) -- dataset asli tidak diubah
+      let rows = d0.rows.slice();
+      const iSort = idx(a.kolom_nilai[0]);
+      if (a.urutan === "desc" || a.urutan === "asc") {
+        const arah = a.urutan === "desc" ? -1 : 1;
+        rows.sort((x, y) => arah * ((Number(x[iSort]) || 0) - (Number(y[iSort]) || 0)));
+      }
+      if (a.maks_kategori) rows = rows.slice(0, a.maks_kategori);
+      const d = { ...d0, rows };
+      const iLabel = idx(a.kolom_label);
+      const palet = ["#4f7cff", "#22d3a5", "#ffb648", "#ff5c7c", "#a78bfa", "#38bdf8", "#f472b6", "#84cc16"];
+      const teks = getComputedStyle(document.documentElement).getPropertyValue("--text-dim").trim() || "#94a3c4";
+      let cfg;
+      if (a.jenis === "scatter") {
+        const iy = idx(a.kolom_nilai[0]);
+        cfg = { type: "scatter", data: { datasets: [{ label: `${a.kolom_nilai[0]} vs ${a.kolom_label}`, backgroundColor: palet[0],
+          data: d.rows.map((r) => ({ x: Number(r[iLabel]), y: Number(r[iy]) })) }] } };
+      } else {
+        const labels = d.rows.map((r) => chatFmt(r[iLabel]));
+        const datasets = a.kolom_nilai.map((k, j) => ({
+          label: k, data: d.rows.map((r) => (r[idx(k)] == null ? null : Number(r[idx(k)]))),
+          backgroundColor: a.jenis === "pie" ? labels.map((_, i) => palet[i % palet.length]) : palet[j % palet.length],
+          borderColor: palet[j % palet.length], borderWidth: a.jenis === "line" ? 2 : 0, tension: 0.25,
+        }));
+        cfg = { type: a.jenis, data: { labels, datasets } };
+      }
+      cfg.options = {
+        responsive: true, maintainAspectRatio: false, animation: false,
+        plugins: { legend: { labels: { color: teks, boxWidth: 12 } } },
+        scales: a.jenis === "pie" ? {} : {
+          x: { ticks: { color: teks, maxRotation: 60, autoSkip: true }, grid: { color: "rgba(148,163,196,.12)" } },
+          y: { ticks: { color: teks }, grid: { color: "rgba(148,163,196,.12)" } },
+        },
+      };
+      chatCharts.push(new window.Chart(canvas, cfg));
+    } catch (err) {
+      card.querySelector(".chat-card-body").textContent = err.message;
+    }
+  });
+
+  listEl.querySelectorAll('.chat-card[data-card="peta"]').forEach((card) => {
+    const layer = state.chatLayers?.[card.dataset.id];
+    const toggle = card.querySelector('[data-act="toggle"]');
+    const sync = () => {
+      const tampil = layer && layer.data.getMap();
+      toggle.querySelector("i").className = tampil ? "bi bi-eye-slash" : "bi bi-eye";
+      toggle.querySelector("span").textContent = tampil ? "Sembunyikan" : "Tampilkan";
+    };
+    sync();
+    toggle.onclick = () => { if (!layer) return; layer.data.setMap(layer.data.getMap() ? null : state.map); sync(); };
+    card.querySelector('[data-act="zoom"]').onclick = () => { if (layer && layer.bounds && !layer.bounds.isEmpty()) state.map.fitBounds(layer.bounds, 60); };
+  });
+}
+
+/* ---------- Layer peta dari dataset ---------- */
+
+const CHAT_LAYER_PALET = ["#e11d48", "#2563eb", "#16a34a", "#f59e0b", "#9333ea", "#0891b2", "#db2777", "#65a30d", "#ea580c", "#475569"];
+
+async function chatTampilkanDiPeta(a) {
+  if (!state.map || !a.dataset_id) return;
+  state.chatLayers = state.chatLayers || {};
+  if (state.chatLayers[a.dataset_id]) state.chatLayers[a.dataset_id].data.setMap(null);
+  const q = new URLSearchParams({ kolom_geometri: a.kolom_geometri || "", kolom_lat: a.kolom_lat || "", kolom_lon: a.kolom_lon || "" });
+  const res = await fetch(`/api/chat/dataset/${encodeURIComponent(a.dataset_id)}/geojson?${q}`);
+  if (!res.ok) { toast("Gagal menampilkan hasil analisis di peta", true); return; }
+  const fc = await res.json();
+  const data = new google.maps.Data({ map: state.map });
+  data.addGeoJson({ type: "FeatureCollection", features: fc.features });
+  const warnaKat = {};
+  const warnaOf = (f) => {
+    if (!a.kolom_warna) return CHAT_LAYER_PALET[0];
+    const k = String(f.getProperty(a.kolom_warna) ?? "—");
+    if (!(k in warnaKat)) warnaKat[k] = CHAT_LAYER_PALET[Object.keys(warnaKat).length % CHAT_LAYER_PALET.length];
+    return warnaKat[k];
+  };
+  data.setStyle((f) => {
+    const c = warnaOf(f);
+    const t = f.getGeometry().getType();
+    if (t === "Point" || t === "MultiPoint") {
+      return { icon: { path: google.maps.SymbolPath.CIRCLE, scale: 6, fillColor: c, fillOpacity: 0.95, strokeColor: "#fff", strokeWeight: 1.5 }, zIndex: 60 };
+    }
+    return { strokeColor: c, strokeWeight: 3, strokeOpacity: 0.95, fillColor: c, fillOpacity: 0.25, zIndex: 55 };
+  });
+  const info = new google.maps.InfoWindow();
+  data.addListener("click", (e) => {
+    const rows = [];
+    e.feature.forEachProperty((v, k) => rows.push(`<tr><th>${escapeHtml(k)}</th><td>${escapeHtml(chatFmt(v))}</td></tr>`));
+    const judul = a.kolom_label ? e.feature.getProperty(a.kolom_label) : a.judul;
+    info.setContent(`<div class="chat-map-info"><strong>${escapeHtml(chatFmt(judul))}</strong><table>${rows.join("")}</table></div>`);
+    info.setPosition(e.latLng);
+    info.open(state.map);
+  });
+  const bounds = new google.maps.LatLngBounds();
+  data.forEach((f) => f.getGeometry().forEachLatLng((ll) => bounds.extend(ll)));
+  if (!bounds.isEmpty()) state.map.fitBounds(bounds, 60);
+  state.chatLayers[a.dataset_id] = { data, bounds, judul: a.judul };
+  renderChatMessages();
+}
+
+/* ---------- Render pesan ---------- */
+
 function renderChatMessages() {
   const listEl = document.getElementById("chatMessages");
   if (!listEl) return;
-  listEl.innerHTML = state.chat.messages
-    .map((m) => `<div class="chat-msg chat-msg-${m.role}">${m.role === "assistant" ? renderMarkdownLite(m.text) : escapeHtml(m.text)}</div>`)
-    .join("");
+  chatCharts.forEach((c) => c.destroy());
+  chatCharts = [];
+  listEl.innerHTML = state.chat.messages.map((m, i) => {
+    if (m.role !== "assistant") return `<div class="chat-msg chat-msg-user">${escapeHtml(m.text)}</div>`;
+    const actions = m.actions || [];
+    const cards = actions.map((a, j) => chatCardHtml(a, i, j)).join("");
+    const contoh = m.contoh ? `<div class="chat-examples">${m.contoh.map((t) => `<button type="button" class="chat-example">${escapeHtml(t)}</button>`).join("")}</div>` : "";
+    return `<div class="chat-msg chat-msg-assistant"><div class="chat-md">${renderMarkdown(m.text)}</div>${cards}${chatDataListHtml(actions)}${contoh}</div>`;
+  }).join("");
   if (state.chat.busy) {
-    listEl.innerHTML += `<div class="chat-msg chat-msg-assistant chat-msg-loading">Mengetik...</div>`;
+    listEl.innerHTML += `<div class="chat-msg chat-msg-assistant chat-msg-loading"><span class="chat-spinner"></span> Menganalisis data… analisis besar bisa perlu 1–2 menit.</div>`;
   }
+  chatHydrateCards(listEl);
+  listEl.querySelectorAll(".chat-example").forEach((b) => { b.onclick = () => sendChatMessage(b.textContent); });
   listEl.scrollTop = listEl.scrollHeight;
+}
+
+// Riwayat yg dikirim ke backend: teks + catatan dataset yang sudah dibuat,
+// supaya model bisa merujuknya lagi ("ekspor hasil tadi ke Word").
+function chatHistoryPayload() {
+  return state.chat.messages.filter((m) => !m.contoh).map((m) => {
+    const ds = (m.actions || []).filter((a) => a.nama === "dataset_tersedia").map((a) => a.argumen);
+    const catatan = ds.length
+      ? "\n\n[Dataset dari jawaban ini: " + ds.map((d) => `${d.dataset_id} = "${d.judul}" (${d.jumlah_baris} baris; kolom: ${(d.kolom || []).join(", ")})`).join("; ") + "]"
+      : "";
+    return { role: m.role, text: (m.text || "") + catatan };
+  });
 }
 
 async function sendChatMessage(text) {
@@ -98,14 +340,11 @@ async function sendChatMessage(text) {
     const res = await fetch("/api/chat", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        messages: state.chat.messages,
-        context: buildChatContext(),
-      }),
+      body: JSON.stringify({ messages: chatHistoryPayload(), context: buildChatContext() }),
     });
     if (!res.ok) throw new Error(await res.text());
     const data = await res.json();
-    state.chat.messages.push({ role: "assistant", text: data.reply });
+    state.chat.messages.push({ role: "assistant", text: data.reply, actions: data.actions || [] });
     (data.actions || []).forEach(runChatAction);
   } catch (err) {
     console.error(err);
@@ -118,14 +357,9 @@ async function sendChatMessage(text) {
 
 /* Aksi yang dieksekusi di FRONTEND atas perintah model, lewat data.actions
    dari /api/chat. Key di sini HARUS sinkron dengan nama aksi yang dikirim
-   backend -- untuk CLIENT_ACTION_TOOLS (chat_providers.py) itu SAMA PERSIS
-   dgn nama tool-nya, tapi utk tool "hibrida" (mis.
-   tampilkan_layer_batas_administratif_usulan) nama aksinya BEDA dari nama
-   tool yang dipanggil model -- backend meresolusinya dulu jadi aksi generik
-   "tampilkan_layer_peta_overlay" dgn argumen provinsi/kabupaten/layer yang
-   sudah pasti valid, bukan ditebak model. Kalau nama aksinya tidak dikenal
-   di sini, diam-diam diabaikan drpd melempar error yang bikin panggilan
-   chat gagal. */
+   backend (CLIENT_ACTION_TOOLS / tool hibrida di chat_providers.py). Aksi yg
+   hanya berupa kartu (tampilkan_tabel, buat_grafik, unduh_laporan,
+   dataset_tersedia) dirender renderChatMessages, tanpa efek samping di sini. */
 const CHAT_CLIENT_ACTIONS = {
   tampilkan_usulan_di_peta: (args) => {
     if (!args || args.id == null) return;
@@ -138,6 +372,7 @@ const CHAT_CLIENT_ACTIONS = {
     if (typeof showMapLayer !== "function") return;
     showMapLayer(args.provinsi, args.kabupaten ?? "", args.layer);
   },
+  tampilkan_di_peta: (args) => { chatTampilkanDiPeta(args || {}).catch((e) => console.error(e)); },
 };
 
 function runChatAction(action) {
@@ -145,11 +380,21 @@ function runChatAction(action) {
   if (fn) fn(action.argumen || {});
 }
 
-const CHAT_GREETING = "Halo! Cari rute lalu tanya saya tentang jarak, wilayah yang dilalui, klasifikasi jalan, atau usulan Inpres di sekitarnya.";
+const CHAT_GREETING = "Halo! Saya bisa menganalisis **seluruh data** aplikasi ini — usulan IJD, BPS, pelabuhan, bandara, " +
+  "kereta api, Basarnas, koridor, dan layer peta — lalu menyajikannya sebagai **tabel, grafik, peta**, dan " +
+  "**unduhan Excel/Word**. Tanya bebas, atau coba contoh di bawah:";
+const CHAT_CONTOH = [
+  "Analisa semua pelabuhan dan bandara di Papua Selatan beserta koridor IJD dan Kantor SAR terdekat, tampilkan di peta",
+  "Buat grafik 10 provinsi dengan usulan IJD 2026 terbanyak beserta total panjang ruasnya",
+  "Stasiun kereta api mana saja di Jawa Barat dan bagaimana utilisasi kapasitas lintasnya?",
+  "Susun laporan Word kondisi jalan nasional (IRI) per provinsi",
+];
 
 function resetChat() {
-  state.chat.messages = [{ role: "assistant", text: CHAT_GREETING }];
+  state.chat.messages = [{ role: "assistant", text: CHAT_GREETING, contoh: CHAT_CONTOH }];
   state.chat.busy = false;
+  Object.values(state.chatLayers || {}).forEach((l) => l.data.setMap(null));
+  state.chatLayers = {};
   renderChatMessages();
 }
 
@@ -157,6 +402,7 @@ function bindChatPanel() {
   const toggleBtn = document.getElementById("btnChatToggle");
   const panel = document.getElementById("chatPanel");
   const closeBtn = document.getElementById("chatClose");
+  const wideBtn = document.getElementById("chatWide");
   const form = document.getElementById("chatForm");
   const input = document.getElementById("chatInput");
   const summaryBtn = document.getElementById("btnChatSummary");
@@ -166,12 +412,29 @@ function bindChatPanel() {
     if (!panel.hidden) input.focus();
   });
   closeBtn.addEventListener("click", () => (panel.hidden = true));
+  wideBtn?.addEventListener("click", () => {
+    const lebar = panel.classList.toggle("is-wide");
+    wideBtn.querySelector("i").className = lebar ? "bi bi-fullscreen-exit" : "bi bi-arrows-fullscreen";
+    renderChatMessages(); // grafik digambar ulang sesuai lebar baru
+  });
 
   form.addEventListener("submit", (e) => {
     e.preventDefault();
     const text = input.value;
     input.value = "";
+    input.style.height = "";
     sendChatMessage(text);
+  });
+  // Enter = kirim, Shift+Enter = baris baru (prompt analisis sering panjang)
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      form.requestSubmit();
+    }
+  });
+  input.addEventListener("input", () => {
+    input.style.height = "";
+    input.style.height = `${Math.min(input.scrollHeight, 140)}px`;
   });
 
   summaryBtn.addEventListener("click", () => {
@@ -182,5 +445,5 @@ function bindChatPanel() {
     sendChatMessage("Tolong buatkan ringkasan singkat mengenai rute ini berdasarkan data yang tersedia.");
   });
 
-  renderChatMessages();
+  resetChat();
 }

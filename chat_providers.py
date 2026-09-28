@@ -11,6 +11,7 @@ _fetch_usulan_geometry). Diimpor LAZY (di dalam fungsi, bukan di top-level)
 supaya tidak circular import -- app.py mengimpor modul ini di top-level utk
 endpoint /api/chat, jadi modul ini tidak boleh mengimpor app.py di top-level.
 """
+import contextvars
 import json
 import os
 import re
@@ -22,6 +23,7 @@ from fastapi import HTTPException
 from fastapi.encoders import jsonable_encoder
 from pyproj import Geod
 
+import chat_dataset
 from db import db_cursor  # aman diimpor top-level -- db.py tidak bergantung pada app.py/modul ini
 
 _GEOD = Geod(ellps="WGS84")
@@ -37,7 +39,7 @@ GROK_API_URL = "https://api.x.ai/v1/chat/completions"
 
 OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
 
-CLAUDE_MODEL = os.getenv("CLAUDE_MODEL", "claude-opus-4-8")
+CLAUDE_MODEL = os.getenv("CLAUDE_MODEL", "claude-opus-5")
 
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash-lite")
 
@@ -56,7 +58,7 @@ soal geometri KML riil suatu usulan (panjang aktual, jumlah segmen, apakah cocok
 panjang_ruas_km), gunakan fungsi analisa_geometri_kml_usulan. \
 Untuk pertanyaan analitis/lintas tabel yang tidak tercakup fungsi-fungsi di atas (data BPS, kawasan tematik, \
 agregasi/perbandingan antar wilayah, dsb.), Anda punya akses BACA-SAJA ke SELURUH tabel database lewat fungsi \
-jalankan_query_sql (SELECT SQL bebas, hasil dibatasi 200 baris) — panggil daftar_tabel_database dulu kalau \
+jalankan_query_sql (SELECT SQL bebas, hasil lengkap disimpan sbg dataset) — panggil daftar_tabel_database dulu kalau \
 belum yakin nama tabel/kolom yang tepat, jangan menebak nama kolom. Hanya query baca yang bisa dijalankan \
 (sistem menolak INSERT/UPDATE/DELETE/DDL apa pun bentuknya) — kalau pengguna minta mengubah data, jelaskan \
 itu tidak bisa dilakukan lewat chat ini. \
@@ -69,7 +71,52 @@ Bila pengguna minta MENAMPILKAN/MENYALAKAN layer batas kecamatan/kabupaten/provi
 fungsi ini otomatis mencari layer yang tepat dari lokasi usulan, JANGAN coba rakit sendiri lewat \
 daftar_layer_peta_overlay untuk maksud menampilkan (fungsi itu cuma untuk cari data provinsi/kabupaten/layer \
 sebelum analisa_spasial_usulan, bukan untuk menyalakan tampilan). \
-Klasifikasi jalan OSM adalah perkiraan, bukan data resmi PUPR."""
+Klasifikasi jalan OSM adalah perkiraan, bukan data resmi PUPR.
+
+MODE ANALITIK (untuk permintaan analisis/laporan lintas data):
+1. Pahami dulu datanya: panggil daftar_tabel_database (tanpa argumen = katalog tabel + kelompok layer peta) lalu daftar_tabel_database(tabel=...) untuk kolom tabel yang akan dipakai. Jangan menebak nama tabel/kolom.
+2. Layer peta tersimpan di tabel map_layers(provinsi, kabupaten, layer, attrs JSONB, geom geometry 4326). "provinsi" di tabel ini adalah KELOMPOK layer (mis. 'KERETA API', 'BASARNAS', 'BANDARA', 'PELABUHAN', 'PETA KORIDOR', 'JALAN NASIONAL', 'KAPASITAS LINTAS KA', atau nama provinsi utk layer RBI per kabupaten); atribut fitur ada di attrs (akses attrs->>'NAMA KOLOM'). Analisis spasial dikerjakan LANGSUNG dengan PostGIS di jalankan_query_sql: jarak meter pakai geom::geography (ST_Distance, ST_DWithin), terdekat pakai ORDER BY a.geom <-> b.geom LIMIT n (LATERAL JOIN), cakupan pakai ST_Intersects/ST_Contains. Sertakan ST_AsGeoJSON(geom) AS geojson (atau kolom lat/lon) SEJAK QUERY PERTAMA bila pengguna menyebut peta/lokasi, supaya dataset yang sama bisa langsung ditampilkan di peta.
+3. Setiap jalankan_query_sql menyimpan hasil LENGKAP sebagai dataset (dataset_id) di server; Anda hanya menerima pratinjau. Untuk hasil utama yang disajikan ke pengguna, WAJIB panggil tampilkan_tabel(dataset_id) supaya pengguna bisa melihat & mengunduh (Excel/CSV/GeoJSON). Pakai buat_grafik untuk perbandingan/tren, tampilkan_di_peta untuk hasil berlokasi, dan buat_laporan bila pengguna minta laporan/dokumen Word.
+4. Jawaban akhir dalam MARKDOWN: judul singkat (##), ringkasan temuan utama berupa poin, tabel markdown ringkas (maks ~10 baris; tabel lengkap lewat tampilkan_tabel), lalu bagian "Catatan data" berisi keterbatasan/asumsi. Semua angka HARUS berasal dari hasil tool — jangan mengarang.
+5. Batas kemampuan saat ini: TIDAK ada data lalu lintas/kemacetan real-time Google Maps dan TIDAK ada mesin rute jalan (rute/alternatif jalan). Bila diminta, katakan terus terang, lalu tawarkan pendekatan dari data yang ADA: jarak garis lurus (PostGIS), VCR/LHR ruas nasional (bps_lhr_ruas_nasional), kondisi IRI (iri_ruas_nasional), utilisasi kapasitas lintas KA (layer 'KAPASITAS LINTAS KA'), wilayah tanggung jawab Kantor SAR (layer 'WILAYAH TANGGUNG JAWAB SAR' di kelompok 'BASARNAS'), koridor terdekat simpul (koridor_simpul_terdekat).
+6. Query berat: batasi dengan filter wilayah bila memungkinkan; hasil disimpan maks 20.000 baris.
+7. Filter nama wilayah/objek: pakai ILIKE '%kata%', bukan '=' -- penulisan di data beragam (mis. provinsi \
+'Provinsi Maluku Utara', kabupaten 'Kab. Halmahera Utara'). Kalau hasil 0 baris, periksa dulu nilai yang ada \
+(SELECT DISTINCT kolom ... ILIKE ...) lalu ulangi query -- jangan langsung menyimpulkan data tidak ada.
+8. Tabel, grafik, peta, dan tombol unduh dari tool tampil OTOMATIS sebagai kartu di bawah jawaban -- JANGAN \
+menulis gambar markdown, tautan, atau URL untuk grafik/peta/unduhan (tautan buatan sendiri pasti rusak).
+9. DILARANG KERAS membuat tabel/angka contoh atau placeholder (mis. "Pelabuhan 1", "Lokasi 1", "Jarak 1 km"). \
+Kalau data gagal diambil, katakan apa adanya tanpa tabel. Sistem memeriksa isi tabel jawaban terhadap hasil \
+tool dan menandai tabel yang isinya tidak ditemukan di data.
+
+PETA DATA (sumber yang benar utk entitas yang sering ditanya -- pakai ini, jangan menebak):
+- Pelabuhan: tabel pelabuhan_daerah (nama_pelabuhan, provinsi berformat 'Provinsi Maluku Utara', kabupaten_kota \
+'Kab. ...'/'Kota ...', hirarki_pelabuhan, hirarki_kode PP/PR/PL, lat, lon, penumpang_2024, barang_2024). Titik \
+pelabuhan nasional juga di map_layers provinsi='PELABUHAN' layer='Pelabuhan Nasional' (attrs Name, Provinsi, hierarki).
+- Bandara: tabel bps_data_bandara (nama_bandara, provinsi, kabupaten, kelas, hirarki, lat, lon, demand_pax, \
+kapasitas_eksisting_estimasi); titik di map_layers provinsi='BANDARA KEMENHUB' layer='Bandara Kemenhub' (attrs Name, \
+IATA, Kelas, Hierarki, Provinsi); rute penerbangan layer='Rute Penerbangan (Kemenhub)'.
+- Basarnas: map_layers provinsi='BASARNAS': layer='KANTOR SAR' (attrs nama_kantor, tipe_kelas, latitude, longitude), \
+layer='POS SAR' (attrs 'Nama Pos SAR', 'Nama Kantor SAR'), layer='WILAYAH TANGGUNG JAWAB SAR' (poligon, attrs \
+'Nama Kantor Pencarian dan Pertolongan'). Data operasional: basarnas_alut, basarnas_ops_sar, basarnas_analisis_kantor.
+- Kereta api: map_layers provinsi='KERETA API' layer='Stasiun Kereta Api' (attrs name, "PROVINSI", "STATUS OPERASI", \
+JENIS), layer 'Rel Jawa'/'Rel Sumatera', 'Jembatan KA'; kapasitas lintas: provinsi='KAPASITAS LINTAS KA' layer \
+'KAPLIN PETAK JALAN' (attrs 'Petak Jalan', 'Kategori utilisasi', 'Jarak petak (km)') & 'KAPLIN STASIUN'.
+- Koridor IJD: map_layers provinsi='PETA KORIDOR' (attrs NO_KORIDOR; kolom kabupaten = nama kab), tabel \
+bappenas_koridor, koridor_simpul_terdekat (jarak koridor -> bandara/pelabuhan/penyeberangan terdekat, sudah dihitung).
+- Jalan nasional: map_layers provinsi='JALAN NASIONAL' layer='Jalan Nasional' (attrs LINKID, LINK_NAME), kondisi \
+iri_ruas_nasional (linkid, provinsi, link_name, paved_mantap_pct ...), lalu lintas harian bps_lhr_ruas_nasional \
+(linkid, linkname, provinsi, aadt_total, vcr = rasio volume/kapasitas, >0,85 = padat). Titik rawan: layer 'BLACKSPOT KECELAKAAN'.
+- Usulan Inpres/IJD: tabel usulan_inpres (provinsi HURUF BESAR mis. 'MALUKU UTARA', kabupaten_kota, nama_ruas, \
+kode_koridor, panjang_ruas_km; geometri di geom_geojson berupa TEKS GeoJSON -> ST_GeomFromGeoJSON(geom_geojson)).
+- Batas wilayah: map_layers provinsi='BATAS PROVINSI' (attrs PROVINSI) dan 'BATAS KABUPATEN' (attrs PROVINSI, \
+KABUPATEN_KOTA, KODE_KABUPATEN).
+Contoh pola query terdekat (pelabuhan -> Kantor SAR):
+SELECT p.nama_pelabuhan, k.attrs->>'nama_kantor' AS kantor_sar, \
+round((ST_Distance(ST_SetSRID(ST_MakePoint(p.lon,p.lat),4326)::geography, k.geom::geography)/1000)::numeric,1) AS jarak_km, \
+p.lat, p.lon FROM pelabuhan_daerah p CROSS JOIN LATERAL (SELECT attrs, geom FROM map_layers WHERE provinsi='BASARNAS' \
+AND layer='KANTOR SAR' ORDER BY geom <-> ST_SetSRID(ST_MakePoint(p.lon,p.lat),4326) LIMIT 1) k \
+WHERE p.provinsi ILIKE '%maluku utara%' AND p.lat IS NOT NULL ORDER BY jarak_km DESC"""
 
 CHAT_SEARCH_AVAILABLE_NOTE = (
     " Anda memiliki akses pencarian web untuk pertanyaan yang BENAR-BENAR di luar data aplikasi maupun "
@@ -153,8 +200,11 @@ CHAT_TOOLS = [
         "function": {
             "name": "daftar_tabel_database",
             "description": (
-                "Melihat skema database: tanpa argumen, mengembalikan daftar SEMUA tabel yang ada. "
-                "Dengan argumen 'tabel', mengembalikan daftar kolom (nama + tipe data) tabel itu. "
+                "Melihat skema database: tanpa argumen, mengembalikan KATALOG semua tabel (nama, label "
+                "bahasa Indonesia, perkiraan jumlah baris) plus daftar KELOMPOK layer peta di tabel map_layers "
+                "(nama kelompok + jumlah layer + contoh nama layer). Dengan argumen 'tabel', mengembalikan daftar "
+                "kolom (nama + tipe data) tabel itu; dengan 'kelompok_layer', daftar layer di kelompok itu "
+                "beserta contoh kunci attrs-nya. "
                 "WAJIB dipanggil dulu (kalau belum tahu nama tabel/kolom yang tepat) sebelum "
                 "jalankan_query_sql, supaya query yang disusun memakai nama tabel/kolom yang benar-benar ada."
             ),
@@ -162,6 +212,7 @@ CHAT_TOOLS = [
                 "type": "object",
                 "properties": {
                     "tabel": {"type": "string", "description": "Nama tabel spesifik (opsional) untuk melihat daftar kolomnya"},
+                    "kelompok_layer": {"type": "string", "description": "Nama kelompok layer di map_layers (kolom provinsi), mis. 'BASARNAS' (opsional)"},
                 },
             },
         },
@@ -179,12 +230,15 @@ CHAT_TOOLS = [
                 "PENTING: skor IJD/Prioritisasi Teknokratik TIDAK tersimpan di tabel manapun (dihitung "
                 "on-the-fly dari banyak tabel lewat rumus berbobot) — JANGAN coba menghitungnya sendiri "
                 "lewat query, pakai fungsi hitung_skor_ijd_usulan. HANYA SELECT yang diizinkan "
-                "(INSERT/UPDATE/DELETE/DDL akan ditolak sistem); hasil dibatasi 200 baris pertama."
+                "(INSERT/UPDATE/DELETE/DDL akan ditolak sistem). Hasil LENGKAP (maks 20.000 baris) disimpan "
+                "sebagai dataset dgn dataset_id; Anda menerima pratinjau 40 baris + jumlah baris total. Pakai "
+                "dataset_id itu di tampilkan_tabel/buat_grafik/tampilkan_di_peta/buat_laporan."
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "sql": {"type": "string", "description": "Satu statement SQL SELECT (boleh diawali WITH)"},
+                    "judul": {"type": "string", "description": "Judul singkat hasil ini (dipakai di tabel/unduhan), mis. 'Pelabuhan & Kantor SAR terdekat'"},
                 },
                 "required": ["sql"],
             },
@@ -300,6 +354,96 @@ CHAT_TOOLS = [
 # Tool yang PANGGILANNYA diteruskan MENTAH ke frontend utk dieksekusi di UI,
 # BUKAN dijalankan/di-dispatch di server (lihat _run_tool_call) -- lapisan
 # pertama fitur "AI bisa bertindak, bukan cuma menjawab" (27 Jul 2026).
+CHAT_TOOLS += [
+    {
+        "type": "function",
+        "function": {
+            "name": "tampilkan_tabel",
+            "description": (
+                "Menampilkan dataset hasil jalankan_query_sql sebagai kartu tabel di chat, lengkap dgn tombol "
+                "unduh Excel/CSV (dan GeoJSON bila berlokasi). Panggil untuk setiap hasil utama yang disajikan."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "dataset_id": {"type": "string"},
+                    "judul": {"type": "string", "description": "Judul kartu tabel"},
+                },
+                "required": ["dataset_id"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "buat_grafik",
+            "description": (
+                "Membuat grafik dari dataset (bar/line/pie/scatter) yang tampil di chat. kolom_label = kolom "
+                "kategori/sumbu X; kolom_nilai = satu atau beberapa kolom angka. Idealnya dataset sudah "
+                "diagregasi & diurutkan (maks ~30 kategori agar terbaca)."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "dataset_id": {"type": "string"},
+                    "jenis": {"type": "string", "enum": ["bar", "line", "pie", "scatter"]},
+                    "kolom_label": {"type": "string"},
+                    "kolom_nilai": {"type": "array", "items": {"type": "string"}},
+                    "judul": {"type": "string"},
+                    "urutan": {"type": "string", "enum": ["desc", "asc", "asli"],
+                               "description": "Urutkan menurut kolom_nilai pertama sebelum dipotong (desc = terbesar dulu)"},
+                    "maks_kategori": {"type": "integer", "description": "Batas jumlah kategori, mis. 10 utk 'top 10'"},
+                },
+                "required": ["dataset_id", "jenis", "kolom_label", "kolom_nilai"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "tampilkan_di_peta",
+            "description": (
+                "Menampilkan dataset berlokasi sebagai layer di peta utama aplikasi. Dataset harus punya kolom "
+                "GeoJSON (ST_AsGeoJSON(geom)) ATAU kolom lintang/bujur (otomatis dideteksi bila tidak diisi). "
+                "kolom_label = kolom nama fitur utk label/popup; kolom_warna = kolom kategori utk pewarnaan (opsional)."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "dataset_id": {"type": "string"},
+                    "judul": {"type": "string"},
+                    "kolom_geometri": {"type": "string"},
+                    "kolom_lat": {"type": "string"},
+                    "kolom_lon": {"type": "string"},
+                    "kolom_label": {"type": "string"},
+                    "kolom_warna": {"type": "string"},
+                },
+                "required": ["dataset_id"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "buat_laporan",
+            "description": (
+                "Menyusun laporan Word (.docx) siap unduh: isi_markdown = isi laporan dlm markdown (judul, "
+                "ringkasan, temuan, tabel markdown, catatan data), dataset_ids = dataset yang dilampirkan "
+                "sebagai tabel lampiran. Panggil bila pengguna minta laporan/dokumen/ekspor Word."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "judul": {"type": "string"},
+                    "isi_markdown": {"type": "string"},
+                    "dataset_ids": {"type": "array", "items": {"type": "string"}},
+                },
+                "required": ["judul", "isi_markdown"],
+            },
+        },
+    },
+]
+
 CLIENT_ACTION_TOOLS = {"tampilkan_usulan_di_peta"}
 
 # Tool "hibrida": TETAP di-dispatch normal lewat CHAT_TOOL_DISPATCH (jalan di
@@ -309,7 +453,17 @@ CLIENT_ACTION_TOOLS = {"tampilkan_usulan_di_peta"}
 # ARGUMEN aksi yang dikirim ke frontend jadi SUDAH pasti valid (provinsi/
 # kabupaten/layer persis dari map_layer_meta), bukan ditebak model spt kalau
 # modelnya sendiri yang disuruh panggil daftar_layer_peta_overlay dulu.
-_TOOLS_NEED_ACTIONS_PARAM = {"tampilkan_layer_batas_administratif_usulan"}
+_TOOLS_NEED_ACTIONS_PARAM = {
+    "tampilkan_layer_batas_administratif_usulan", "jalankan_query_sql",
+    "tampilkan_tabel", "buat_grafik", "tampilkan_di_peta", "buat_laporan",
+}
+
+# Pengguna yg sedang chat (dicatat di dataset/laporan). ContextVar, bukan
+# global biasa: FastAPI melayani beberapa /api/chat bersamaan di thread berbeda.
+_PENGGUNA = contextvars.ContextVar("chat_pengguna", default=None)
+# Teks hasil semua tool dlm satu request /api/chat -> dicocokkan dgn isi tabel
+# di jawaban akhir (_periksa_tabel_karangan). ContextVar: per request/thread.
+_HASIL_TOOL = contextvars.ContextVar("chat_hasil_tool", default=None)
 
 _USULAN_TOOL_FIELDS = (
     "id", "nama_kegiatan", "nama_ruas", "kabupaten_kota", "provinsi", "jenis_penanganan",
@@ -535,8 +689,8 @@ def _tool_analisa_geometri_kml_usulan(id=None) -> dict:
 #      terlarang di awal karena DELETE ada di tengah tapi TETAP tertangkap
 #      regex _SQL_KEYWORD_TERLARANG; walau begitu READ ONLY transaction
 #      adalah jaring pengaman yang independen dari kelengkapan regex).
-_SQL_MAX_ROWS = 200
-_SQL_TIMEOUT_MS = 8000
+_SQL_PRATINJAU = 40          # baris yg dikirim ke model; hasil lengkap disimpan sbg dataset
+_SQL_TIMEOUT_MS = 25000
 _SQL_KEYWORD_TERLARANG = re.compile(
     r"\b(INSERT|UPDATE|DELETE|DROP|ALTER|TRUNCATE|CREATE|GRANT|REVOKE|COPY|CALL|VACUUM|REINDEX|MERGE|EXECUTE)\b",
     re.IGNORECASE,
@@ -557,8 +711,21 @@ def _validasi_sql_readonly(sql: str) -> Optional[str]:
     return None
 
 
-def _tool_daftar_tabel_database(tabel=None) -> dict:
+def _tool_daftar_tabel_database(tabel=None, kelompok_layer=None) -> dict:
     with db_cursor() as cur:
+        if kelompok_layer:
+            cur.execute(
+                "SELECT m.kabupaten, m.layer, m.feature_count, "
+                "  (SELECT array_agg(k) FROM jsonb_object_keys((SELECT x.attrs FROM map_layers x "
+                "   WHERE x.provinsi = m.provinsi AND x.kabupaten = m.kabupaten AND x.layer = m.layer LIMIT 1)) k) AS contoh_attrs "
+                "FROM map_layer_meta m WHERE m.provinsi = %s ORDER BY m.kabupaten, m.layer LIMIT 80",
+                (kelompok_layer,),
+            )
+            rows = cur.fetchall()
+            if not rows:
+                return {"error": f"Kelompok layer '{kelompok_layer}' tidak ada (lihat daftar_tabel_database tanpa argumen)"}
+            return {"kelompok_layer": kelompok_layer, "layer": [jsonable_encoder(dict(r)) for r in rows],
+                    "cara_query": "SELECT attrs->>'<kunci>', geom FROM map_layers WHERE provinsi=%s AND layer=... (kabupaten='' utk kelompok nasional)"}
         if tabel:
             cur.execute(
                 "SELECT column_name, data_type FROM information_schema.columns "
@@ -569,17 +736,36 @@ def _tool_daftar_tabel_database(tabel=None) -> dict:
             if not kolom:
                 return {"error": f"Tabel '{tabel}' tidak ditemukan (cek ejaan lewat daftar_tabel_database tanpa argumen)"}
             return {"tabel": tabel, "kolom": [{"nama": c["column_name"], "tipe": c["data_type"]} for c in kolom]}
+        from app import DATA_TABLES  # lazy: hindari circular import (label bahasa Indonesia menu "Data")
         cur.execute(
-            "SELECT table_name FROM information_schema.tables "
-            "WHERE table_schema='public' AND table_type='BASE TABLE' ORDER BY table_name"
+            "SELECT t.table_name, COALESCE(s.n_live_tup, 0) AS perkiraan_baris "
+            "FROM information_schema.tables t LEFT JOIN pg_stat_user_tables s "
+            "  ON s.relname = t.table_name AND s.schemaname = 'public' "
+            "WHERE t.table_schema='public' AND t.table_type='BASE TABLE' "
+            "  AND t.table_name NOT IN ('users', 'psc119_layanan') ORDER BY t.table_name"
         )
-        return {"tabel": [r["table_name"] for r in cur.fetchall()]}
+        tabel_list = [{"nama": r["table_name"], "label": DATA_TABLES.get(r["table_name"], ""),
+                       "perkiraan_baris": r["perkiraan_baris"]} for r in cur.fetchall()]
+        cur.execute(
+            "SELECT provinsi AS kelompok, count(*) AS jumlah_layer, sum(feature_count) AS jumlah_fitur, "
+            "  (array_agg(DISTINCT layer))[1:6] AS contoh_layer "
+            "FROM map_layer_meta GROUP BY provinsi ORDER BY provinsi"
+        )
+        kelompok = [jsonable_encoder(dict(r)) for r in cur.fetchall()]
+        return {"tabel": tabel_list, "kelompok_layer_peta": kelompok,
+                "catatan": "Kelompok bernama provinsi = layer RBI per kabupaten; lainnya kelompok tematik nasional. "
+                           "Detail layer & kunci attrs: daftar_tabel_database(kelompok_layer=...)."}
 
 
-def _tool_jalankan_query_sql(sql=None) -> dict:
+_SQL_TABEL_TERLARANG = re.compile(r"\b(users|psc119_layanan)\b", re.IGNORECASE)
+
+
+def _tool_jalankan_query_sql(sql=None, judul=None, actions=None) -> dict:
     error = _validasi_sql_readonly(sql or "")
     if error:
         return {"error": error}
+    if _SQL_TABEL_TERLARANG.search(sql):
+        return {"error": "Tabel akun pengguna / data pribadi layanan PSC119 tidak boleh diakses lewat chat."}
     inti = sql.strip().rstrip(";")
     try:
         with db_cursor() as cur:
@@ -588,18 +774,110 @@ def _tool_jalankan_query_sql(sql=None) -> dict:
             cur.execute(inti)
             if cur.description is None:
                 return {"error": "Query tidak mengembalikan baris (bukan SELECT?)"}
-            rows = cur.fetchmany(_SQL_MAX_ROWS + 1)
+            columns = [d.name for d in cur.description]
+            rows = cur.fetchmany(chat_dataset.MAKS_BARIS + 1)
     except Exception as e:
         return {"error": f"Query gagal: {e}"}
-    terpotong = len(rows) > _SQL_MAX_ROWS
-    rows = rows[:_SQL_MAX_ROWS]
-    columns = list(rows[0].keys()) if rows else []
+    terpotong = len(rows) > chat_dataset.MAKS_BARIS
+    rows = [[r[c] for c in columns] for r in rows[: chat_dataset.MAKS_BARIS]]
+    judul = (judul or "").strip() or "Hasil query"
+    ds_id = chat_dataset.simpan(columns, rows, judul=judul, sql=inti, pengguna=_PENGGUNA.get(), terpotong=terpotong)
+    geo = chat_dataset.deteksi_geometri({"columns": columns, "rows": jsonable_encoder(rows[:20])})
+    if actions is not None:
+        actions.append({"nama": "dataset_tersedia", "argumen": {
+            "dataset_id": ds_id, "judul": judul, "jumlah_baris": len(rows), "kolom": columns, "sql": inti}})
+    pratinjau = []
+    for r in rows[:_SQL_PRATINJAU]:
+        baris = {}
+        for c, v in zip(columns, r):
+            if isinstance(v, str) and len(v) > 300:
+                v = v[:300] + "…(dipotong)"
+            baris[c] = v
+        pratinjau.append(jsonable_encoder(baris))
     return {
+        "dataset_id": ds_id,
+        "judul": judul,
         "columns": columns,
-        "rows": [jsonable_encoder(dict(r)) for r in rows],
         "jumlah_baris": len(rows),
-        "dipotong_sampai_200_baris": terpotong,
+        "terpotong_di_20000": terpotong,
+        "pratinjau_baris": pratinjau,
+        "berlokasi": bool(geo["kolom_geometri"] or geo["kolom_lat"]),
+        **({"petunjuk": "0 baris. Kemungkinan filter terlalu ketat/penulisan beda: pakai ILIKE '%...%' dan cek "
+                        "nilai yg ada via SELECT DISTINCT <kolom> ... sebelum menyimpulkan data tidak ada."}
+           if not rows else {}),
     }
+
+
+def _dataset_atau_error(dataset_id):
+    ds = chat_dataset.muat(dataset_id or "")
+    if not ds:
+        return None, {"error": f"dataset_id '{dataset_id}' tidak ditemukan -- jalankan jalankan_query_sql dulu"}
+    return ds, None
+
+
+def _tool_tampilkan_tabel(dataset_id=None, judul=None, actions=None) -> dict:
+    ds, err = _dataset_atau_error(dataset_id)
+    if err:
+        return err
+    geo = chat_dataset.deteksi_geometri(ds)
+    actions.append({"nama": "tampilkan_tabel", "argumen": {
+        "dataset_id": ds["id"], "judul": judul or ds["judul"], "jumlah_baris": len(ds["rows"]),
+        "berlokasi": bool(geo["kolom_geometri"] or geo["kolom_lat"])}})
+    return {"status": "tabel ditampilkan di chat dengan tombol unduh", **chat_dataset.ringkas(ds)}
+
+
+def _tool_buat_grafik(dataset_id=None, jenis="bar", kolom_label=None, kolom_nilai=None, judul=None,
+                      urutan="asli", maks_kategori=None, actions=None) -> dict:
+    ds, err = _dataset_atau_error(dataset_id)
+    if err:
+        return err
+    kolom_nilai = [kolom_nilai] if isinstance(kolom_nilai, str) else list(kolom_nilai or [])
+    hilang = [k for k in [kolom_label, *kolom_nilai] if k not in ds["columns"]]
+    if hilang or not kolom_nilai:
+        return {"error": f"Kolom tidak ada di dataset: {hilang or 'kolom_nilai kosong'}. Kolom tersedia: {ds['columns']}"}
+    idx = [ds["columns"].index(k) for k in kolom_nilai]
+    for i, k in zip(idx, kolom_nilai):
+        if not any(isinstance(r[i], (int, float)) for r in ds["rows"][:50]):
+            return {"error": f"Kolom '{k}' bukan angka -- cast di SQL (mis. ::numeric) atau pilih kolom lain"}
+    actions.append({"nama": "buat_grafik", "argumen": {
+        "dataset_id": ds["id"], "jenis": jenis if jenis in ("bar", "line", "pie", "scatter") else "bar",
+        "kolom_label": kolom_label, "kolom_nilai": kolom_nilai, "judul": judul or ds["judul"],
+        "urutan": urutan if urutan in ("desc", "asc") else "asli",
+        "maks_kategori": max(1, min(int(maks_kategori), 500)) if maks_kategori else None}})
+    n = min(len(ds["rows"]), int(maks_kategori)) if maks_kategori else len(ds["rows"])
+    return {"status": "grafik ditampilkan di chat", "jumlah_titik": n}
+
+
+def _tool_tampilkan_di_peta(dataset_id=None, judul=None, kolom_geometri=None, kolom_lat=None, kolom_lon=None,
+                            kolom_label=None, kolom_warna=None, actions=None) -> dict:
+    ds, err = _dataset_atau_error(dataset_id)
+    if err:
+        return err
+    # model kadang mengisi ekspresi SQL (mis. "ST_SetSRID(...)") alih-alih nama kolom -> abaikan
+    kolom_geometri, kolom_lat, kolom_lon = (k if k in ds["columns"] else None for k in (kolom_geometri, kolom_lat, kolom_lon))
+    fc = chat_dataset.ke_geojson(ds, kolom_geometri, kolom_lat, kolom_lon)
+    if not fc["features"]:
+        return {"error": ("Dataset ini tidak punya kolom lokasi. LANGKAH BERIKUTNYA: jalankan ulang jalankan_query_sql "
+                          "dengan menambahkan kolom lat & lon (atau ST_AsGeoJSON(geom) AS geojson), lalu panggil "
+                          "tampilkan_di_peta LAGI dgn dataset_id yang baru. Kolom sekarang: " + ", ".join(ds["columns"]))}
+    for k in (kolom_label, kolom_warna):
+        if k and k not in ds["columns"]:
+            return {"error": f"Kolom '{k}' tidak ada. Kolom tersedia: {ds['columns']}"}
+    actions.append({"nama": "tampilkan_di_peta", "argumen": {
+        "dataset_id": ds["id"], "judul": judul or ds["judul"], "kolom_geometri": fc["kolom_geometri"],
+        "kolom_lat": fc["kolom_lat"], "kolom_lon": fc["kolom_lon"], "kolom_label": kolom_label,
+        "kolom_warna": kolom_warna, "jumlah_fitur": len(fc["features"])}})
+    return {"status": "ditampilkan di peta", "jumlah_fitur": len(fc["features"])}
+
+
+def _tool_buat_laporan(judul=None, isi_markdown=None, dataset_ids=None, actions=None) -> dict:
+    ids = [dataset_ids] if isinstance(dataset_ids, str) else list(dataset_ids or [])
+    try:
+        hasil = chat_dataset.buat_laporan_docx(judul or "Laporan Analisis", isi_markdown or "", ids, _PENGGUNA.get())
+    except Exception as e:
+        return {"error": f"Gagal menyusun laporan: {e}"}
+    actions.append({"nama": "unduh_laporan", "argumen": {**hasil, "judul": judul}})
+    return {"status": "laporan Word siap diunduh dari chat", **hasil}
 
 
 CHAT_TOOL_DISPATCH = {
@@ -612,6 +890,10 @@ CHAT_TOOL_DISPATCH = {
     "daftar_layer_peta_overlay": _tool_daftar_layer_peta_overlay,
     "analisa_spasial_usulan": _tool_analisa_spasial_usulan,
     "tampilkan_layer_batas_administratif_usulan": _tool_tampilkan_layer_batas_administratif_usulan,
+    "tampilkan_tabel": _tool_tampilkan_tabel,
+    "buat_grafik": _tool_buat_grafik,
+    "tampilkan_di_peta": _tool_tampilkan_di_peta,
+    "buat_laporan": _tool_buat_laporan,
     # "tampilkan_usulan_di_peta" SENGAJA tidak didaftarkan di sini -- ada di
     # CLIENT_ACTION_TOOLS, diteruskan ke frontend lewat _run_tool_call, bukan
     # dieksekusi di server.
@@ -635,12 +917,27 @@ def _run_tool_call(name: str, args: dict, actions: list) -> dict:
     if name in CLIENT_ACTION_TOOLS:
         actions.append({"nama": name, "argumen": args})
         return {"status": "diteruskan_ke_frontend_untuk_dieksekusi"}
+    hasil = _jalankan_tool(name, args, actions)
+    rekam = _HASIL_TOOL.get()
+    if rekam is not None:
+        rekam.append(json.dumps(jsonable_encoder(hasil), ensure_ascii=False, default=str)[:200000])
+    return hasil
+
+
+def _jalankan_tool(name: str, args: dict, actions: list) -> dict:
     fn = CHAT_TOOL_DISPATCH.get(name)
     if fn is None:
         return {"error": "fungsi tidak dikenal"}
-    if name in _TOOLS_NEED_ACTIONS_PARAM:
-        return fn(actions=actions, **args)
-    return fn(**args)
+    try:
+        if name in _TOOLS_NEED_ACTIONS_PARAM:
+            return fn(actions=actions, **args)
+        return fn(**args)
+    except TypeError as e:  # model mengirim argumen yg tidak dikenal -> balas error, bukan crash seluruh chat
+        return {"error": f"Argumen fungsi {name} tidak valid: {e}"}
+
+
+# Analisis lintas data butuh banyak langkah (katalog -> kolom -> query -> tabel/grafik/peta/laporan).
+_MAKS_PUTARAN_TOOL = 12
 
 
 def _call_openai_compatible(provider: str, api_url: str, api_key: str, model: str, messages: List, context: Optional[dict]) -> tuple:
@@ -651,13 +948,13 @@ def _call_openai_compatible(provider: str, api_url: str, api_key: str, model: st
     chat_messages = [{"role": "system", "content": _chat_system_text(context)}]
     chat_messages += [{"role": m.role, "content": m.text} for m in messages]
 
-    for _ in range(4):  # batas jumlah putaran pemanggilan fungsi, cegah loop tak berujung
+    for _ in range(_MAKS_PUTARAN_TOOL):  # batas jumlah putaran pemanggilan fungsi, cegah loop tak berujung
         try:
             resp = requests.post(
                 api_url,
                 headers={"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"},
                 json={"model": model, "messages": chat_messages, "tools": CHAT_TOOLS, "tool_choice": "auto"},
-                timeout=30,
+                timeout=120,
             )
             resp.raise_for_status()
         except requests.RequestException as e:
@@ -709,7 +1006,7 @@ def _call_openai_responses(api_key: str, model: str, messages: List, context: Op
     actions: list = []
     input_items = [{"role": m.role, "content": m.text} for m in messages]
 
-    for _ in range(4):  # batas jumlah putaran pemanggilan fungsi, cegah loop tak berujung
+    for _ in range(_MAKS_PUTARAN_TOOL):  # batas jumlah putaran pemanggilan fungsi, cegah loop tak berujung
         try:
             resp = requests.post(
                 OPENAI_RESPONSES_URL,
@@ -720,7 +1017,7 @@ def _call_openai_responses(api_key: str, model: str, messages: List, context: Op
                     "input": input_items,
                     "tools": OPENAI_RESPONSES_TOOLS,
                 },
-                timeout=30,
+                timeout=120,
             )
             resp.raise_for_status()
         except requests.RequestException as e:
@@ -769,6 +1066,8 @@ def _openai_tools_to_gemini(tools: list) -> list:
                 out[k] = v.upper()
             elif k == "properties":
                 out[k] = {pk: upcase_types(pv) for pk, pv in v.items()}
+            elif k == "items":
+                out[k] = upcase_types(v)
             else:
                 out[k] = v
         return out
@@ -789,7 +1088,7 @@ def _call_gemini(api_key: str, model: str, messages: List, context: Optional[dic
     api_url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
     contents = [{"role": "model" if m.role == "assistant" else "user", "parts": [{"text": m.text}]} for m in messages]
 
-    for _ in range(4):  # batas jumlah putaran pemanggilan fungsi, cegah loop tak berujung
+    for _ in range(_MAKS_PUTARAN_TOOL):  # batas jumlah putaran pemanggilan fungsi, cegah loop tak berujung
         try:
             resp = requests.post(
                 api_url,
@@ -799,7 +1098,7 @@ def _call_gemini(api_key: str, model: str, messages: List, context: Optional[dic
                     "tools": GEMINI_CHAT_TOOLS,
                     "contents": contents,
                 },
-                timeout=30,
+                timeout=120,
             )
             resp.raise_for_status()
         except requests.RequestException as e:
@@ -836,19 +1135,24 @@ CLAUDE_TOOLS = [
     {"name": t["function"]["name"], "description": t["function"]["description"], "input_schema": t["function"]["parameters"]}
     for t in CHAT_TOOLS
 ]
+# prompt caching: definisi tool + system prompt statis sama di tiap permintaan -> di-cache
+CLAUDE_TOOLS[-1] = {**CLAUDE_TOOLS[-1], "cache_control": {"type": "ephemeral"}}
 
 
 def _call_claude(api_key: str, model: str, messages: List, context: Optional[dict]) -> tuple:
     actions: list = []
-    client = anthropic.Anthropic(api_key=api_key)
+    client = anthropic.Anthropic(api_key=api_key, timeout=300.0)
     claude_messages = [{"role": m.role, "content": m.text} for m in messages]
 
-    for _ in range(4):  # batas jumlah putaran pemanggilan fungsi, cegah loop tak berujung
+    for _ in range(_MAKS_PUTARAN_TOOL):  # batas jumlah putaran pemanggilan fungsi, cegah loop tak berujung
         try:
+            system_blocks = [{"type": "text", "text": _chat_system_text(None), "cache_control": {"type": "ephemeral"}}]
+            if context:  # konteks rute berubah-ubah -> di LUAR blok yg di-cache
+                system_blocks.append({"type": "text", "text": "Data rute saat ini (JSON):\n" + json.dumps(context, ensure_ascii=False)})
             response = client.messages.create(
                 model=model,
-                max_tokens=4096,
-                system=_chat_system_text(context),
+                max_tokens=16000,
+                system=system_blocks,
                 tools=CLAUDE_TOOLS,
                 messages=claude_messages,
             )
@@ -882,22 +1186,89 @@ def _chat_providers() -> list:
     berhasil, supaya chat tidak macet total hanya karena satu provider kehabisan
     kuota harian."""
     providers = []
+    # Claude duluan: model utama mode analitik (banyak langkah tool + laporan). Kalau gagal
+    # (mis. kredit habis / kuota), otomatis lanjut ke provider berikutnya seperti biasa.
+    if os.getenv("CLOUDE_API_KEY"):
+        providers.append(("Claude", lambda msgs, ctx: _call_claude(os.getenv("CLOUDE_API_KEY"), CLAUDE_MODEL, msgs, ctx)))
     if os.getenv("GROQ_API_KEY"):
         providers.append(("Groq", lambda msgs, ctx: _call_openai_compatible("Groq", GROQ_API_URL, os.getenv("GROQ_API_KEY"), GROQ_MODEL, msgs, ctx)))
     if os.getenv("GROK_API_KEY"):
         providers.append(("Grok", lambda msgs, ctx: _call_openai_compatible("Grok", GROK_API_URL, os.getenv("GROK_API_KEY"), GROK_MODEL, msgs, ctx)))
     if os.getenv("OPEN_AI_API_KEY"):
         providers.append(("OpenAI", lambda msgs, ctx: _call_openai_responses(os.getenv("OPEN_AI_API_KEY"), OPENAI_MODEL, msgs, ctx)))
-    if os.getenv("CLOUDE_API_KEY"):
-        providers.append(("Claude", lambda msgs, ctx: _call_claude(os.getenv("CLOUDE_API_KEY"), CLAUDE_MODEL, msgs, ctx)))
     if os.getenv("GEMINI_API_KEY"):
         providers.append(("Gemini", lambda msgs, ctx: _call_gemini(os.getenv("GEMINI_API_KEY"), GEMINI_MODEL, msgs, ctx)))
     return providers
 
 
-def _call_chat(messages: List, context: Optional[dict]) -> tuple:
+_SEL_ANGKA = re.compile(r"^[\s\d.,%:+\-/()kmhaRp$]*$", re.IGNORECASE)
+
+
+def _periksa_tabel_karangan(teks: str, actions: list) -> str:
+    """Model yang lebih lemah (terbukti: gpt-4o-mini, 28 Sep 2026) bisa mengisi
+    tabel markdown dgn data karangan saat query-nya gagal/0 baris ("Pelabuhan 1
+    | Lokasi 1 | 1 km"). Sel teks tiap tabel dicocokkan ke hasil tool request
+    ini + isi dataset yg dibuat; bila hampir tidak ada yg cocok, jawaban diberi
+    peringatan yang terlihat pengguna. Heuristik -- hanya menandai, tidak
+    mengubah isi jawaban."""
+    sumber = list(_HASIL_TOOL.get() or [])
+    for a in actions:
+        if a.get("nama") == "dataset_tersedia":
+            ds = chat_dataset.muat(a["argumen"].get("dataset_id", ""))
+            if ds:
+                sumber.append(json.dumps(ds["rows"], ensure_ascii=False, default=str)[:500000])
+    korpus = " ".join(sumber).lower()
+    curiga = False
+    tabel, dalam = [], False
+    for baris in teks.split("\n") + [""]:
+        b = baris.strip()
+        if b.startswith("|") and b.endswith("|"):
+            tabel.append(b)
+            dalam = True
+            continue
+        if dalam:
+            isi = [r for r in tabel[2:] if not re.match(r"^\|?\s*:?-{2,}", r)]  # buang header & pemisah
+            sel = [c.strip().strip("*").strip() for r in isi for c in r.strip("|").split("|")]
+            sel = [c for c in sel if len(c) >= 4 and not _SEL_ANGKA.match(c)]
+            if len(isi) >= 2 and len(sel) >= 2:
+                cocok = sum(1 for c in sel if c.lower() in korpus)
+                if cocok / len(sel) < 0.3:
+                    curiga = True
+            tabel, dalam = [], False
+    if curiga:
+        teks += ("\n\n> ⚠️ **Peringatan sistem:** sebagian besar isi tabel di atas **tidak ditemukan** pada data yang "
+                 "diambil asisten dari database — kemungkinan tidak akurat. Periksa bagian *Data & query* atau ulangi "
+                 "pertanyaan dengan lebih spesifik.")
+    return teks
+
+
+_MD_GAMBAR = re.compile(r"!\[[^\]]*\]\([^)]*\)")
+_MD_TAUTAN = re.compile(r"\[([^\]]+)\]\(([^)]*)\)")
+
+
+def _rapikan_jawaban(teks: str, actions: list) -> str:
+    """Gambar markdown & tautan buatan model (mis. "![grafik](url_grafik)") dibuang -- grafik/peta/unduhan
+    sudah tampil sbg kartu; tautan yg bukan http(s) atau path /api/... pasti rusak. Kalau model lupa
+    memanggil tampilkan_tabel, dataset non-kosong terakhir otomatis diberi kartu tabel (tombol unduh)."""
+    teks = _MD_GAMBAR.sub("", teks)
+    teks = _MD_TAUTAN.sub(lambda m: m.group(0) if re.match(r"^(https?://|/api/)", m.group(2).strip()) else m.group(1), teks)
+    if not any(a.get("nama") == "tampilkan_tabel" for a in actions):
+        terakhir = next((a["argumen"] for a in reversed(actions)
+                         if a.get("nama") == "dataset_tersedia" and a["argumen"].get("jumlah_baris")), None)
+        if terakhir:
+            ds = chat_dataset.muat(terakhir["dataset_id"])
+            if ds:
+                geo = chat_dataset.deteksi_geometri(ds)
+                actions.append({"nama": "tampilkan_tabel", "argumen": {
+                    "dataset_id": ds["id"], "judul": ds["judul"], "jumlah_baris": len(ds["rows"]),
+                    "berlokasi": bool(geo["kolom_geometri"] or geo["kolom_lat"])}})
+    return teks
+
+
+def _call_chat(messages: List, context: Optional[dict], pengguna: Optional[str] = None) -> tuple:
     """Return (teks, actions) -- actions = daftar CLIENT_ACTION_TOOLS yang
     dipanggil model, diteruskan app.py ke frontend utk dieksekusi di UI."""
+    _PENGGUNA.set(pengguna)
     providers = _chat_providers()
     if not providers:
         raise HTTPException(
@@ -907,8 +1278,10 @@ def _call_chat(messages: List, context: Optional[dict]) -> tuple:
 
     errors = []
     for name, call in providers:
+        _HASIL_TOOL.set([])  # direset per provider: hasil tool provider yg gagal tidak ikut dihitung
         try:
-            return call(messages, context)
+            teks, actions = call(messages, context)
+            return _periksa_tabel_karangan(_rapikan_jawaban(teks, actions), actions), actions
         except Exception as e:
             errors.append(f"{name}: {e}")
 

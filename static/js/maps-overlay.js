@@ -208,13 +208,20 @@ async function loadMapLayerTree() {
   tree.innerHTML = "";
   MAP_LAYER_CATEGORIES.forEach((cat) => {
     const group = grouped.get(cat.id);
-    if (!group || !group.rows.length) return;
+    if (!group) return;
+    // Mode normal men-exclude PETA KORIDOR (lihat loadKabupatenChildren) --
+    // provinsi yang isinya cuma PETA KORIDOR (mis. DI Yogyakarta, provinsi
+    // pemekaran Papua) disembunyikan di sini supaya tidak jadi node kosong.
+    const rows = group.rows
+      .filter((p) => (p.kabupaten_count_tanpa_koridor ?? p.kabupaten_count) > 0)
+      .map((p) => ({ ...p, kabupaten_count: p.kabupaten_count_tanpa_koridor ?? p.kabupaten_count }));
+    if (!rows.length) return;
     tree.appendChild(renderTreeNode({
       icon: cat.icon,
       label: cat.label,
-      count: group.rows.length,
+      count: rows.length,
       countSuffix: "provinsi",
-      loadChildren: () => renderProvinsiChildren(group.rows),
+      loadChildren: () => renderProvinsiChildren(rows),
     }));
   });
 
@@ -713,6 +720,17 @@ const KLASTER_LEGEND = [
   ["#E6B800", "Klaster Tanaman Pangan"], ["#009E73", "Klaster Perkebunan Tebu"],
   ["#D55E00", "Klaster Perkebunan Sawit"], ["#CC79A7", "Klaster Peternakan"],
 ];
+// Legenda RTRW Papua Selatan (import_rtrw_papua_selatan_jaringan_to_postgis.py) -- per layer, warna sama dgn GAYA skrip.
+const RTRW_PAPSEL_LEGEND = {
+  "JARINGAN JALAN RTRW": [
+    ["#C62828", "Jalan Arteri Primer"], ["#EF6C00", "Jalan Kolektor Primer (eksisting)"],
+    ["#FFB74D", "Jalan Kolektor Primer (rencana)"], ["#B39DDB", "Jalan Khusus (rencana)"],
+  ],
+  "Alur Pelayaran (RTRW Struktur Ruang)": [
+    ["#1565C0", "Alur pelayaran umum & perlintasan"], ["#00ACC1", "Alur pelayaran sungai & danau"],
+    ["#0D47A1", "Alur pelayaran masuk pelabuhan"],
+  ],
+};
 const arusFilter = { pulau: "", provinsi: "", arah: "keduanya", antarPulau: false };
 
 function arusFeatureVisible(f) {

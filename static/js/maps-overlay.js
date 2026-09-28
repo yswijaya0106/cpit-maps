@@ -339,8 +339,27 @@ async function loadLayerChildren(provinsi, kabupaten, opts = {}) {
       <span class="maplayer-swatch" style="background:${isActive ? mapLayerColor(l.layer) : mapLayerPreviewColor(l.layer)}"></span>
       <span class="maplayer-item-label" title="${escapeHtml(l.label)}">${escapeHtml(l.label)}</span>
       <span class="maplayer-item-size">${l.size_mb != null ? `${l.size_mb} MB` : ""}</span>
+      <button type="button" class="maplayer-download" data-provinsi="${escapeHtml(provinsi)}" data-kabupaten="${escapeHtml(kabupaten)}" data-layer="${escapeHtml(l.layer)}"
+        title="Unduh SHP + data atribut layer ini"><i class="bi bi-download"></i></button>
       <input type="range" class="maplayer-opacity" min="0" max="1" step="0.05" value="${opacity}" data-provinsi="${escapeHtml(provinsi)}" data-kabupaten="${escapeHtml(kabupaten)}" data-layer="${escapeHtml(l.layer)}" title="Transparansi layer" ${isActive ? "" : "hidden"} />
     `;
+    // Baris ini adalah <label> yg membungkus checkbox -- browser meneruskan klik APAPUN di
+    // dalamnya (termasuk tombol unduh) ke checkbox itu (perilaku native <label>) SELAMA
+    // event belum di-preventDefault() pada titik event mencapai <label>. Listener yg
+    // di-delegasikan ke leluhur label (mis. treeEl) baru jalan SETELAH label memproses
+    // default action-nya sendiri -- sudah terlambat. Makanya listener tombol unduh dipasang
+    // di sini, langsung ke tombolnya (anak label), bukan lewat delegasi treeEl.click di bawah.
+    row.querySelector(".maplayer-download").addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const qs = new URLSearchParams({ provinsi, kabupaten: kabupaten || "", layer: l.layer });
+      const a = document.createElement("a");
+      a.href = `/api/maps/layer/export/shp?${qs}`;
+      a.rel = "noopener";
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+    });
     frag.appendChild(row);
   });
   return frag;

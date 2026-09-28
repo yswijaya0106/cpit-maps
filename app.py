@@ -7822,6 +7822,105 @@ def maps_layer(request: Request, provinsi: str, layer: str, kabupaten: str = "")
     return Response(content=gzip.decompress(gz), media_type="application/json", headers=kepala)
 
 
+def _shp_nama_kolom_aman(nama_asli: list) -> dict:
+    """nama_asli -> nama field SHP (format DBF, maks 10 karakter, unik) -- dipakai
+    export SHP layer overlay (attrs JSONB sumbernya bebas panjang/karakter apapun,
+    berbeda dari export lain di app.py yg sudah tahu nama kolomnya sendiri)."""
+    terpakai, peta = set(), {}
+    for n in nama_asli:
+        dasar = (re.sub(r"[^A-Za-z0-9_]", "_", n)[:10] or "F").upper()
+        kandidat, i = dasar, 1
+        while kandidat in terpakai:
+            i += 1
+            akhiran = str(i)
+            kandidat = dasar[: 10 - len(akhiran)] + akhiran
+        terpakai.add(kandidat)
+        peta[n] = kandidat
+    return peta
+
+
+@app.get("/api/maps/layer/export/shp")
+def maps_layer_export_shp(provinsi: str, layer: str, kabupaten: str = ""):
+    """Unduh satu layer overlay peta (map_layers) sbg SHP + seluruh atribut
+    sumbernya (attrs JSONB, apa adanya -- BUKAN yg sudah disederhanakan spt
+    /api/maps/layer utk tampilan layar). Nama kolom SHP dibatasi format DBF
+    (maks 10 karakter) -- KAMUS_KOLOM.txt di dalam zip memetakan balik ke nama
+    aslinya, pola yang sama dgn KAMUS_KOLOM.txt di skrip import_*_to_postgis.py."""
+    import shapely.wkb
+
+    with db_cursor() as cur:
+        cur.execute(
+            "SELECT label, feature_count FROM map_layer_meta WHERE provinsi=%s AND kabupaten=%s AND layer=%s",
+            (provinsi, kabupaten, layer),
+        )
+        meta = cur.fetchone()
+        if not meta:
+            raise HTTPException(404, "Layer tidak ditemukan")
+
+        # Sebagian kecil layer (mis. SUBKLASTER) punya baris GeometryCollection nyasar di antara
+        # Polygon/MultiPolygon (sisa proses geopandas dissolve/union saat impor) -- SHP mewajibkan
+        # satu jenis geometri per file, jadi dipaksa ke dimensi geometri yang PALING BANYAK dulu
+        # (0=titik, 1=garis, 2=poligon) via ST_CollectionExtract; baris yg jenisnya beda dilewati.
+        cur.execute(
+            "SELECT ST_Dimension(geom) AS d, count(*) AS n FROM map_layers "
+            "WHERE provinsi=%s AND kabupaten=%s AND layer=%s GROUP BY 1 ORDER BY n DESC LIMIT 1",
+            (provinsi, kabupaten, layer),
+        )
+        dim_row = cur.fetchone()
+        dim = int(dim_row["d"]) if dim_row and dim_row["d"] is not None else None
+        geom_expr = f"ST_CollectionExtract(ST_MakeValid(geom), {dim + 1})" if dim is not None else "geom"
+
+        cur.execute(
+            f"SELECT attrs, ST_AsBinary({geom_expr}) AS g FROM map_layers "
+            "WHERE provinsi=%s AND kabupaten=%s AND layer=%s",
+            (provinsi, kabupaten, layer),
+        )
+        rows = cur.fetchall()
+
+    baris = [(r["attrs"] or {}, r["g"]) for r in rows if r["g"] is not None]
+    if not baris:
+        raise HTTPException(404, "Layer tidak memiliki data geometri yang bisa diekspor")
+
+    nama_asli = []
+    terlihat = set()
+    for attrs, _ in baris:
+        for k in attrs:
+            if k not in terlihat and not str(k).startswith("_"):  # awalan "_" = atribut teknis internal
+                terlihat.add(k)
+                nama_asli.append(k)
+    peta_kolom = _shp_nama_kolom_aman(nama_asli)
+
+    records = []
+    for attrs, wkb_bytes in baris:
+        geom = shapely.force_2d(shapely.wkb.loads(bytes(wkb_bytes)))
+        rec = {peta_kolom[k]: ("" if v is None else str(v)) for k, v in attrs.items() if k in peta_kolom}
+        rec["geometry"] = geom
+        records.append(rec)
+    gdf = gpd.GeoDataFrame(records, crs="EPSG:4326")
+
+    nama_dasar = re.sub(r"[^A-Za-z0-9_]+", "_", f"{layer}").strip("_")[:60] or "layer"
+    with TemporaryDirectory() as tmp:
+        shp_path = Path(tmp) / f"{nama_dasar}.shp"
+        gdf.to_file(shp_path, driver="ESRI Shapefile", engine="pyogrio", encoding="utf-8")
+        kamus = "\n".join(f"{v} = {k}" for k, v in peta_kolom.items())
+        (Path(tmp) / "KAMUS_KOLOM.txt").write_text(
+            f"Layer: {meta['label'] or layer}\nProvinsi/kabupaten: {provinsi} / {kabupaten or '(nasional)'}\n"
+            f"Jumlah fitur diekspor: {len(records)} dari {len(rows)}\n\n"
+            "Nama kolom SHP dibatasi format DBF (maks 10 karakter) -- pemetaan ke nama atribut "
+            f"aslinya:\n\n{kamus}\n", encoding="utf-8")
+
+        zip_buffer = io.BytesIO()
+        with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
+            for f in Path(tmp).iterdir():
+                zf.write(f, arcname=f.name)
+        zip_buffer.seek(0)
+    fname = f"{nama_dasar}_{datetime.now():%Y%m%d%H%M%S}.zip"
+    return StreamingResponse(
+        zip_buffer, media_type="application/zip",
+        headers={"Content-Disposition": f"attachment; filename={fname}"},
+    )
+
+
 # Sumber referensi Darat/Laut (angkutan_perintis, bps_kinerja_pelabuhan) TIDAK
 # punya koordinat sama sekali (lihat schema_angkutan_perintis.sql/
 # schema_bps_kinerja_pelabuhan.sql) -- panel "Jelajahi Usulan Inpres" moda

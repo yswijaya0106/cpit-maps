@@ -708,6 +708,27 @@ Deps: `requirements.txt`, venv at `.venv/` (already gitignored).
   pre-migration; prefer flattening a new source to the plain
   provinsi/kabupaten shape over adding a special case (see `docs/MEMORY.md`
   §"Maps/ overlay").
+  **`GET /api/maps/layer/export/shp`** (28 Sep 2026) — download button (icon,
+  `.maplayer-download`) added next to every layer row in the Overlay Peta
+  tree (`maps-overlay.js`): zips a SHP of that one layer's FULL-resolution
+  geometry (no `ST_SimplifyPreserveTopology`, unlike the on-screen
+  `/api/maps/layer`) plus every attribute column from `attrs` JSONB, apa
+  adanya. Shapefile's DBF format caps field names at 10 characters and one
+  geometry type per file — `_shp_nama_kolom_aman()` truncates/dedupes names
+  (`KAMUS_KOLOM.txt` inside the zip maps them back to the original attribute
+  name, same convention as the `KAMUS_KOLOM.txt` files written by
+  `import_*_to_postgis.py` scripts), and rows are forced via
+  `ST_CollectionExtract` to whichever geometry dimension (point/line/polygon)
+  is most common in that layer — a handful of layers (e.g. `SUBKLASTER`) have
+  a few stray `GeometryCollection` rows left over from a `dissolve()`/`union()`
+  step at import time; those rows are silently dropped rather than failing
+  the whole export (count is reported in `KAMUS_KOLOM.txt`: "N dari M").
+  Frontend: the download button sits inside the same `<label>` that wraps the
+  layer's visibility checkbox, so its click listener is bound directly to the
+  button (not delegated to the tree container) and calls
+  `preventDefault()`/`stopPropagation()` there — a listener delegated to an
+  ANCESTOR of the `<label>` fires too late to stop the browser's native
+  label→checkbox click-forwarding.
   The "BATAS KECAMATAN" overlay (provinsi bucket fixed to that literal
   string, `BATAS_KEC_DIRNAME` in app.py) is sourced from
   `Maps/BATAS_ADMINISTRASI.gdb` (BIG file geodatabase, layer

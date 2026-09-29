@@ -36,6 +36,9 @@ import openpyxl
 import psycopg
 from psycopg.rows import dict_row
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from wilayah_cocok import PencocokKabupaten  # noqa: E402
+
 BASE_DIR = Path(__file__).resolve().parent.parent
 DOCS_DIR = BASE_DIR / "docs" / "docs"
 SCHEMA_PATH = Path(__file__).resolve().parent / "schema_bappenas_lokus_a.sql"
@@ -102,7 +105,9 @@ def build_master_index(conn):
         kab_master = cur.fetchall()
         cur.execute("SELECT kode_kabupaten, kecamatan, kode_kecamatan FROM penduduk_kecamatan")
         kec_master = cur.fetchall()
-    kab_idx = {(norm_prov(m["provinsi"]), strip_kab_prefix(m["kabupaten_kota"])): m for m in kab_master}
+    # Pencocok bersama (wilayah_cocok.py): tahan beda spasi/tanda hubung ("FAK FAK" = FAKFAK),
+    # membedakan Kab vs Kota bernama sama, koreksi salah ketik sumber, fallback nama se-nasional.
+    kab_idx = PencocokKabupaten(kab_master)
     kec_idx = {(m["kode_kabupaten"], norm(m["kecamatan"])): m["kode_kecamatan"] for m in kec_master}
     # index tanpa provinsi -- utk sumber yang cuma punya nama kabupaten (mis.
     # Swasembada Pangan RPJMN). penduduk_kecamatan.kabupaten_kota tidak
@@ -111,11 +116,7 @@ def build_master_index(conn):
     # persis namanya di master. Dibedakan pakai konvensi kode BPS: 2 digit
     # terakhir kode_kabupaten >= 71 = Kota (fakta administratif nasional,
     # bukan tebakan) -- key = (is_kota, nama dasar).
-    kab_by_name = {}
-    for m in kab_master:
-        is_kota = (m["kode_kabupaten"] % 100) >= 71
-        key = (is_kota, strip_kab_prefix(m["kabupaten_kota"]))
-        kab_by_name[key] = None if key in kab_by_name else m
+    kab_by_name = kab_idx  # sumber tanpa kolom provinsi -> PencocokKabupaten.cari(None, nama)
     prov_idx = {norm_prov(m["provinsi"]): m["kode_provinsi"] for m in kab_master}
     # index list (bukan dict tunggal) per provinsi -- dipakai
     # _match_kab_tokens_in_text() utk cocokkan nama kab/kota yang MUNCUL DI
@@ -130,17 +131,19 @@ def build_master_index(conn):
             "kab_name_list_by_prov": kab_name_list_by_prov}
 
 
-def match_kab(kab_idx, provinsi, kabupaten):
-    if not provinsi or not kabupaten:
-        return None
-    return kab_idx.get((norm_prov(provinsi), strip_kab_prefix(kabupaten)))
+def match_kab(kab_idx, provinsi, kabupaten, kecamatan=None, kec_idx=None):
+    # Nama tanpa awalan yg dimiliki Kab & Kota sekaligus (mis. "KUPANG", "SOLOK"): bila baris punya
+    # nama kecamatan, pilih calon yg benar-benar memiliki kecamatan itu (fakta), bukan konvensi "Kab".
+    if kecamatan and kec_idx is not None:
+        cocok = [m for m in kab_idx.kandidat(provinsi, kabupaten)
+                 if match_kec(kec_idx, m["kode_kabupaten"], kecamatan)]
+        if len(cocok) == 1:
+            return cocok[0]
+    return kab_idx.cari(provinsi, kabupaten)
 
 
 def match_kab_by_name(kab_by_name, kabupaten):
-    if not kabupaten:
-        return None
-    is_kota = norm(kabupaten).startswith("KOTA ")
-    return kab_by_name.get((is_kota, strip_kab_prefix(kabupaten)))
+    return kab_by_name.cari(None, kabupaten)
 
 
 def match_kec(kec_idx, kode_kabupaten, kecamatan):
@@ -315,7 +318,7 @@ def import_pksn(wb, ctx, sumber_file="6_Usulan Lokus IJD 2026 Sektor Bappenas.xl
             last_prov = provinsi
         if not provinsi or not kabupaten:
             continue
-        m = match_kab(kab_idx, provinsi, kabupaten)
+        m = match_kab(kab_idx, provinsi, kabupaten, kecamatan, kec_idx)
         kode_prov = m["kode_provinsi"] if m else None
         kode_kab = m["kode_kabupaten"] if m else None
         kode_kec = match_kec(kec_idx, kode_kab, kecamatan) if kode_kab else None
@@ -337,7 +340,7 @@ def import_perbatasan(wb, ctx, sumber_file="6_Usulan Lokus IJD 2026 Sektor Bappe
         provinsi, kabupaten, kecamatan = clean(row[1]), clean(row[2]), clean(row[3])
         if not provinsi or not kabupaten:
             continue
-        m = match_kab(kab_idx, provinsi, kabupaten)
+        m = match_kab(kab_idx, provinsi, kabupaten, kecamatan, kec_idx)
         kode_prov = m["kode_provinsi"] if m else None
         kode_kab = m["kode_kabupaten"] if m else None
         kode_kec = match_kec(kec_idx, kode_kab, kecamatan) if kode_kab else None
@@ -358,6 +361,11 @@ def import_sr(wb, ctx, sumber_file="6_Usulan Lokus IJD 2026 Sektor Bappenas.xlsx
         provinsi, kabupaten = clean(row[1]), clean(row[4])
         if not provinsi or not kabupaten:
             continue
+        # Kolom Kab/Kota berisi nama polos; satu-satunya penanda jenis ada di nomenklatur
+        # sekolah (kolom D), mis. "Sekolah Rakyat Terintegrasi 1 Cirebon (Kota)".
+        nomenklatur = clean(row[3]) or ""
+        if re.search(r"\(\s*kota\s*\)", nomenklatur, re.I) and not re.match(r"(?i)\s*kota\b", kabupaten):
+            kabupaten = f"Kota {kabupaten}"
         m = match_kab(kab_idx, provinsi, kabupaten)
         kode_prov = m["kode_provinsi"] if m else None
         kode_kab = m["kode_kabupaten"] if m else None
@@ -407,9 +415,9 @@ def import_knmp(wb, ctx, sumber_file="6_Usulan Lokus IJD 2026 Sektor Bappenas.xl
         if not row or len(row) < 4:
             continue
         provinsi, kabupaten, kecamatan = clean(row[1]), clean(row[2]), clean(row[3])
-        if not provinsi or not kabupaten:
+        if not provinsi or not kabupaten or provinsi.strip().lower() == "provinsi":  # baris judul kolom
             continue
-        m = match_kab(kab_idx, provinsi, kabupaten)
+        m = match_kab(kab_idx, provinsi, kabupaten, kecamatan, kec_idx)
         kode_prov = m["kode_provinsi"] if m else None
         kode_kab = m["kode_kabupaten"] if m else None
         kode_kec = match_kec(kec_idx, kode_kab, kecamatan) if kode_kab else None

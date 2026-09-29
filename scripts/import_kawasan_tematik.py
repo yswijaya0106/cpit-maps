@@ -26,6 +26,9 @@ import openpyxl
 import psycopg
 from psycopg.rows import dict_row
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from wilayah_cocok import PencocokKabupaten  # noqa: E402
+
 BASE_DIR = Path(__file__).resolve().parent.parent
 DEFAULT_XLSX = BASE_DIR / "docs" / "docs" / "6_Usulan Lokus IJD 2026 Sektor Bappenas.xlsx"
 SCHEMA_PATH = Path(__file__).resolve().parent / "schema_kawasan_tematik.sql"
@@ -109,15 +112,21 @@ def build_master_index(conn):
         kab_master = cur.fetchall()
         cur.execute("SELECT kode_kabupaten, kecamatan, kode_kecamatan FROM penduduk_kecamatan")
         kec_master = cur.fetchall()
-    kab_idx = {(norm_prov(m["provinsi"]), strip_kab_prefix(m["kabupaten_kota"])): m for m in kab_master}
+    # Pencocok bersama (wilayah_cocok.py) -- lihat docstring di sana (kasus "FAK FAK" & Kab/Kota bertabrakan).
+    kab_idx = PencocokKabupaten(kab_master)
     kec_idx = {(m["kode_kabupaten"], norm(m["kecamatan"])): m["kode_kecamatan"] for m in kec_master}
     return kab_idx, kec_idx
 
 
-def match_kab(kab_idx, provinsi, kabupaten):
-    if not provinsi or not kabupaten:
-        return None
-    return kab_idx.get((norm_prov(provinsi), strip_kab_prefix(kabupaten)))
+def match_kab(kab_idx, provinsi, kabupaten, kecamatan=None, kec_idx=None):
+    # Nama tanpa awalan yg dimiliki Kab & Kota sekaligus (mis. "KUPANG", "SOLOK"): bila baris punya
+    # nama kecamatan, pilih calon yg benar-benar memiliki kecamatan itu (fakta), bukan konvensi "Kab".
+    if kecamatan and kec_idx is not None:
+        cocok = [m for m in kab_idx.kandidat(provinsi, kabupaten)
+                 if match_kec(kec_idx, m["kode_kabupaten"], kecamatan)]
+        if len(cocok) == 1:
+            return cocok[0]
+    return kab_idx.cari(provinsi, kabupaten)
 
 
 def match_kec(kec_idx, kode_kabupaten, kecamatan):
@@ -135,7 +144,7 @@ def import_sheet_rows(wb, sheet, kategori, i_prov, i_kab, i_kec, kab_idx, kec_id
         kecamatan = clean(row[i_kec]) if i_kec is not None and i_kec < len(row) else None
         if not provinsi or not kabupaten:
             continue
-        m = match_kab(kab_idx, provinsi, kabupaten)
+        m = match_kab(kab_idx, provinsi, kabupaten, kecamatan, kec_idx)
         kode_prov = m["kode_provinsi"] if m else None
         kode_kab = m["kode_kabupaten"] if m else None
         kode_kec = match_kec(kec_idx, kode_kab, kecamatan) if kode_kab else None
@@ -157,7 +166,7 @@ def import_pkpn3t(wb, kab_idx, kec_idx):
             seen[key] = True
     out = []
     for provinsi, kabupaten, kecamatan in seen:
-        m = match_kab(kab_idx, provinsi, kabupaten)
+        m = match_kab(kab_idx, provinsi, kabupaten, kecamatan, kec_idx)
         kode_prov = m["kode_provinsi"] if m else None
         kode_kab = m["kode_kabupaten"] if m else None
         kode_kec = match_kec(kec_idx, kode_kab, kecamatan) if kode_kab else None
@@ -186,21 +195,24 @@ def main():
         print(f"  'Lokus PKPN 3T' (PKPN, diagregasi ke kecamatan): {len(pkpn_rows)} baris unik")
         all_rows.extend(pkpn_rows)
 
+        # DELETE + INSERT per sheet (bukan ON CONFLICT upsert): kunci unik memuat
+        # kecamatan_asli yg NULL utk sheet level kabupaten, dan di PostgreSQL NULL
+        # tidak pernah bentrok -> upsert lama MENGGANDAKAN baris tiap rerun
+        # (ditemukan 29 Sep 2026: PERKEBUNAN 152 -> 208, TRANSMIGRASI 50 -> 100).
+        sheets = sorted({r[8] for r in all_rows})
         with conn.cursor() as cur:
+            cur.execute("DELETE FROM kawasan_tematik WHERE sumber_sheet = ANY(%s)", (sheets,))
             cur.executemany(
                 "INSERT INTO kawasan_tematik (kategori, provinsi_asli, kabupaten_asli, "
                 "kecamatan_asli, kode_provinsi, kode_kabupaten, kode_kecamatan, keterangan, "
                 "sumber_sheet) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s) "
-                "ON CONFLICT (kategori, sumber_sheet, provinsi_asli, kabupaten_asli, kecamatan_asli) "
-                "DO UPDATE SET kode_provinsi=EXCLUDED.kode_provinsi, "
-                "kode_kabupaten=EXCLUDED.kode_kabupaten, kode_kecamatan=EXCLUDED.kode_kecamatan, "
-                "keterangan=EXCLUDED.keterangan",
+                "ON CONFLICT DO NOTHING",
                 all_rows,
             )
         conn.commit()
 
         with conn.cursor() as cur:
-            cur.execute("SELECT kategori, COUNT(*) n, SUM(kode_kabupaten IS NOT NULL) match_kab "
+            cur.execute("SELECT kategori, COUNT(*) n, COUNT(*) FILTER (WHERE kode_kabupaten IS NOT NULL) match_kab "
                         "FROM kawasan_tematik GROUP BY kategori")
             print("\nRekap per kategori (total | match kabupaten):")
             for r in cur.fetchall():

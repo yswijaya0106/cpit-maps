@@ -1230,7 +1230,20 @@ upsert, so they're safe to re-run:
   always `"---"` at this granularity and are intentionally not imported.
 - `import_kawasan_tematik.py` — thematic kawasan (Perkebunan/Perikanan/
   Transmigrasi/KI Prioritas/PKPN) from the Bappenas lokus workbook →
-  `kawasan_tematik`, the source of IJD parameter A3.
+  `kawasan_tematik`, the source of IJD parameter A3. Since 29 Sep 2026 it
+  does DELETE+INSERT per sheet. The old `ON CONFLICT` upsert duplicated rows
+  whose `kecamatan_asli` is NULL on every rerun, because NULLs never
+  conflict.
+- `scripts/wilayah_cocok.py` (`PencocokKabupaten`) — shared source-name →
+  BPS kabupaten matcher used by both lokus importers (29 Sep 2026, from the
+  tester bug "Fakfak tidak terbaca"). Names are compared on letters/digits
+  only, so "FAK FAK" matches FAKFAK. Kab and Kota are kept apart: the old
+  index let Kota overwrite a same-named Kab, e.g. "Kab. Blitar" → Kota
+  Blitar. A bare name with both Kab and Kota in the province resolves to
+  the one that owns the row's kecamatan when there is one, otherwise to
+  Kab. `ALIAS_NAMA` holds verified source typos. There is a national
+  name-only fallback, used only when the result is unique. Reuse it for
+  new region-name importers instead of another ad-hoc dict.
 - `import_bappenas_lokus_a.py` — Aspek A Bappenas lokus criteria (LOKPRI,
   PKPN, PKSN, Perbatasan, Transmigrasi, SR, Sekolah Garuda, KNMP, KDMP,
   KI Prioritas, Swasembada Pangan RPJMN, BBM 1 Harga, KPP_DESA) →

@@ -173,6 +173,29 @@ _KAWASAN_STRIP_WORDS = {
 }
 
 
+def _saring_kembar(hits, jenis):
+    """Nama kembar Kab/Kota (Serang, Kediri, Bogor, Pasuruan, ...): satu token
+    teks kawasan dulu mencentang KEDUANYA sekaligus -- mis. "Kawasan Perkotaan
+    Cilegon-Serang" memberi LOKPRI ke Kab. DAN Kota Serang padahal kolom F
+    menyebut "Serang" saja (review Bappenas 30 Sep 2026, "26 nama kembar").
+    Kini: ada kata "Kota"/"Kabupaten" di depan -> pakai jenis itu; tanpa awalan
+    -> Kabupaten (konvensi sama dgn wilayah_cocok.PencocokKabupaten)."""
+    if len(hits) < 2:
+        return hits
+    def jenis_m(m):
+        return "KOTA" if int(m["kode_kabupaten"]) % 100 >= 71 else "KABUPATEN"
+    per_nama = {}
+    for m in hits:
+        per_nama.setdefault(norm(m["kabupaten_kota"]), []).append(m)
+    out = []
+    for grup in per_nama.values():
+        if len(grup) > 1:
+            pilih = [m for m in grup if jenis_m(m) == (jenis or "KABUPATEN")]
+            grup = pilih or grup
+        out.extend(grup)
+    return out
+
+
 def _match_kab_tokens_in_text(kab_name_list_by_prov, provinsi, text, cutoff=0.82):
     """Cocokkan nama kabupaten/kota YANG DISEBUT DI DALAM teks bebas
     "kawasan"/"wilayah" (bukan kolom kabupaten tersendiri) -- dipakai
@@ -211,7 +234,16 @@ def _match_kab_tokens_in_text(kab_name_list_by_prov, provinsi, text, cutoff=0.82
         rest = " ".join(words[i:]).strip()
         if not rest:
             continue
-        for tok in rest.split("-"):
+        # Kata "Kota"/"Kabupaten" tepat sebelum nama = penentu jenis utk token PERTAMA
+        # segmen saja (token sesudah "-" tidak berawalan). "Kawasan Perkotaan X" =
+        # Kota X (dikonfirmasi user 30 Sep 2026, kasus "Kewasan Perkotaan Kediri") --
+        # berlaku utk semua token segmen itu.
+        jenis_awal = None
+        if i:
+            w = norm(words[i - 1])
+            jenis_awal = "KOTA" if w == "KOTA" else ("KABUPATEN" if w in ("KABUPATEN", "KAB") else None)
+        perkotaan = any(norm(w) == "PERKOTAAN" for w in words[:i])
+        for j, tok in enumerate(rest.split("-")):
             tn = norm(tok.strip())
             if not tn:
                 continue
@@ -220,6 +252,7 @@ def _match_kab_tokens_in_text(kab_name_list_by_prov, provinsi, text, cutoff=0.82
                 close = difflib.get_close_matches(tn, cand_names, n=3, cutoff=cutoff)
                 if close:
                     hits = [m for n, m in candidates if n in close]
+            hits = _saring_kembar(hits, (jenis_awal if j == 0 else None) or ("KOTA" if perkotaan else None))
             for m in hits:
                 if m["kode_kabupaten"] not in seen_kab:
                     seen_kab.add(m["kode_kabupaten"])
@@ -277,6 +310,12 @@ def import_lokpri_rpjmn(wb, ctx, sumber_file="Data Highlight Intervensi Bab 4 RP
                 seg = re.sub(r"\([^)]*\)?", " ", seg).replace("*", "").strip()
                 if not seg:
                     continue
+                # Nama kembar TANPA awalan di kolom F + kolom D "Kawasan Perkotaan <nama itu>"
+                # -> yang dimaksud Kota (mis. F "Kediri", D "Kewasan Perkotaan Kediri").
+                if (tematik and re.search(r"\bPERKOTAAN\b", tematik, re.I)
+                        and norm(seg) in norm(tematik).split(" ")
+                        and len({c["jenis"] for c in kab_idx.kandidat(last_prov, seg)}) == 2):
+                    seg = "Kota " + seg
                 m = match_kab(kab_idx, last_prov, seg)
                 if m:
                     kab_hits.setdefault(last_prov, {}).setdefault(

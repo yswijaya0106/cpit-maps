@@ -1244,6 +1244,19 @@ upsert, so they're safe to re-run:
   Kab. `ALIAS_NAMA` holds verified source typos. There is a national
   name-only fallback, used only when the result is unique. Reuse it for
   new region-name importers instead of another ad-hoc dict.
+  **30 Sep 2026 (Bappenas LOKPRI review, "26 nama kembar"):** LOKPRI RPJMN's
+  secondary free-text pass (`_match_kab_tokens_in_text`, column D "Tematik
+  RPJMN") used to tick BOTH the Kab and the Kota for a twin name ("Kawasan
+  Perkotaan Cilegon-Serang" → Kab. and Kota Serang). `_saring_kembar` now
+  applies the same rule: an explicit "Kota"/"Kabupaten" word before the name
+  wins, otherwise it resolves to the Kab. **Exception, user-confirmed the
+  same day:** "Kawasan Perkotaan X" means Kota X, for every name in that
+  segment. A bare twin name in column F also becomes the Kota when column D
+  says "Perkotaan <that name>". Net LOKPRI moves: Kediri, Serang and Sukabumi
+  go Kab→Kota, Kota Bogor gains it, and Kota Pasuruan loses it ("Mojokerto-
+  Pasuruan" isn't a Perkotaan segment). Kab. Serang/Sukabumi losing LOKPRI
+  deliberately differs from the Bappenas slide's reading; it was chosen
+  knowingly.
 - `import_bappenas_lokus_a.py` — Aspek A Bappenas lokus criteria (LOKPRI,
   PKPN, PKSN, Perbatasan, Transmigrasi, SR, Sekolah Garuda, KNMP, KDMP,
   KI Prioritas, Swasembada Pangan RPJMN, BBM 1 Harga, KPP_DESA) →

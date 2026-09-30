@@ -1683,3 +1683,13 @@ html::-webkit-scrollbar, body::-webkit-scrollbar, .sidebar::-webkit-scrollbar, .
 .biaya-tabel td.num { text-align: right; font-variant-numeric: tabular-nums; }
 .biaya-tabel td.dim { color: var(--text-dim); font-size: 11px; }
 @media (max-width: 600px) { .biaya-grid { grid-template-columns: 1fr; } .biaya-filter-row select { max-width: 100%; } }
+.biaya-tabs { padding: 0 18px; }
+.biaya-filter-row input[type="number"] { background: var(--panel-alt); color: var(--text); border: 1px solid var(--border); border-radius: 8px; padding: 5px 8px; font-size: 12.5px; width: 110px; }
+.biaya-usulan-table { border-collapse: collapse; font-size: 12px; width: 100%; }
+.biaya-usulan-table th, .biaya-usulan-table td { padding: 5px 8px; border-bottom: 1px solid var(--border); text-align: left; vertical-align: top; }
+.biaya-usulan-table th { color: var(--text-dim); font-weight: 600; white-space: nowrap; }
+.biaya-usulan-table td.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.biaya-usulan-row { cursor: pointer; }
+.biaya-usulan-row:hover td { background: var(--panel-alt); }
+.biaya-acuan-line { font-size: 12.5px; margin: 6px 0; }
+.biaya-filter-row[hidden], #biayaKonstruksiView[hidden], #biayaAcuanView[hidden], #biayaLolosView[hidden] { display: none; }

@@ -50,6 +50,15 @@ COLUMNS = {
     "Status Ruas": ("status_ruas", "s"),
     "Jenis Penanganan": ("jenis_penanganan", "s"),
     "Panjang Penanganan (Pemda)": ("panjang_penanganan_pemda", "n"),
+    # 30 Sep 2026: panjang per tahap verifikasi -- biaya/km basis Balai/Kompetensi
+    # HARUS dibagi panjangnya sendiri, bukan panjang Pemda (dashboard Tren Biaya).
+    "Panjang Penanganan (Balai)": ("panjang_penanganan_balai", "n"),
+    "Panjang Penanganan (Kompetensi)": ("panjang_penanganan_kompetensi", "n"),
+    # Kondisi ruas yg dilaporkan pengusul (ada di file 2024-2026; 2023 -> NULL)
+    "Kondisi Ruas Jalan Baik (KM)": ("kondisi_baik_km", "n"),
+    "Kondisi Ruas Jalan Sedang (KM)": ("kondisi_sedang_km", "n"),
+    "Kondisi Ruas Jalan Ringan (KM)": ("kondisi_ringan_km", "n"),
+    "Kondisi Ruas Jalan Berat (KM)": ("kondisi_berat_km", "n"),
     "Alokasi Usulan (Pemda)": ("alokasi_usulan_pemda", "n"),
     "Alokasi Usulan (Balai)": ("alokasi_usulan_balai", "n"),
     "Alokasi Usulan (Kompetensi)": ("alokasi_usulan_kompetensi", "n"),
@@ -87,6 +96,16 @@ CREATE TABLE IF NOT EXISTS usulan_inpres_riwayat (
     PRIMARY KEY (tahun, id)
 );
 CREATE INDEX IF NOT EXISTS idx_usulan_riwayat_kode_ruas ON usulan_inpres_riwayat (kode_ruas);
+ALTER TABLE usulan_inpres_riwayat
+    ADD COLUMN IF NOT EXISTS panjang_penanganan_balai NUMERIC,
+    ADD COLUMN IF NOT EXISTS panjang_penanganan_kompetensi NUMERIC,
+    ADD COLUMN IF NOT EXISTS kondisi_baik_km NUMERIC,
+    ADD COLUMN IF NOT EXISTS kondisi_sedang_km NUMERIC,
+    ADD COLUMN IF NOT EXISTS kondisi_ringan_km NUMERIC,
+    ADD COLUMN IF NOT EXISTS kondisi_berat_km NUMERIC;
+-- kunci ruas lintas tahun: kode_kabupaten + nama ruas ternormalisasi (Kode Ruas berganti format tiap tahun)
+CREATE INDEX IF NOT EXISTS idx_usulan_riwayat_kab_nama ON usulan_inpres_riwayat
+    (kode_kabupaten, (regexp_replace(upper(coalesce(nama_ruas, '')), '[^A-Z0-9]', '', 'g')));
 """
 
 

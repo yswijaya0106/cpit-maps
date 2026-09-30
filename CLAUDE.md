@@ -926,6 +926,34 @@ scripts/tables/layers out to staging.
   bug when the numbers differ from the slide. The Y axis is shared across
   panels by default, starting at 0; the slide used a separate scale per
   panel.
+  **Same day, from "Kerangka Berpikir Jalan" (`docs/30092026/`):**
+  (1) **Kode Ruas changes format every year** (e.g. 26PUVL8 → 26D2D2R →
+  34-00-101). `riwayat-ruas` now matches on kode OR `kode_kabupaten` +
+  normalized name (`_ruas_nama_kunci`), and reports `dasar_cocok` per row.
+  2026 usulan with history went from ~518 to 1,385. Never key a ruas across
+  years on `kode_ruas` alone.
+  (2) `usulan_inpres_riwayat` now stores `panjang_penanganan_balai`/
+  `_kompetensi` and `kondisi_*_km` (2024-26). Before that, the Balai/
+  Kompetensi costs in the trend dashboard were wrongly divided by the Pemda
+  length. Each `sumber` now divides by its own stage's length
+  (`_BIAYA_SUMBER`).
+  (3) The dashboard tab "Acuan & Penilaian Usulan 2026" is
+  `GET /api/biaya-konstruksi/acuan`, and the detail block is
+  `GET /api/usulan-inpres/{id}/biaya-acuan`. The benchmark is the weighted
+  mean of the Kompetensi basis over 2025-26 per provinsi (national when
+  n<5). Usulan cost is Pemda alokasi ÷ Pemda panjang, and the framework's
+  ±15% band gives Mahal/Murah. That band flags about 70% of 2026 usulan
+  (Mahal 959, Wajar 864, Murah 1,072). This is the framework's own rule,
+  kept as stated. Suggest a wider band or a per-jenis benchmark to the
+  owner rather than changing it silently.
+  (4) The tab "Riwayat Lolos Kompetensi" is
+  `GET /api/usulan-riwayat/lolos-kompetensi`. It builds union-find ruas
+  entities (kab + name OR kab + kode). It reproduces the slide within
+  ~1%, and its totals per ruas match exactly.
+  (5) `scripts/validasi_usulan_sitia.py [--xlsx out.xlsx]` is a read-only
+  report of checks V1-V10: extreme cost/km, panjang > ruas, Kompetensi >
+  1.5× Pemda, kondisi > ruas, kode/panjang drift across years, unmatched
+  lokus rows, and bare twin-name lokus rows resolved by convention.
 - **Referensi wilayah berbasis ID (`ref_wilayah`, 24 Sep 2026)**: tabel
   `ref_wilayah` (kode_provinsi/kode_kabupaten/kode_kecamatan + nama, dari
   `penduduk_kecamatan`, 38 prov/514 kab/7.288 kec) + view `ref_wilayah_kabupaten`/

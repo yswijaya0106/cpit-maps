@@ -8105,30 +8105,51 @@ def _fetch_usulan_geometry(usulan_id: int) -> dict:
 # Riwayat pengusulan ruas yang sama di tahun-tahun sebelumnya (24 Sep 2026),
 # dari usulan_inpres_riwayat (scripts/import_usulan_riwayat.py, ekspor SITIA
 # 2023-2026) -- TABEL TERPISAH dari usulan_inpres supaya query 2026 yang ada
-# (ranking, skor, export) tidak tercampur data tahun lama. Kunci: kode_ruas.
-# Tabel belum ada / usulan tanpa kode_ruas -> daftar kosong, bukan error.
+# (ranking, skor, export) tidak tercampur data tahun lama.
+#
+# Kunci ruas lintas tahun (30 Sep 2026): Kode Ruas SITIA BERGANTI FORMAT tiap
+# tahun (mis. Prambanan-Gayamharjo: 26PUVL8 di 2023-24, 26D2D2R di 2025,
+# 34-00-101 di 2026) -- cocok kode saja cuma menemukan riwayat utk 518/3.072
+# usulan 2026. Kini: kode ruas SAMA **atau** kode_kabupaten sama + nama ruas
+# sama setelah dinormalisasi (huruf+angka saja) -> 1.216 usulan. Dasar
+# cocoknya dikembalikan per baris. Nama yg ditulis beda isi (mis. "SP WAIKOMO
+# - BELOBATANG - WULANDONI" vs "Waikomo - Wulandoni") tetap tidak tertangkap.
+def _ruas_nama_kunci_sql(col: str) -> str:
+    return f"regexp_replace(upper(coalesce({col}, '')), '[^A-Z0-9]', '', 'g')"
+
+
+def _ruas_nama_kunci(nama) -> str:
+    return re.sub(r"[^A-Z0-9]", "", str(nama or "").upper())
+
+
 @app.get("/api/usulan-inpres/{usulan_id}/riwayat-ruas")
 def usulan_inpres_riwayat_ruas(usulan_id: int):
     with db_cursor() as cur:
-        cur.execute("SELECT kode_ruas FROM usulan_inpres WHERE id = %s", (usulan_id,))
+        cur.execute("SELECT kode_ruas, nama_ruas, kode_kabupaten FROM usulan_inpres WHERE id = %s", (usulan_id,))
         row = cur.fetchone()
         if row is None:
             raise HTTPException(status_code=404, detail="Usulan tidak ditemukan")
-        kode_ruas = row["kode_ruas"]
-        if not kode_ruas:
+        kode_ruas = row["kode_ruas"] or None
+        nama_kunci = _ruas_nama_kunci(row["nama_ruas"])
+        kode_kab = row["kode_kabupaten"]
+        if not kode_ruas and not (nama_kunci and kode_kab):
             return {"kode_ruas": None, "riwayat": [], "ringkasan": None,
-                    "catatan": "Usulan ini tidak memiliki kode ruas, riwayat tidak dapat dicari."}
+                    "catatan": "Usulan ini tidak memiliki kode ruas maupun nama ruas + kabupaten, riwayat tidak dapat dicari."}
         cur.execute("SELECT to_regclass('public.usulan_inpres_riwayat') AS t")
         if cur.fetchone()["t"] is None:
             return {"kode_ruas": kode_ruas, "riwayat": [], "ringkasan": None,
                     "catatan": "Tabel usulan_inpres_riwayat belum diimpor (scripts/import_usulan_riwayat.py)."}
+        nama_sql = _ruas_nama_kunci_sql("nama_ruas")
         cur.execute(
-            "SELECT tahun, id, kabupaten_kota, nama_kegiatan, jenis_penanganan, prioritas, "
-            "alokasi_usulan_pemda, seleksi_sistem, verifikasi_balai, verifikasi_kompetensi, "
-            "verifikasi_pfid, nilai_dpp, diprogramkan "
-            "FROM usulan_inpres_riwayat WHERE kode_ruas = %s AND NOT (tahun = 2026 AND id = %s) "
+            "SELECT tahun, id, kabupaten_kota, kode_ruas, nama_ruas, nama_kegiatan, jenis_penanganan, prioritas, "
+            "alokasi_usulan_pemda, alokasi_usulan_kompetensi, seleksi_sistem, verifikasi_balai, "
+            "verifikasi_kompetensi, verifikasi_pfid, nilai_dpp, diprogramkan, "
+            "CASE WHEN kode_ruas = %(kode)s THEN 'kode ruas' ELSE 'nama ruas + kab/kota' END AS dasar_cocok "
+            "FROM usulan_inpres_riwayat "
+            f"WHERE (kode_ruas = %(kode)s OR (kode_kabupaten = %(kab)s AND %(nama)s <> '' AND {nama_sql} = %(nama)s)) "
+            "AND NOT (tahun = 2026 AND id = %(id)s) "
             "ORDER BY tahun DESC, id",
-            (kode_ruas, usulan_id),
+            {"kode": kode_ruas, "kab": kode_kab, "nama": nama_kunci, "id": usulan_id},
         )
         riwayat = cur.fetchall()
     tahun_lama = sorted({r["tahun"] for r in riwayat if r["tahun"] < 2026})
@@ -8139,9 +8160,12 @@ def usulan_inpres_riwayat_ruas(usulan_id: int):
             "tahun_diusulkan_sebelumnya": tahun_lama,
             "pernah_ber_dpp": any(r["nilai_dpp"] for r in riwayat if r["tahun"] < 2026),
             "pernah_diterima_kompetensi": any(r["verifikasi_kompetensi"] == "TERIMA" for r in riwayat if r["tahun"] < 2026),
+            "tahun_lolos_kompetensi": sorted({r["tahun"] for r in riwayat
+                                               if r["tahun"] < 2026 and (r["alokasi_usulan_kompetensi"] or 0) > 0}),
         },
-        "catatan": "Riwayat berdasarkan kode ruas yang sama; satu ruas dapat memiliki beberapa usulan per tahun "
-                   "(mis. per segmen/penanganan). Nilai DPP kosong belum tentu berarti tidak didanai.",
+        "catatan": "Ruas dicocokkan lewat kode ruas yang sama, atau nama ruas yang sama di kab/kota yang sama "
+                   "(Kode Ruas SITIA berganti format tiap tahun). Satu ruas dapat memiliki beberapa usulan per "
+                   "tahun (mis. per segmen/penanganan). Nilai DPP kosong belum tentu berarti tidak didanai.",
     })
 
 
@@ -8152,8 +8176,12 @@ def usulan_inpres_riwayat_ruas(usulan_id: int):
 # nilai per usulan = alokasi / panjang_penanganan_pemda (Rp miliar/km), lalu
 # diagregasi per (provinsi, tahun). Usulan dgn panjang/alokasi kosong atau <=0
 # dilewati (2024: ~1/3 usulan tanpa panjang penanganan di sumber).
-_BIAYA_SUMBER = {"pemda": "alokasi_usulan_pemda", "balai": "alokasi_usulan_balai",
-                 "kompetensi": "alokasi_usulan_kompetensi"}
+# sumber -> (kolom alokasi, kolom panjang penanganan TAHAP YANG SAMA). Sebelum
+# 30 Sep 2026 Balai/Kompetensi keliru dibagi panjang Pemda (kolom panjangnya
+# belum diimpor ke usulan_inpres_riwayat).
+_BIAYA_SUMBER = {"pemda": ("alokasi_usulan_pemda", "panjang_penanganan_pemda"),
+                 "balai": ("alokasi_usulan_balai", "panjang_penanganan_balai"),
+                 "kompetensi": ("alokasi_usulan_kompetensi", "panjang_penanganan_kompetensi")}
 _BIAYA_JENIS = {
     "jalan": "jenis_penanganan NOT ILIKE '%jembatan%'",  # execute() tanpa params -> '%' literal
     "semua": "TRUE",
@@ -8170,13 +8198,13 @@ _BIAYA_N_TIPIS = 5
 def biaya_konstruksi_tren(sumber: str = "pemda", jenis: str = "jalan", statistik: str = "median"):
     if sumber not in _BIAYA_SUMBER or jenis not in _BIAYA_JENIS or statistik not in ("median", "rata", "rasio"):
         raise HTTPException(400, "Parameter sumber/jenis/statistik tidak dikenal.")
-    kol = _BIAYA_SUMBER[sumber]
+    kol, pnj = _BIAYA_SUMBER[sumber]
     agg = {
-        "median": f"percentile_cont(0.5) WITHIN GROUP (ORDER BY {kol} / panjang_penanganan_pemda)",
-        "rata": f"AVG({kol} / panjang_penanganan_pemda)",
-        "rasio": f"SUM({kol}) / SUM(panjang_penanganan_pemda)",
+        "median": f"percentile_cont(0.5) WITHIN GROUP (ORDER BY {kol} / {pnj})",
+        "rata": f"AVG({kol} / {pnj})",
+        "rasio": f"SUM({kol}) / SUM({pnj})",
     }[statistik]
-    where = (f"panjang_penanganan_pemda > 0 AND {kol} > 0 AND provinsi IS NOT NULL "
+    where = (f"{pnj} > 0 AND {kol} > 0 AND provinsi IS NOT NULL "
              f"AND jenis_penanganan IS NOT NULL AND {_BIAYA_JENIS[jenis]}")
     with db_cursor() as cur:
         cur.execute("SELECT to_regclass('public.usulan_inpres_riwayat') AS t")
@@ -8214,12 +8242,216 @@ def biaya_konstruksi_tren(sumber: str = "pemda", jenis: str = "jalan", statistik
     return {
         "sumber": sumber, "jenis": jenis, "statistik": statistik, "satuan": "Rp miliar/km",
         "ambang_n_tipis": _BIAYA_N_TIPIS, "nasional": _seri(nasional), "provinsi": provinsi,
-        "catatan": ("Nilai per usulan = alokasi usulan ÷ panjang penanganan (Pemda), SITIA 2023–2026 "
-                    "(usulan_inpres_riwayat). Usulan tanpa panjang/alokasi dilewati — di 2024 sekitar "
-                    "sepertiga usulan tidak mencantumkan panjang penanganan. Nilai usulan, bukan realisasi "
+        "catatan": ("Nilai per usulan = alokasi usulan ÷ panjang penanganan pada tahap yang sama (Pemda, "
+                    "Balai, atau Kompetensi), SITIA 2023–2026 (usulan_inpres_riwayat). Usulan tanpa "
+                    "panjang/alokasi dilewati. Nilai usulan, bukan realisasi "
                     "kontrak. Tanda * = n<5 (indikatif). Metode slide Bappenas tidak terdokumentasi dan "
                     "tidak dapat direproduksi persis; angka di sini bisa berbeda."),
     }
+
+
+# Acuan biaya per provinsi utk menilai usulan baru ("Kerangka Berpikir Jalan",
+# docs/30092026/, hal. "Biaya per provinsi untuk menilai usulan IJD baru"):
+# acuan = rata-rata tertimbang basis Kompetensi 2025-2026 (Σ alokasi ÷ Σ panjang,
+# penanganan jalan), dipakai hanya bila n>=5 -- selain itu acuan nasional.
+# Usulan = alokasi Pemda ÷ panjang penanganan Pemda (angka yg diajukan daerah).
+# >115% acuan -> "Mahal" (reviu RAB), <85% -> "Murah" (cek kelengkapan cakupan).
+# eskalasi_pct: opsional, mis. utk menilai usulan 2027 (kerangka menyebut ~9%/th).
+_ACUAN_TAHUN = (2025, 2026)
+_ACUAN_BATAS = (0.85, 1.15)
+
+
+def _biaya_acuan(eskalasi_pct: float = 0.0) -> dict:
+    kondisi = ("alokasi_usulan_kompetensi > 0 AND panjang_penanganan_kompetensi > 0 "
+               "AND jenis_penanganan NOT ILIKE '%%jembatan%%' AND provinsi IS NOT NULL")
+    faktor = 1 + (eskalasi_pct or 0) / 100
+    with db_cursor() as cur:
+        cur.execute("SELECT to_regclass('public.usulan_inpres_riwayat') AS t")
+        if cur.fetchone()["t"] is None:
+            raise HTTPException(503, "Tabel usulan_inpres_riwayat belum diimpor (scripts/import_usulan_riwayat.py).")
+        cur.execute(
+            "SELECT UPPER(provinsi) AS provinsi, SUM(alokasi_usulan_kompetensi) / SUM(panjang_penanganan_kompetensi) / 1e9 AS v, "
+            f"COUNT(*) AS n FROM usulan_inpres_riwayat WHERE tahun = ANY(%s) AND {kondisi} GROUP BY 1",
+            (list(_ACUAN_TAHUN),),
+        )
+        per_prov = {r["provinsi"]: r for r in cur.fetchall()}
+        cur.execute(
+            "SELECT SUM(alokasi_usulan_kompetensi) / SUM(panjang_penanganan_kompetensi) / 1e9 AS v, COUNT(*) AS n "
+            f"FROM usulan_inpres_riwayat WHERE tahun = ANY(%s) AND {kondisi}", (list(_ACUAN_TAHUN),),
+        )
+        nas = cur.fetchone()
+        # Laju kenaikan tahunan (CAGR) Peningkatan Jalan 2023->2026, basis sama -- info eskalasi
+        cur.execute(
+            "SELECT tahun, SUM(alokasi_usulan_kompetensi) / SUM(panjang_penanganan_kompetensi) / 1e9 AS v "
+            f"FROM usulan_inpres_riwayat WHERE tahun IN (2023, 2026) AND {kondisi} "
+            "AND jenis_penanganan = 'Peningkatan Jalan' GROUP BY 1"
+        )
+        cagr_src = {r["tahun"]: float(r["v"]) for r in cur.fetchall()}
+    nasional = float(nas["v"]) * faktor
+    acuan = {}
+    for p, r in per_prov.items():
+        cukup = r["n"] >= _BIAYA_N_TIPIS
+        acuan[p] = {"provinsi": p, "acuan": round((float(r["v"]) * faktor) if cukup else nasional, 2),
+                    "acuan_provinsi_mentah": round(float(r["v"]) * faktor, 2), "n": int(r["n"]),
+                    "dasar": "provinsi" if cukup else "nasional (n<5)"}
+        a = acuan[p]["acuan"] / nasional
+        acuan[p]["kelas_vs_nasional"] = "Mahal" if a >= _ACUAN_BATAS[1] else "Murah" if a <= _ACUAN_BATAS[0] else "Wajar"
+    cagr = (round(((cagr_src[2026] / cagr_src[2023]) ** (1 / 3) - 1) * 100, 1)
+            if cagr_src.get(2023) and cagr_src.get(2026) else None)
+    return {"acuan": acuan, "nasional": round(nasional, 2), "n_nasional": int(nas["n"]),
+            "cagr_peningkatan_pct": cagr, "eskalasi_pct": eskalasi_pct or 0}
+
+
+def _nilai_biaya_usulan(biaya, acuan_prov: Optional[dict], nasional: float) -> dict:
+    acuan = acuan_prov["acuan"] if acuan_prov else nasional
+    rasio = biaya / acuan if acuan else None
+    if rasio is None:
+        kat, tindak = None, None
+    elif rasio > _ACUAN_BATAS[1]:
+        kat, tindak = "Mahal", "reviu RAB"
+    elif rasio < _ACUAN_BATAS[0]:
+        kat, tindak = "Murah", "cek kelengkapan cakupan pekerjaan"
+    else:
+        kat, tindak = "Wajar", None
+    return {"biaya_per_km": round(biaya, 2), "acuan": round(acuan, 2),
+            "dasar_acuan": acuan_prov["dasar"] if acuan_prov else "nasional (provinsi tanpa data)",
+            "rasio_pct": round(rasio * 100) if rasio is not None else None, "kategori": kat, "tindak_lanjut": tindak}
+
+
+_ACUAN_CATATAN = ("Acuan = rata-rata tertimbang (Σ alokasi ÷ Σ panjang) usulan basis Kompetensi 2025–2026, "
+                  "penanganan jalan tanpa jembatan, per provinsi bila n≥5 (selain itu acuan nasional). "
+                  "Biaya usulan = alokasi Pemda ÷ panjang penanganan Pemda. >115% acuan = Mahal (reviu RAB), "
+                  "<85% = Murah (cek kelengkapan cakupan). Sumber: Kerangka Berpikir Jalan (Bappenas, 30 Sep 2026). "
+                  "Acuan tidak membedakan jenis penanganan, jadi perbaikan ringan cenderung tampil Murah.")
+
+
+@app.get("/api/biaya-konstruksi/acuan")
+def biaya_konstruksi_acuan(eskalasi_pct: float = 0.0, kategori: str = "luar-wajar"):
+    """Acuan per provinsi + penilaian seluruh usulan 2026 (penanganan jalan).
+    kategori: 'luar-wajar' (Mahal+Murah, default), 'Mahal', 'Murah', 'Wajar', 'semua'."""
+    ac = _biaya_acuan(eskalasi_pct)
+    with db_cursor() as cur:
+        cur.execute(
+            "SELECT id, provinsi, kabupaten_kota, nama_ruas, jenis_penanganan, panjang_penanganan_pemda, "
+            "alokasi_usulan_pemda, alokasi_usulan_pemda / panjang_penanganan_pemda / 1e9 AS biaya "
+            "FROM usulan_inpres_riwayat WHERE tahun = 2026 AND jenis_penanganan NOT ILIKE '%%jembatan%%' "
+            "AND alokasi_usulan_pemda > 0 AND panjang_penanganan_pemda > 0"
+        )
+        usulan = cur.fetchall()
+    hasil, hitung = [], {"Mahal": 0, "Wajar": 0, "Murah": 0}
+    for u in usulan:
+        n = _nilai_biaya_usulan(float(u["biaya"]), ac["acuan"].get((u["provinsi"] or "").upper()), ac["nasional"])
+        hitung[n["kategori"]] += 1
+        if kategori == "semua" or n["kategori"] == kategori or (kategori == "luar-wajar" and n["kategori"] != "Wajar"):
+            hasil.append({"id": u["id"], "provinsi": u["provinsi"], "kabupaten_kota": u["kabupaten_kota"],
+                          "nama_ruas": u["nama_ruas"], "jenis_penanganan": u["jenis_penanganan"],
+                          "panjang_km": float(u["panjang_penanganan_pemda"]),
+                          "alokasi_m": round(float(u["alokasi_usulan_pemda"]) / 1e9, 2), **n})
+    hasil.sort(key=lambda x: -abs((x["rasio_pct"] or 100) - 100))
+    return {"acuan_provinsi": sorted(ac["acuan"].values(), key=lambda x: -x["acuan"]),
+            "nasional": ac["nasional"], "n_nasional": ac["n_nasional"],
+            "cagr_peningkatan_pct": ac["cagr_peningkatan_pct"], "eskalasi_pct": ac["eskalasi_pct"],
+            "jumlah_per_kategori": hitung, "usulan": hasil, "catatan": _ACUAN_CATATAN}
+
+
+@app.get("/api/usulan-inpres/{usulan_id}/biaya-acuan")
+def usulan_inpres_biaya_acuan(usulan_id: int):
+    with db_cursor() as cur:
+        cur.execute("SELECT provinsi, jenis_penanganan, panjang_penanganan_pemda, alokasi_usulan_pemda "
+                    "FROM usulan_inpres WHERE id = %s", (usulan_id,))
+        u = cur.fetchone()
+    if u is None:
+        raise HTTPException(404, "Usulan tidak ditemukan")
+    jenis = u["jenis_penanganan"] or ""
+    pnj, alok = u["panjang_penanganan_pemda"], u["alokasi_usulan_pemda"]
+    if "jembatan" in jenis.lower():
+        return {"tersedia": False, "alasan": "Penanganan jembatan tidak dinilai dengan acuan Rp/km jalan."}
+    if not pnj or not alok or float(pnj) <= 0 or float(alok) <= 0:
+        return {"tersedia": False, "alasan": "Alokasi atau panjang penanganan (Pemda) kosong."}
+    ac = _biaya_acuan()
+    prov = ac["acuan"].get((u["provinsi"] or "").upper())
+    return {"tersedia": True, "provinsi": u["provinsi"], "jenis_penanganan": jenis,
+            **_nilai_biaya_usulan(float(alok) / float(pnj) / 1e9, prov, ac["nasional"]),
+            "cagr_peningkatan_pct": ac["cagr_peningkatan_pct"], "catatan": _ACUAN_CATATAN}
+
+
+# Frekuensi ruas lolos Alokasi Kompetensi 2023-2026 ("Kerangka Berpikir Jalan",
+# hal. 7 & 11). "Entitas ruas" = gabungan baris lintas tahun yg berbagi (kode_kabupaten
+# + nama ruas ternormalisasi) ATAU (kode_kabupaten + kode ruas) -- union-find, krn
+# Kode Ruas berganti format tiap tahun sementara nama kadang ditulis ulang.
+# "Lolos" = Alokasi Usulan (Kompetensi) > 0 pada tahun itu. Hasil 30 Sep 2026:
+# 8.973 entitas (slide 9.032), 5.541 tak pernah lolos (slide 5.563), 15 lolos 4 th
+# (slide 14 -- selisih Era-Bencue/Morowali Utara yg kode ruasnya berganti di 2026).
+@app.get("/api/usulan-riwayat/lolos-kompetensi")
+def usulan_riwayat_lolos_kompetensi():
+    with db_cursor() as cur:
+        cur.execute("SELECT to_regclass('public.usulan_inpres_riwayat') AS t")
+        if cur.fetchone()["t"] is None:
+            raise HTTPException(503, "Tabel usulan_inpres_riwayat belum diimpor (scripts/import_usulan_riwayat.py).")
+        cur.execute("SELECT tahun, id, kode_kabupaten, provinsi, kabupaten_kota, kode_ruas, nama_ruas, status_ruas, "
+                    "alokasi_usulan_kompetensi FROM usulan_inpres_riwayat ORDER BY tahun, id")
+        rows = cur.fetchall()
+    induk = list(range(len(rows)))
+
+    def akar(x):
+        while induk[x] != x:
+            induk[x] = induk[induk[x]]
+            x = induk[x]
+        return x
+
+    kunci_ke_baris = {}
+    for i, r in enumerate(rows):
+        nk = _ruas_nama_kunci(r["nama_ruas"])
+        kunci = []
+        if r["kode_kabupaten"] and nk:
+            kunci.append(("N", r["kode_kabupaten"], nk))
+        if r["kode_kabupaten"] and r["kode_ruas"]:
+            kunci.append(("K", r["kode_kabupaten"], r["kode_ruas"]))
+        for k in kunci or [("ID", r["tahun"], r["id"])]:
+            if k in kunci_ke_baris:
+                induk[akar(i)] = akar(kunci_ke_baris[k])
+            else:
+                kunci_ke_baris[k] = i
+    entitas = {}
+    for i, r in enumerate(rows):
+        entitas.setdefault(akar(i), []).append(r)
+
+    lolos = lambda rs: sorted({r["tahun"] for r in rs if (r["alokasi_usulan_kompetensi"] or 0) > 0})
+    distribusi = {n: 0 for n in range(5)}
+    berulang = berulang_nol = 0
+    selalu = []
+    for rs in entitas.values():
+        th_lolos = lolos(rs)
+        distribusi[len(th_lolos)] += 1
+        if len({r["tahun"] for r in rs}) >= 2:
+            berulang += 1
+            berulang_nol += not th_lolos
+        if len(th_lolos) == 4:
+            akhir = rs[-1]
+            selalu.append({"provinsi": akhir["provinsi"], "kabupaten_kota": akhir["kabupaten_kota"],
+                           "nama_ruas": akhir["nama_ruas"], "status_ruas": akhir["status_ruas"],
+                           "kode_ruas_per_tahun": sorted({f"{r['tahun']}:{r['kode_ruas']}" for r in rs}),
+                           "total_kompetensi_m": round(sum(float(r["alokasi_usulan_kompetensi"] or 0) for r in rs) / 1e9, 1)})
+    selalu.sort(key=lambda x: -x["total_kompetensi_m"])
+
+    per_kab = {}
+    for r in rows:
+        per_kab.setdefault(r["kode_kabupaten"], []).append(r)
+    tak_pernah = sorted(
+        ({"kabupaten_kota": rs[-1]["kabupaten_kota"], "provinsi": rs[-1]["provinsi"], "n_usulan": len(rs),
+          "tahun_mengusul": sorted({r["tahun"] for r in rs})}
+         for k, rs in per_kab.items() if k and not lolos(rs)),
+        key=lambda x: (-len(x["tahun_mengusul"]), -x["n_usulan"]))
+    return jsonable_encoder({
+        "n_entitas": len(entitas), "distribusi_tahun_lolos": distribusi,
+        "n_berulang": berulang, "n_berulang_tak_pernah_lolos": berulang_nol,
+        "n_kab_mengusul": sum(1 for k in per_kab if k), "kab_tak_pernah_lolos": tak_pernah,
+        "n_usulan_tanpa_kab": len(per_kab.get(None, [])),
+        "ruas_selalu_lolos": selalu,
+        "catatan": ("Entitas ruas = baris lintas tahun dengan kab/kota sama dan nama ruas sama (setelah "
+                    "dinormalisasi) atau kode ruas sama. Lolos = Alokasi Usulan (Kompetensi) > 0. "
+                    "Kab/kota tanpa kode BPS (baris SITIA tanpa provinsi/kab) tidak dihitung per kab."),
+    })
 
 
 @app.get("/api/usulan-inpres/{usulan_id}/geometry")

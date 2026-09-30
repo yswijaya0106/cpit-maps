@@ -455,7 +455,28 @@
                 class="bi bi-x-lg"></i></button>
           </div>
         </div>
-        <div class="biaya-filter-row">
+        <div class="datatable-tabs biaya-tabs">
+          <button type="button" class="datatable-tab active" data-biaya-tab="tren"><i class="bi bi-graph-up"></i> Tren
+            2023–2026</button>
+          <button type="button" class="datatable-tab" data-biaya-tab="acuan"><i class="bi bi-rulers"></i> Acuan &amp;
+            Penilaian Usulan 2026</button>
+          <button type="button" class="datatable-tab" data-biaya-tab="lolos"><i class="bi bi-patch-check"></i> Riwayat
+            Lolos Kompetensi</button>
+        </div>
+        <div class="biaya-filter-row" id="biayaAcuanFilter" hidden>
+          <label>Kategori usulan
+            <select id="biayaAcuanKategori">
+              <option value="luar-wajar">Mahal + Murah</option>
+              <option value="Mahal">Mahal (&gt;115% acuan)</option>
+              <option value="Murah">Murah (&lt;85% acuan)</option>
+              <option value="Wajar">Wajar</option>
+              <option value="semua">Semua</option>
+            </select></label>
+          <label>Eskalasi acuan (%)
+            <input type="number" id="biayaAcuanEskalasi" value="0" min="0" max="50" step="0.1"
+              title="Mis. untuk menilai usulan 2027 dengan acuan harga 2025–2026" /></label>
+        </div>
+        <div class="biaya-filter-row" id="biayaTrenFilter">
           <label>Sumber alokasi
             <select id="biayaSumber">
               <option value="pemda">Usulan Pemda</option>
@@ -490,6 +511,12 @@
             </select></label>
         </div>
         <div class="laporan-distribusi-view" id="biayaKonstruksiView">
+          <div class="laporan-distribusi-empty">Memuat...</div>
+        </div>
+        <div class="laporan-distribusi-view" id="biayaAcuanView" hidden>
+          <div class="laporan-distribusi-empty">Memuat...</div>
+        </div>
+        <div class="laporan-distribusi-view" id="biayaLolosView" hidden>
           <div class="laporan-distribusi-empty">Memuat...</div>
         </div>
       </div>

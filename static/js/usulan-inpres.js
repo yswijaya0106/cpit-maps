@@ -791,6 +791,7 @@ async function loadUsulanDetail(id) {
   html += `<div class="usulan-ijd-score" id="usulanSkorNasional"></div>`;
   html += `<div class="usulan-ijd-score" id="usulanNpr"></div>`;
   html += `<div class="usulan-ijd-score" id="usulanRiwayatRuas"></div>`;
+  html += `<div class="usulan-ijd-score" id="usulanBiayaAcuan"></div>`;
   html += `<div class="usulan-ijd-score" id="usulanPenilaianBappenas"></div>`;
   html += `<div class="adv-loading" id="usulanGeomStatus">Memuat lokasi di peta...</div></div>`;
   detailEl.innerHTML = html;
@@ -808,6 +809,7 @@ async function loadUsulanDetail(id) {
   loadSkorNasional(u.id);
   loadNpr(u.id);
   loadRiwayatRuas(u.id);
+  loadBiayaAcuan(u.id);
   loadPenilaianBappenas(u.id);
   await flyToUsulanGeometry(u);
 }
@@ -985,7 +987,7 @@ async function loadRiwayatRuas(id) {
     const data = await res.json();
     if (!data.riwayat.length) {
       el.innerHTML = `<div class="ijd-score-head"><span class="ijd-score-title"><i class="bi bi-clock-history"></i> Riwayat Pengusulan Ruas</span></div>
-        <p class="hint">${data.kode_ruas ? "Ruas ini belum pernah diusulkan pada tahun 2023–2025." : escapeHtml(data.catatan)}</p>`;
+        <p class="hint">${data.ringkasan !== null || data.kode_ruas ? "Ruas ini belum pernah diusulkan pada tahun 2023–2025 (dicari lewat kode ruas dan nama ruas di kab/kota yang sama)." : escapeHtml(data.catatan)}</p>`;
       return;
     }
     const r = data.ringkasan;
@@ -998,14 +1000,15 @@ async function loadRiwayatRuas(id) {
     const rp = (v) => (v == null ? "—" : `${(v / 1e9).toLocaleString("id-ID", { maximumFractionDigits: 1 })} M`);
     const rows = data.riwayat.map((x) => `<tr>
       <td>${x.tahun}</td>
-      <td>${escapeHtml(x.nama_kegiatan || "-")}<div class="hint">${escapeHtml(x.jenis_penanganan || "")}</div></td>
+      <td>${escapeHtml(x.nama_kegiatan || "-")}<div class="hint">${escapeHtml(x.jenis_penanganan || "")}
+        · kode ${escapeHtml(x.kode_ruas || "-")} · cocok via ${escapeHtml(x.dasar_cocok)}</div></td>
       <td class="num">${rp(x.alokasi_usulan_pemda)}</td>
       <td>${badge(x.seleksi_sistem)}</td><td>${badge(x.verifikasi_balai)}</td>
       <td>${badge(x.verifikasi_kompetensi)}</td><td>${badge(x.verifikasi_pfid)}</td>
       <td class="num">${x.nilai_dpp ? rp(x.nilai_dpp) : "—"}</td></tr>`).join("");
     el.innerHTML = `<div class="ijd-score-head">
-        <span class="ijd-score-title"><i class="bi bi-clock-history"></i> Riwayat Pengusulan Ruas ${escapeHtml(data.kode_ruas)}</span>
-        <span class="ijd-score-total">Pernah diusulkan: ${r.tahun_diusulkan_sebelumnya.length ? r.tahun_diusulkan_sebelumnya.join(", ") : "tidak ada di 2023–2025"}${r.pernah_ber_dpp ? " · pernah masuk DPP" : ""}</span>
+        <span class="ijd-score-title"><i class="bi bi-clock-history"></i> Riwayat Pengusulan Ruas ${escapeHtml(data.kode_ruas || "")}</span>
+        <span class="ijd-score-total">Pernah diusulkan: ${r.tahun_diusulkan_sebelumnya.length ? r.tahun_diusulkan_sebelumnya.join(", ") : "tidak ada di 2023–2025"}${r.pernah_ber_dpp ? " · pernah masuk DPP" : ""}${r.tahun_lolos_kompetensi.length ? ` · lolos Alokasi Kompetensi ${r.tahun_lolos_kompetensi.join(", ")}` : ""}</span>
       </div>
       <div class="usulan-riwayat-scroll"><table class="usulan-riwayat-table"><thead><tr>
         <th>Tahun</th><th>Kegiatan</th><th>Alokasi Pemda</th><th>Sistem</th><th>Balai</th><th>Kompetensi</th><th>PFID</th><th>DPP</th>
@@ -2317,6 +2320,166 @@ function biayaKonstruksiRender() {
     kpis + nasHtml + gridHtml + tabelHtml + `<p class="hint">${escapeHtml(data.catatan)}</p>`;
 }
 
+/* Tab "Acuan & Penilaian Usulan 2026" -- acuan Rp/km per provinsi (basis
+   Kompetensi 2025-2026) + usulan 2026 yang Mahal/Murah, dari "Kerangka Berpikir
+   Jalan" (docs/30092026/). Klik baris usulan -> buka detailnya (loadUsulanDetail). */
+let biayaAcuanDimuat = false;
+
+async function biayaAcuanLoad() {
+  const view = document.getElementById("biayaAcuanView");
+  view.innerHTML = `<div class="laporan-distribusi-empty"><i class="bi bi-hourglass-split"></i> Memuat...
+    <div class="datatable-loading-bar"><span></span></div></div>`;
+  const params = new URLSearchParams({
+    kategori: document.getElementById("biayaAcuanKategori").value,
+    eskalasi_pct: document.getElementById("biayaAcuanEskalasi").value || "0",
+  });
+  try {
+    const res = await fetch(`/api/biaya-konstruksi/acuan?${params}`);
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || "Gagal memuat acuan biaya");
+    biayaAcuanDimuat = true;
+    biayaAcuanRender(data);
+  } catch (err) {
+    view.innerHTML = `<div class="laporan-distribusi-empty">${escapeHtml(err.message)}</div>`;
+  }
+}
+
+function biayaKategoriBadge(k) {
+  if (!k) return "";
+  const cls = k === "Mahal" ? "naik" : k === "Murah" ? "turun" : "tetap";
+  return `<span class="biaya-pct ${cls}">${escapeHtml(k)}</span>`;
+}
+
+function biayaAcuanRender(data) {
+  const j = data.jumlah_per_kategori;
+  const total = j.Mahal + j.Wajar + j.Murah;
+  const pct = (n) => (total ? Math.round((n / total) * 100) : 0);
+  const kpis = `<div class="laporan-kpi-row">
+    ${laporanKpiTile("Acuan Nasional", `${biayaFmt(data.nasional)} Rp M/km`, `basis Kompetensi 2025–2026 · n = ${data.n_nasional.toLocaleString("id-ID")}${data.eskalasi_pct ? ` · +${data.eskalasi_pct}% eskalasi` : ""}`)}
+    ${laporanKpiTile("Kenaikan Tahunan", data.cagr_peningkatan_pct != null ? `${data.cagr_peningkatan_pct.toLocaleString("id-ID")}%/th` : "–", "Peningkatan Jalan 2023→2026 (laju majemuk)")}
+    ${laporanKpiTile("Usulan 2026 Mahal", `${j.Mahal.toLocaleString("id-ID")} (${pct(j.Mahal)}%)`, ">115% acuan provinsi → reviu RAB")}
+    ${laporanKpiTile("Usulan 2026 Murah", `${j.Murah.toLocaleString("id-ID")} (${pct(j.Murah)}%)`, "<85% acuan provinsi → cek cakupan")}
+  </div>`;
+
+  const provHtml = `<div class="laporan-chart-block">
+    <div class="laporan-chart-title"><i class="bi bi-bar-chart"></i> Acuan Biaya per Provinsi</div>
+    <div class="laporan-chart-sub">Rp miliar/km; label kanan = kelas terhadap rata-rata nasional (Mahal ≥115%, Murah ≤85%);
+      provinsi dengan n&lt;5 memakai acuan nasional</div>
+    ${laporanHBar(data.acuan_provinsi.map((a) => ({ ...a, nama: a.provinsi })), {
+      valueKey: "acuan",
+      maxLabelFn: (a) => `${a.provinsi}: ${biayaFmt(a.acuan)} Rp M/km · n = ${a.n} · dasar ${a.dasar}`,
+      barLabelFn: (a) => `${biayaFmt(a.acuan)} · ${a.kelas_vs_nasional}${a.dasar !== "provinsi" ? " (nas.)" : ""}`,
+    })}
+  </div>`;
+
+  const rows = data.usulan.slice(0, 500).map((u) => `<tr class="biaya-usulan-row" data-id="${u.id}" title="Buka detail usulan">
+    <td>${escapeHtml(u.nama_ruas || "-")}<div class="hint">${escapeHtml(u.kabupaten_kota || "")} · ${escapeHtml(u.jenis_penanganan || "")}</div></td>
+    <td>${escapeHtml(u.provinsi || "")}</td>
+    <td class="num">${biayaFmt(u.panjang_km)}</td><td class="num">${biayaFmt(u.alokasi_m)}</td>
+    <td class="num">${biayaFmt(u.biaya_per_km)}</td><td class="num">${biayaFmt(u.acuan)}</td>
+    <td class="num">${u.rasio_pct}%</td><td>${biayaKategoriBadge(u.kategori)}</td>
+    <td>${escapeHtml(u.tindak_lanjut || "")}</td></tr>`).join("");
+  const listHtml = `<div class="laporan-chart-block">
+    <div class="laporan-chart-title"><i class="bi bi-list-check"></i> Usulan 2026 (${data.usulan.length.toLocaleString("id-ID")})</div>
+    <div class="laporan-chart-sub">Diurutkan dari yang paling jauh dari acuan; menampilkan maks. 500 baris. Klik baris untuk membuka detail usulan.</div>
+    <div class="biaya-tabel-wrap"><table class="biaya-usulan-table"><thead><tr>
+      <th>Ruas</th><th>Provinsi</th><th>Panjang (km)</th><th>Alokasi (Rp M)</th><th>Rp M/km</th><th>Acuan</th><th>Rasio</th><th>Kategori</th><th>Tindak lanjut</th>
+    </tr></thead><tbody>${rows}</tbody></table></div>
+  </div>`;
+
+  const view = document.getElementById("biayaAcuanView");
+  view.innerHTML = kpis + provHtml + listHtml + `<p class="hint">${escapeHtml(data.catatan)}</p>`;
+  view.querySelectorAll(".biaya-usulan-row").forEach((tr) => tr.addEventListener("click", () => {
+    document.getElementById("biayaKonstruksiOverlay").hidden = true;
+    loadUsulanDetail(Number(tr.dataset.id));
+  }));
+}
+
+function biayaSetTab(tab) {
+  document.querySelectorAll("[data-biaya-tab]").forEach((b) => b.classList.toggle("active", b.dataset.biayaTab === tab));
+  document.getElementById("biayaTrenFilter").hidden = tab !== "tren";
+  document.getElementById("biayaKonstruksiView").hidden = tab !== "tren";
+  document.getElementById("biayaAcuanFilter").hidden = tab !== "acuan";
+  document.getElementById("biayaAcuanView").hidden = tab !== "acuan";
+  document.getElementById("biayaLolosView").hidden = tab !== "lolos";
+  if (tab === "acuan" && !biayaAcuanDimuat) biayaAcuanLoad();
+  if (tab === "lolos" && !biayaLolosDimuat) biayaLolosLoad();
+}
+
+/* Tab "Riwayat Lolos Kompetensi" -- frekuensi ruas lolos Alokasi Kompetensi
+   2023-2026 (kerangka hal. 7 & 11), /api/usulan-riwayat/lolos-kompetensi. */
+let biayaLolosDimuat = false;
+
+async function biayaLolosLoad() {
+  const view = document.getElementById("biayaLolosView");
+  view.innerHTML = `<div class="laporan-distribusi-empty"><i class="bi bi-hourglass-split"></i> Memuat...
+    <div class="datatable-loading-bar"><span></span></div></div>`;
+  try {
+    const res = await fetch("/api/usulan-riwayat/lolos-kompetensi");
+    const d = await res.json();
+    if (!res.ok) throw new Error(d.detail || "Gagal memuat data");
+    biayaLolosDimuat = true;
+    const fmt = (n) => n.toLocaleString("id-ID");
+    const pct = (n) => `${Math.round((n / d.n_entitas) * 100)}%`;
+    const dist = Object.entries(d.distribusi_tahun_lolos).map(([th, n]) => ({
+      nama: th === "0" ? "Tak pernah" : `${th} tahun`, n,
+    }));
+    const kpis = `<div class="laporan-kpi-row">
+      ${laporanKpiTile("Entitas Ruas Diusulkan", fmt(d.n_entitas), "2023–2026, ruas sama lintas tahun digabung")}
+      ${laporanKpiTile("Tak Pernah Lolos", `${fmt(d.distribusi_tahun_lolos[0])} (${pct(d.distribusi_tahun_lolos[0])})`, "tanpa Alokasi Kompetensi di tahun mana pun")}
+      ${laporanKpiTile("Diusulkan Berulang, Tetap Tak Lolos", `${fmt(d.n_berulang_tak_pernah_lolos)} / ${fmt(d.n_berulang)}`, "ruas diusulkan ≥2 tahun")}
+      ${laporanKpiTile("Lolos 4 Tahun Berturut", fmt(d.ruas_selalu_lolos.length), "2023, 2024, 2025, dan 2026")}
+    </div>`;
+    const distHtml = `<div class="laporan-chart-block">
+      <div class="laporan-chart-title"><i class="bi bi-bar-chart-steps"></i> Jumlah Tahun Ruas Lolos Alokasi Kompetensi</div>
+      <div class="laporan-chart-sub">Jumlah entitas ruas menurut berapa tahun usulannya mendapat Alokasi Usulan (Kompetensi) &gt; 0</div>
+      ${laporanHBar(dist, { valueKey: "n", maxLabelFn: (x) => `${x.nama}: ${fmt(x.n)} ruas`, barLabelFn: (x) => `${fmt(x.n)} (${pct(x.n)})` })}
+    </div>`;
+    const kabRows = d.kab_tak_pernah_lolos.map((k) => `<tr><td>${escapeHtml(k.kabupaten_kota || "")}</td>
+      <td>${escapeHtml(k.provinsi || "")}</td><td class="num">${k.n_usulan}</td><td>${k.tahun_mengusul.join(", ")}</td></tr>`).join("");
+    const kabHtml = `<div class="laporan-chart-block">
+      <div class="laporan-chart-title"><i class="bi bi-x-octagon"></i> Kab/Kota yang Tidak Pernah Lolos (${d.kab_tak_pernah_lolos.length} dari ${fmt(d.n_kab_mengusul)})</div>
+      <div class="laporan-chart-sub">Semua usulannya 2023–2026 tanpa Alokasi Kompetensi${d.n_usulan_tanpa_kab ? ` · ${d.n_usulan_tanpa_kab} usulan tanpa provinsi/kab di SITIA tidak dihitung` : ""}</div>
+      <div class="biaya-tabel-wrap"><table class="biaya-usulan-table"><thead><tr><th>Kab/Kota</th><th>Provinsi</th><th>Usulan</th><th>Tahun mengusulkan</th></tr></thead>
+      <tbody>${kabRows}</tbody></table></div></div>`;
+    const ruasRows = d.ruas_selalu_lolos.map((r) => `<tr><td>${escapeHtml(r.nama_ruas || "")}<div class="hint">${escapeHtml(r.kode_ruas_per_tahun.join(" · "))}</div></td>
+      <td>${escapeHtml(r.kabupaten_kota || "")}</td><td>${escapeHtml(r.provinsi || "")}</td><td>${escapeHtml(r.status_ruas || "")}</td>
+      <td class="num">${biayaFmt(r.total_kompetensi_m)}</td></tr>`).join("");
+    const ruasHtml = `<div class="laporan-chart-block">
+      <div class="laporan-chart-title"><i class="bi bi-patch-check"></i> Ruas yang Lolos Alokasi Kompetensi Setiap Tahun</div>
+      <div class="laporan-chart-sub">Diurutkan menurut total Alokasi Usulan (Kompetensi) 2023–2026 (Rp M). Kode ruas per tahun ditampilkan karena formatnya berganti tiap tahun.</div>
+      <div class="biaya-tabel-wrap"><table class="biaya-usulan-table"><thead><tr><th>Ruas</th><th>Kab/Kota</th><th>Provinsi</th><th>Status</th><th>Total (Rp M)</th></tr></thead>
+      <tbody>${ruasRows}</tbody></table></div></div>`;
+    view.innerHTML = kpis + distHtml + kabHtml + ruasHtml + `<p class="hint">${escapeHtml(d.catatan)}</p>`;
+  } catch (err) {
+    view.innerHTML = `<div class="laporan-distribusi-empty">${escapeHtml(err.message)}</div>`;
+  }
+}
+
+// Blok "Acuan Biaya" di panel detail usulan
+async function loadBiayaAcuan(id) {
+  const el = document.getElementById("usulanBiayaAcuan");
+  if (!el) return;
+  try {
+    const res = await fetch(`/api/usulan-inpres/${id}/biaya-acuan`);
+    const d = await res.json();
+    if (!res.ok) throw new Error(d.detail || res.statusText);
+    const head = `<div class="ijd-score-head"><span class="ijd-score-title"><i class="bi bi-rulers"></i> Biaya per km vs Acuan Provinsi</span>
+      ${d.tersedia ? `<span class="ijd-score-total">${biayaKategoriBadge(d.kategori)} ${d.rasio_pct}% acuan</span>` : ""}</div>`;
+    if (!d.tersedia) {
+      el.innerHTML = head + `<p class="hint">${escapeHtml(d.alasan)}</p>`;
+      return;
+    }
+    el.innerHTML = head + `<p class="biaya-acuan-line">Usulan <b>${biayaFmt(d.biaya_per_km)}</b> Rp M/km · acuan
+      ${escapeHtml(d.provinsi || "")} <b>${biayaFmt(d.acuan)}</b> Rp M/km (${escapeHtml(d.dasar_acuan)})
+      ${d.tindak_lanjut ? ` → <b>${escapeHtml(d.tindak_lanjut)}</b>` : ""}</p>
+      <p class="hint ijd-score-note">${escapeHtml(d.catatan)}</p>`;
+  } catch (err) {
+    console.error(err);
+    el.innerHTML = `<div class="adv-error">Gagal memuat acuan biaya.</div>`;
+  }
+}
+
 function bindBiayaKonstruksi() {
   const overlay = document.getElementById("biayaKonstruksiOverlay");
   const tutup = () => (overlay.hidden = true);
@@ -2324,6 +2487,10 @@ function bindBiayaKonstruksi() {
     overlay.hidden = false;
     if (!biayaKonstruksiData) biayaKonstruksiLoad();
   });
+  document.querySelectorAll("[data-biaya-tab]").forEach((b) =>
+    b.addEventListener("click", () => biayaSetTab(b.dataset.biayaTab)));
+  document.getElementById("biayaAcuanKategori").addEventListener("change", biayaAcuanLoad);
+  document.getElementById("biayaAcuanEskalasi").addEventListener("change", biayaAcuanLoad);
   document.getElementById("biayaKonstruksiClose").addEventListener("click", tutup);
   overlay.addEventListener("click", (e) => { if (e.target === overlay) tutup(); });
   document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !overlay.hidden) tutup(); });

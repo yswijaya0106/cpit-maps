@@ -38,6 +38,9 @@ KETERANGAN = [
     "LHR/VCR: hanya ruas jalan nasional (data tahun bervariasi 2010-2023); ruas lintas kab dihitung untuk tiap kab yang dilaluinya.",
     "Jalan Tidak Mantap (%) dari kemantapan_ijd_2026; panjang jalan dari bps_kabupaten_jalan 2025.",
     "PSC 119: survei 187 PSC / 27 provinsi; kab/kota tanpa baris ditulis 'Tidak ada data' (bukan berarti tidak punya PSC). PSC tidak memiliki koordinat, jarak/waktu tempuh ke LRK/JPL belum dihitung. Waktu respons adalah teks bebas dari survei.",
+    "Kapasitas Fiskal (IKFD): kategori dari kolom SITIA usulan bupati/walikota (Sangat Rendah s.d. Sangat Tinggi); "
+    "konteks Skema Prioritas Pendampingan RAK LLAJ (slide 7), TIDAK diskor. Ambang IKFD di skema dari PMK 116/2021 "
+    "-- kategori SITIA mungkin memakai PMK yang lebih baru.",
     "Data yang belum ada di database: RS/puskesmas, inventaris rambu/marka/APILL/guardrail/PJU, uji kendaraan, kelembagaan, program/anggaran, RAK LLAJ, kebijakan (No. 8-11 kerangka).",
 ]
 
@@ -180,6 +183,14 @@ def _build():
         if r["_kode_kab"]:
             jpl_by[r["_kode_kab"]].append(r)
 
+    # --- kapasitas fiskal (IKFD) -- kolom SITIA usulan bupati/walikota, satu kategori per kab
+    # (konteks Skema Prioritas Pendampingan RAK LLAJ slide 7; tidak diskor). to_jsonb: kolom
+    # kode_kabupaten baru ada setelah scripts/build_ref_wilayah.py.
+    ikfd = {r["k"]: r["f"] for r in _q("""
+        select (to_jsonb(u) ->> 'kode_kabupaten') as k, max(upper(kapasitas_fiskal)) as f
+        from usulan_inpres u where kapasitas_fiskal is not null and nama_pengusul not ilike 'Gubernur%%'
+        group by 1""") if r["k"]}
+
     # --- sheet utama
     def _f(v):
         return float(v) if v is not None else None
@@ -198,6 +209,7 @@ def _build():
         rows.append({
             "Kode Kab/Kota": k, "Provinsi": m.provinsi, "Kabupaten/Kota": m.kabupaten_kota,
             "Jumlah Kecamatan": m.jumlah_kecamatan, "Penduduk 2025": pend,
+            "Kapasitas Fiskal (IKFD, SITIA)": ikfd.get(k),
             # exposure (No. 5)
             "Kendaraan Bermotor": ky[1] if ky else None,
             "Tahun Data Kendaraan": ky[0] if ky else None,

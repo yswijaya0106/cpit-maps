@@ -642,6 +642,7 @@ function usulanModaChange(moda) {
   document.getElementById("btnUrgensiPelabuhan").hidden = moda !== "Laut";
   document.getElementById("btnUsulanRoadSafety").hidden = moda !== "Darat";
   document.getElementById("btnUsulanUrbanDarat").hidden = moda !== "Darat";
+  document.getElementById("btnUsulanRakLlaj").hidden = moda !== "Darat";
   document.getElementById("usulanKabupatenField").hidden = !isIjd;
   document.getElementById("usulanSearchInput").placeholder = USULAN_MODA_SEARCH_PLACEHOLDER[moda] || "Cari...";
 
@@ -1696,9 +1697,17 @@ document.addEventListener("DOMContentLoaded", bindRsPreview);
    Data, Keterangan). Export selalu mengunduh SEMUA sheet. Lihat
    docs/kajian_tim_urban_darat_ketersediaan_data.md. -------------------- */
 
-const udPreview = { sheet: "", provinsi: "", q: "", offset: 0, limit: 50, total: 0 };
+// Modal ini dipakai bersama (30 Sep 2026): Urban & Darat dan Prioritas RAK LLAJ
+// (rak_llaj.py) -- keduanya berkontrak {sheet, sheets, label, columns, rows, total}
+// di `${base}/preview` & `${base}/export/xlsx`.
+const udPreview = { base: "/api/urban-darat", sheet: "", provinsi: "", q: "", offset: 0, limit: 50, total: 0 };
 
-async function udPreviewOpen(provinsi) {
+async function udPreviewOpen(provinsi, base = "/api/urban-darat") {
+  if (udPreview.base !== base) {
+    udPreview.base = base;
+    udPreview.sheet = "";
+    document.getElementById("udPreviewSheet").innerHTML = "";
+  }
   udPreview.provinsi = provinsi || "";
   udPreview.q = "";
   udPreview.offset = 0;
@@ -1722,7 +1731,7 @@ async function udPreviewFetchPage() {
     if (udPreview.sheet) params.set("sheet", udPreview.sheet);
     params.set("limit", udPreview.limit);
     params.set("offset", udPreview.offset);
-    const res = await fetch(`/api/urban-darat/preview?${params}`);
+    const res = await fetch(`${udPreview.base}/preview?${params}`);
     const data = await res.json();
     if (!res.ok) throw new Error(data.detail || "Gagal memuat preview");
     udPreview.total = data.total;
@@ -1806,7 +1815,11 @@ function bindUdPreview() {
     }, 350);
   });
   document.getElementById("udPreviewExport").addEventListener("click", () => {
-    window.location.href = `/api/urban-darat/export/xlsx?${udPreviewFilterParams()}`;
+    window.location.href = `${udPreview.base}/export/xlsx?${udPreviewFilterParams()}`;
+  });
+  document.getElementById("btnUsulanRakLlaj").addEventListener("click", () => {
+    // skor provinsi nasional -- sengaja tanpa filter provinsi panel, supaya ranking utuh terlihat
+    udPreviewOpen("", "/api/rak-llaj");
   });
 }
 

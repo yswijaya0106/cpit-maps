@@ -54,6 +54,7 @@ import chat_dataset  # noqa: E402
 import wilayah_pulau  # noqa: E402
 import road_safety  # noqa: E402
 import urban_darat  # noqa: E402
+import rak_llaj  # noqa: E402
 import map_print  # noqa: E402
 # _llm_plain/_plain_* (penilaian Bappenas AI) masih tinggal di app.py dan
 # butuh konstanta model/URL yang ikut pindah ke chat_providers saat refactor
@@ -3803,6 +3804,37 @@ def urban_darat_export(provinsi: str = "", q: str = ""):
     fname = f"urban_darat_{scope}_{datetime.now():%Y%m%d%H%M%S}.xlsx"
     return StreamingResponse(
         urban_darat.export_bytes(provinsi, q),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f"attachment; filename={fname}"},
+    )
+
+
+# Skor Prioritas Pendampingan RAK LLAJ -- level provinsi, PARSIAL (aspek a & e = 50% bobot;
+# b Status RAK & d Kelembagaan belum ada datanya). Skema docs/30092026/Skema Prioritas
+# Pendampingan RAK LLAJ Daerah.pptx; logika & keputusan metode di rak_llaj.py. Kontrak
+# respons sama dgn /api/urban-darat/* (modal preview dipakai bersama di frontend).
+@app.get("/api/rak-llaj/preview")
+def rak_llaj_preview(sheet: str = "", provinsi: str = "", q: str = "", limit: int = 50, offset: int = 0):
+    limit = max(1, min(limit, 200))
+    offset = max(0, offset)
+    sheet = sheet or rak_llaj.SHEETS[0]
+    if sheet not in rak_llaj.SHEETS:
+        raise HTTPException(status_code=400, detail=f"Sheet tidak dikenal: {sheet}")
+    df = rak_llaj.filter_sheets(rak_llaj.get_sheets(PROVINSI_POLDA_MAP), provinsi, q)[sheet]
+    page = df.iloc[offset:offset + limit]
+    return jsonable_encoder({
+        "table": "rak_llaj", "sheet": sheet, "sheets": rak_llaj.SHEETS,
+        "label": f"Prioritas Pendampingan RAK LLAJ (parsial, provinsi) — {sheet}",
+        "columns": list(df.columns), "rows": road_safety.to_json_rows(page),
+        "total": len(df), "limit": limit, "offset": offset,
+    })
+
+
+@app.get("/api/rak-llaj/export/xlsx")
+def rak_llaj_export(provinsi: str = "", q: str = ""):
+    fname = f"prioritas_rak_llaj_provinsi_{datetime.now():%Y%m%d%H%M%S}.xlsx"
+    return StreamingResponse(
+        rak_llaj.export_bytes(PROVINSI_POLDA_MAP, provinsi, q),
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition": f"attachment; filename={fname}"},
     )

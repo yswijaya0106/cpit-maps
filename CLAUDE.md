@@ -886,6 +886,33 @@ scripts/tables/layers out to staging.
   **Sengaja TANPA data kecelakaan/fatalitas** (`anev_laka_lantas_*` hanya
   level POLDA, tidak bisa diturunkan ke kab/kota); sel kosong = data tidak
   tersedia, bukan nol; tidak ada skor komposit (kerangka tidak menetapkan bobot).
+- **Prioritas Pendampingan RAK LLAJ** (30 Sep 2026, skema `docs/30092026/
+  Skema Prioritas Pendampingan RAK LLAJ Daerah.pptx`): Darat button
+  "Prioritas RAK LLAJ" → `GET /api/rak-llaj/{preview,export/xlsx}`, logic in
+  [rak_llaj.py](rak_llaj.py). It **shares the Urban & Darat modal**
+  (`udPreviewOpen(provinsi, base)`), so both endpoints must keep the same
+  `{sheet, sheets, label, columns, rows}` contract.
+  - **Provinsi only, PARSIAL:** aspects a (RF100/RF10K/Skor Risiko) and e
+    (Tren) come from `anev_laka_lantas_polda`, 50% of the weight. b (Status
+    RAK) and d (Kelembagaan) have no data and show "belum tersedia", never 0.
+  - Method decisions (user-approved, labelled "ilustratif" as in slide 9):
+    - ratio-to-national bands 25/50/75/100;
+    - 2025 (Jan-30 Okt) annualized ×365/303;
+    - level = mean 2023-25, tren = CAGR of 3-yr moving averages;
+    - overlapping tren bounds resolved as 0% and -5% = stabil.
+  - **Tanah Papua gotcha:** POLDA Papua Tengah and Papua Barat Daya have
+    0/NULL for 2020-24 (new POLDAs), and Papua/Papua Barat drop in 2025
+    because of the split. `POLDA_GRUP`/`PROVINSI_TANPA_POLDA` merge them
+    into two regions with summed numerators and denominators. Without that,
+    Papua Barat ranked #1 at 2× national RF100.
+  - `scripts/validasi_laka_lantas.py` runs the same checks as the "Validasi
+    Data" sheet.
+  - The Road Safety kab/kota profile also gained "Kapasitas Fiskal (IKFD,
+    SITIA)", covering 502/514 kab/kota, taken from `usulan_inpres.
+    kapasitas_fiskal` of bupati/walikota usulan (context only).
+  - R3 (a template and import for RAK and Forum LLAJ status, to fill b/d) is
+    NOT built: it waits on whether the RUNK Secretariat will supply that
+    data.
 - **Profil Urban & Darat** (24 Sep 2026, kerangka `docs/24092026/Kerangka
   Berpikir Tim Urban dan Darat.pptx`, kajian `docs/kajian_tim_urban_darat_
   ketersediaan_data.md`): tombol "Preview Urban & Darat" (hanya moda Darat)

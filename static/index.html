@@ -443,6 +443,58 @@
       </div>
     </div>
 
+    <div class="datatable-overlay" id="biayaKonstruksiOverlay" hidden>
+      <div class="datatable-modal">
+        <div class="datatable-head">
+          <div class="datatable-head-title">
+            <h3><i class="bi bi-cash-coin"></i> Tren Biaya Konstruksi Jalan per Provinsi, 2023–2026</h3>
+            <span class="datatable-meta" id="biayaKonstruksiMeta"></span>
+          </div>
+          <div class="datatable-head-actions">
+            <button type="button" class="icon-btn" id="biayaKonstruksiClose" aria-label="Tutup"><i
+                class="bi bi-x-lg"></i></button>
+          </div>
+        </div>
+        <div class="biaya-filter-row">
+          <label>Sumber alokasi
+            <select id="biayaSumber">
+              <option value="pemda">Usulan Pemda</option>
+              <option value="balai">Usulan Balai</option>
+              <option value="kompetensi">Usulan Kompetensi</option>
+            </select></label>
+          <label>Jenis penanganan
+            <select id="biayaJenis">
+              <option value="jalan">Semua penanganan jalan (tanpa jembatan)</option>
+              <option value="peningkatan">Peningkatan Jalan</option>
+              <option value="pembangunan">Pembangunan Jalan Baru</option>
+              <option value="pelebaran">Pelebaran Jalan</option>
+              <option value="perbaikan">Perbaikan Jalan</option>
+              <option value="semua">Semua (termasuk jembatan)</option>
+            </select></label>
+          <label>Statistik
+            <select id="biayaStatistik">
+              <option value="median">Median per usulan</option>
+              <option value="rata">Rata-rata per usulan</option>
+              <option value="rasio">Σ alokasi ÷ Σ panjang</option>
+            </select></label>
+          <label>Skala sumbu Y
+            <select id="biayaSkala">
+              <option value="bersama">Sama untuk semua provinsi</option>
+              <option value="sendiri">Per provinsi</option>
+            </select></label>
+          <label>Urutkan
+            <select id="biayaUrut">
+              <option value="naik">Kenaikan tertinggi dulu</option>
+              <option value="turun">Penurunan terbesar dulu</option>
+              <option value="nama">Nama provinsi</option>
+            </select></label>
+        </div>
+        <div class="laporan-distribusi-view" id="biayaKonstruksiView">
+          <div class="laporan-distribusi-empty">Memuat...</div>
+        </div>
+      </div>
+    </div>
+
     <div class="datatable-overlay" id="usulanModaDashboardOverlay" hidden>
       <div class="datatable-modal">
         <div class="datatable-head">
@@ -818,6 +870,9 @@
                 Skor IJD</button>
               <button id="btnUsulanExportNpr" class="btn btn-ghost btn-sm"><i class="bi bi-graph-up-arrow"></i> Preview
                 NPR</button>
+              <button id="btnBiayaKonstruksi" class="btn btn-ghost btn-sm"
+                title="Tren biaya konstruksi jalan per provinsi (Rp miliar/km), usulan SITIA 2023-2026">
+                <i class="bi bi-cash-coin"></i> Tren Biaya Konstruksi</button>
               <button id="btnUsulanModaExport" class="btn btn-ghost btn-sm" hidden><i class="bi bi-download"></i>
                 Export XLSX</button>
               <button id="btnUsulanRoadSafety" class="btn btn-ghost btn-sm" hidden

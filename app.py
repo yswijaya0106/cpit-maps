@@ -8145,6 +8145,83 @@ def usulan_inpres_riwayat_ruas(usulan_id: int):
     })
 
 
+# Tren biaya konstruksi jalan per provinsi 2023-2026 (30 Sep 2026, dari slide
+# Bappenas "Tren biaya pembangunan jalan per provinsi"). Metode slide TIDAK bisa
+# direproduksi dari ekspor SITIA yang sama (kombinasi terdekat masih meleset
+# ~0,6 Rp M/km per titik) -- jadi metode dibuat eksplisit & bisa diatur user:
+# nilai per usulan = alokasi / panjang_penanganan_pemda (Rp miliar/km), lalu
+# diagregasi per (provinsi, tahun). Usulan dgn panjang/alokasi kosong atau <=0
+# dilewati (2024: ~1/3 usulan tanpa panjang penanganan di sumber).
+_BIAYA_SUMBER = {"pemda": "alokasi_usulan_pemda", "balai": "alokasi_usulan_balai",
+                 "kompetensi": "alokasi_usulan_kompetensi"}
+_BIAYA_JENIS = {
+    "jalan": "jenis_penanganan NOT ILIKE '%jembatan%'",  # execute() tanpa params -> '%' literal
+    "semua": "TRUE",
+    "peningkatan": "jenis_penanganan = 'Peningkatan Jalan'",
+    "pembangunan": "jenis_penanganan = 'Pembangunan Jalan Baru'",
+    "pelebaran": "jenis_penanganan = 'Pelebaran Jalan'",
+    "perbaikan": "jenis_penanganan = 'Perbaikan Jalan'",
+}
+_BIAYA_TAHUN = (2023, 2024, 2025, 2026)
+_BIAYA_N_TIPIS = 5
+
+
+@app.get("/api/biaya-konstruksi/tren")
+def biaya_konstruksi_tren(sumber: str = "pemda", jenis: str = "jalan", statistik: str = "median"):
+    if sumber not in _BIAYA_SUMBER or jenis not in _BIAYA_JENIS or statistik not in ("median", "rata", "rasio"):
+        raise HTTPException(400, "Parameter sumber/jenis/statistik tidak dikenal.")
+    kol = _BIAYA_SUMBER[sumber]
+    agg = {
+        "median": f"percentile_cont(0.5) WITHIN GROUP (ORDER BY {kol} / panjang_penanganan_pemda)",
+        "rata": f"AVG({kol} / panjang_penanganan_pemda)",
+        "rasio": f"SUM({kol}) / SUM(panjang_penanganan_pemda)",
+    }[statistik]
+    where = (f"panjang_penanganan_pemda > 0 AND {kol} > 0 AND provinsi IS NOT NULL "
+             f"AND jenis_penanganan IS NOT NULL AND {_BIAYA_JENIS[jenis]}")
+    with db_cursor() as cur:
+        cur.execute("SELECT to_regclass('public.usulan_inpres_riwayat') AS t")
+        if cur.fetchone()["t"] is None:
+            raise HTTPException(503, "Tabel usulan_inpres_riwayat belum diimpor (scripts/import_usulan_riwayat.py).")
+        cur.execute(
+            f"SELECT UPPER(provinsi) AS provinsi, tahun, {agg} / 1e9 AS nilai, COUNT(*) AS n "
+            f"FROM usulan_inpres_riwayat WHERE {where} GROUP BY 1, 2"
+        )
+        per_prov = cur.fetchall()
+        cur.execute(f"SELECT tahun, {agg} / 1e9 AS nilai, COUNT(*) AS n FROM usulan_inpres_riwayat "
+                    f"WHERE {where} GROUP BY 1")
+        nasional = cur.fetchall()
+
+    def _seri(rows):
+        by = {r["tahun"]: r for r in rows}
+        titik = []
+        for t in _BIAYA_TAHUN:
+            r = by.get(t)
+            titik.append({"tahun": t, "nilai": round(float(r["nilai"]), 2) if r else None,
+                          "n": int(r["n"]) if r else 0, "tipis": bool(r) and r["n"] < _BIAYA_N_TIPIS})
+        ada = [p for p in titik if p["nilai"] is not None]
+        # Perubahan total: titik pertama -> terakhir yg ada (bukan harus 2023 -> 2026)
+        total = (round((ada[-1]["nilai"] / ada[0]["nilai"] - 1) * 100, 1)
+                 if len(ada) >= 2 and ada[0]["nilai"] else None)
+        return {"titik": titik, "perubahan_total_pct": total,
+                "dari_tahun": ada[0]["tahun"] if len(ada) >= 2 else None,
+                "ke_tahun": ada[-1]["tahun"] if len(ada) >= 2 else None}
+
+    grup = {}
+    for r in per_prov:
+        grup.setdefault(r["provinsi"], []).append(r)
+    provinsi = [{"provinsi": p, **_seri(rows)} for p, rows in grup.items()]
+    provinsi.sort(key=lambda x: (x["perubahan_total_pct"] is None, -(x["perubahan_total_pct"] or 0)))
+    return {
+        "sumber": sumber, "jenis": jenis, "statistik": statistik, "satuan": "Rp miliar/km",
+        "ambang_n_tipis": _BIAYA_N_TIPIS, "nasional": _seri(nasional), "provinsi": provinsi,
+        "catatan": ("Nilai per usulan = alokasi usulan ÷ panjang penanganan (Pemda), SITIA 2023–2026 "
+                    "(usulan_inpres_riwayat). Usulan tanpa panjang/alokasi dilewati — di 2024 sekitar "
+                    "sepertiga usulan tidak mencantumkan panjang penanganan. Nilai usulan, bukan realisasi "
+                    "kontrak. Tanda * = n<5 (indikatif). Metode slide Bappenas tidak terdokumentasi dan "
+                    "tidak dapat direproduksi persis; angka di sini bisa berbeda."),
+    }
+
+
 @app.get("/api/usulan-inpres/{usulan_id}/geometry")
 def usulan_inpres_geometry(usulan_id: int):
     return _fetch_usulan_geometry(usulan_id)

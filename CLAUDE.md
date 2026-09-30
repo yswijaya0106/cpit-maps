@@ -913,6 +913,19 @@ scripts/tables/layers out to staging.
   dengan `PG_*` di environment). Temuan Parameter E: flag `Penuntasan IJD
   Sebelumnya` (154) dan `lanjutan_ijd_2025` (155) hanya beririsan 84 usulan
   — belum dikonfirmasi sumber mana yang benar.
+- **Tren Biaya Konstruksi per provinsi (30 Sep 2026)**: the IJD toolbar button
+  "Tren Biaya Konstruksi" opens small multiples for 2023-2026, served by
+  `GET /api/biaya-konstruksi/tren?sumber=&jenis=&statistik=`. The data comes
+  from `usulan_inpres_riwayat`. The value is alokasi ÷
+  `panjang_penanganan_pemda`, in Rp miliar/km. The defaults are the median
+  per usulan and road work without jembatan. A point with n<5 is marked
+  "tipis". This is the proposal value, not the contract realization. It was
+  built from a Bappenas slide whose method **couldn't be reproduced** from
+  the same SITIA export: the closest combination is still ≈0.6 Rp M/km off
+  per point. So the method is made explicit and adjustable, and it's not a
+  bug when the numbers differ from the slide. The Y axis is shared across
+  panels by default, starting at 0; the slide used a separate scale per
+  panel.
 - **Referensi wilayah berbasis ID (`ref_wilayah`, 24 Sep 2026)**: tabel
   `ref_wilayah` (kode_provinsi/kode_kabupaten/kode_kecamatan + nama, dari
   `penduduk_kecamatan`, 38 prov/514 kab/7.288 kec) + view `ref_wilayah_kabupaten`/

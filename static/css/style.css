@@ -1649,3 +1649,37 @@ html::-webkit-scrollbar, body::-webkit-scrollbar, .sidebar::-webkit-scrollbar, .
 @media (max-width: 720px) {
   .chat-panel.is-wide { width: calc(100vw - 28px); height: calc(100vh - 130px); }
 }
+
+/* --- Tren Biaya Konstruksi (usulan-inpres.js biayaKonstruksi*) --- */
+.biaya-filter-row { display: flex; flex-wrap: wrap; gap: 10px 16px; padding: 10px 18px; border-bottom: 1px solid var(--border); }
+.biaya-filter-row label { display: flex; flex-direction: column; gap: 3px; font-size: 11px; color: var(--text-dim); }
+.biaya-filter-row select { background: var(--panel-alt); color: var(--text); border: 1px solid var(--border); border-radius: 8px; padding: 5px 8px; font-size: 12.5px; max-width: 260px; }
+.biaya-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px; }
+.biaya-card { background: var(--panel-alt); border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px 8px; min-width: 0; }
+.biaya-card-wide { max-width: 720px; }
+.biaya-card-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; margin-bottom: 2px; }
+.biaya-card-title { font-size: 12.5px; font-weight: 700; color: var(--text); }
+.biaya-card-total small { color: var(--text-dim); font-size: 10.5px; }
+.biaya-svg { width: 100%; height: auto; display: block; overflow: visible; }
+.biaya-base { stroke: var(--border); stroke-width: 1; }
+.biaya-line { stroke: var(--primary); stroke-width: 2; fill: none; stroke-linecap: round; }
+.biaya-line.putus { stroke-dasharray: 3 4; }
+.biaya-dot { fill: var(--primary); stroke: var(--panel-alt); stroke-width: 2; }
+.biaya-dot.tipis { fill: var(--panel-alt); stroke: var(--primary); }
+.biaya-hit { fill: transparent; cursor: default; }
+.biaya-val { fill: var(--text); font-size: 11px; font-weight: 600; }
+.biaya-axis { fill: var(--text-dim); font-size: 10px; }
+.biaya-steps { display: grid; grid-template-columns: repeat(3, 1fr); padding: 0 6px; text-align: center; min-height: 18px; }
+.biaya-pct { display: inline-block; font-size: 10.5px; font-weight: 700; padding: 1px 6px; border-radius: 6px; }
+.biaya-pct.naik { color: var(--warn); background: rgba(255, 182, 72, .12); }
+.biaya-pct.turun { color: var(--accent); background: rgba(34, 211, 165, .12); }
+.biaya-pct.tetap { color: var(--text-dim); background: rgba(148, 163, 196, .12); }
+.biaya-tabel { margin-top: 8px; }
+.biaya-tabel summary { cursor: pointer; font-size: 12.5px; color: var(--text); font-weight: 600; }
+.biaya-tabel-wrap { overflow-x: auto; margin-top: 8px; }
+.biaya-tabel table { border-collapse: collapse; font-size: 12px; width: 100%; }
+.biaya-tabel th, .biaya-tabel td { padding: 4px 8px; border-bottom: 1px solid var(--border); text-align: left; white-space: nowrap; }
+.biaya-tabel th { color: var(--text-dim); font-weight: 600; }
+.biaya-tabel td.num { text-align: right; font-variant-numeric: tabular-nums; }
+.biaya-tabel td.dim { color: var(--text-dim); font-size: 11px; }
+@media (max-width: 600px) { .biaya-grid { grid-template-columns: 1fr; } .biaya-filter-row select { max-width: 100%; } }

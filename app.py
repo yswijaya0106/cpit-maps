@@ -8125,7 +8125,10 @@ def _ruas_nama_kunci(nama) -> str:
 @app.get("/api/usulan-inpres/{usulan_id}/riwayat-ruas")
 def usulan_inpres_riwayat_ruas(usulan_id: int):
     with db_cursor() as cur:
-        cur.execute("SELECT kode_ruas, nama_ruas, kode_kabupaten FROM usulan_inpres WHERE id = %s", (usulan_id,))
+        # to_jsonb: kode_kabupaten baru ada setelah scripts/build_ref_wilayah.py / import_usulan_inpres.py
+        # (staging sempat belum punya kolom ini -> dulu 500); tanpa kolom -> cocok kode ruas saja.
+        cur.execute("SELECT kode_ruas, nama_ruas, (to_jsonb(u) ->> 'kode_kabupaten')::int AS kode_kabupaten "
+                    "FROM usulan_inpres u WHERE id = %s", (usulan_id,))
         row = cur.fetchone()
         if row is None:
             raise HTTPException(status_code=404, detail="Usulan tidak ditemukan")

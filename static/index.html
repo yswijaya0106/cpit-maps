@@ -482,15 +482,18 @@
               <option value="pemda">Usulan Pemda</option>
               <option value="balai">Usulan Balai</option>
               <option value="kompetensi">Usulan Kompetensi</option>
+              <option value="program">Program IJD (DPP final, Riwayat R1)</option>
             </select></label>
           <label>Jenis penanganan
+            <!-- data-sumber: opsi yang berlaku untuk sumber usulan SITIA vs Program IJD (biayaSyncJenis) -->
             <select id="biayaJenis">
-              <option value="jalan">Semua penanganan jalan (tanpa jembatan)</option>
-              <option value="peningkatan">Peningkatan Jalan</option>
-              <option value="pembangunan">Pembangunan Jalan Baru</option>
-              <option value="pelebaran">Pelebaran Jalan</option>
-              <option value="perbaikan">Perbaikan Jalan</option>
-              <option value="semua">Semua (termasuk jembatan)</option>
+              <option value="jalan" data-sumber="usulan program">Semua penanganan jalan (tanpa jembatan)</option>
+              <option value="preservasi" data-sumber="program">Preservasi</option>
+              <option value="peningkatan" data-sumber="usulan">Peningkatan Jalan</option>
+              <option value="pembangunan" data-sumber="usulan program">Pembangunan Jalan Baru</option>
+              <option value="pelebaran" data-sumber="usulan">Pelebaran Jalan</option>
+              <option value="perbaikan" data-sumber="usulan">Perbaikan Jalan</option>
+              <option value="semua" data-sumber="usulan">Semua (termasuk jembatan)</option>
             </select></label>
           <label>Statistik
             <select id="biayaStatistik">

@@ -977,6 +977,20 @@ scripts/tables/layers out to staging.
   `GET /api/usulan-riwayat/lolos-kompetensi`. It builds union-find ruas
   entities (kab + name OR kab + kode). It reproduces the slide within
   ~1%, and its totals per ruas match exactly.
+  **3 Okt 2026, Program IJD (DPP final):** the trend dashboard has a
+  `sumber=program` option. It reads `program_ijd_riwayat`, filled by
+  `scripts/import_program_ijd_riwayat.py` from `docs/03102026/Data Revisi
+  R1_Riwayat_IJD_2023-2026_Gabungan.xlsx`. That file holds 2,083 kegiatan
+  (Rp48.8 T), the funded programme, not proposals. It is the source of the
+  Oct 2026 Bappenas deck: with `jenis=preservasi|pembangunan` and
+  `statistik=rasio|rata`, the deck's per-provinsi numbers reproduce exactly.
+  Jenis options differ per source (`_BIAYA_JENIS_PROGRAM`, `data-sumber` in
+  index.html). The importer does DELETE+INSERT. It re-derives kode wilayah
+  from the NAME, because the source codes are often provinsi-level (xx00),
+  Banten 3600, Papua Barat Daya 98xx, or in Kemendagri order for Papua
+  Tengah/Pegunungan. It flags anomalies in `catatan_data` and does not drop
+  them. It links 2026 rows to `usulan_inpres` (633/659) only when the
+  Kompetensi alokasi matches exactly and the match is unique.
   (5) `scripts/validasi_usulan_sitia.py [--xlsx out.xlsx]` is a read-only
   report of checks V1-V10: extreme cost/km, panjang > ruas, Kompetensi >
   1.5× Pemda, kondisi > ruas, kode/panjang drift across years, unmatched

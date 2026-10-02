@@ -857,6 +857,7 @@ DATA_TABLES = {
     "si_lahan_sawah_provinsi": "Lahan Baku Sawah per Provinsi (SI 2026)",
     "ijd_scoring_rules": "Kaidah Skoring IJD",
     "dpp_ijd_2025": "DPP IJD TA 2025 (BA + DPP)",
+    "program_ijd_riwayat": "Riwayat Program IJD 2023-2026 (DPP Final, Revisi R1)",
     "wilayah_mapping": "Pemetaan Wilayah SITIA ↔ Kode BPS",
     "kecamatan_data_turunan": "Data Turunan Kecamatan (C.A1/C.A3)",
     "penilaian_bappenas_ai": "Draf Penilaian Bappenas (AI)",
@@ -929,6 +930,7 @@ DATA_TABLE_GEO = {
     "si_lahan_sawah_provinsi": ("kode_provinsi", "kode_provinsi"),
     "pelabuhan_daerah": ("kode_provinsi", "kode_kabupaten"),
     "koridor_simpul_terdekat": ("kode_provinsi", "kode_kab"),
+    "program_ijd_riwayat": ("kode_provinsi", "kode_kabupaten"),
 }
 
 # Tabel yang punya filter "Pulau" (nasional / pulau / provinsi) di viewer Data
@@ -8227,30 +8229,52 @@ _BIAYA_JENIS = {
 }
 _BIAYA_TAHUN = (2023, 2024, 2025, 2026)
 _BIAYA_N_TIPIS = 5
+# sumber "program" (3 Okt 2026): kegiatan IJD yang DIPROGRAMKAN (DPP final) dari
+# program_ijd_riwayat (scripts/import_program_ijd_riwayat.py) -- file yang sama
+# dgn deck Bappenas "20261002 Preparation, Implementation and Validation of IJD".
+# "rasio" = "Total per km" deck, "rata" = "Rata-rata per km" deck; keduanya
+# tereproduksi persis (Preservasi nasional 4,2/6,0/5,2/6,0). Jenis: kategori
+# Preservasi (sumber: PENINGKATAN) / Pembangunan; jembatan tak terpisah di sumber,
+# baris tanpa panjang jalan otomatis terlewat (panjang_jalan_km > 0).
+_BIAYA_JENIS_PROGRAM = {
+    "jalan": "TRUE",
+    "semua": "TRUE",
+    "preservasi": "kategori = 'preservasi'",
+    "pembangunan": "kategori = 'pembangunan'",
+}
 
 
 @app.get("/api/biaya-konstruksi/tren")
 def biaya_konstruksi_tren(sumber: str = "pemda", jenis: str = "jalan", statistik: str = "median"):
-    if sumber not in _BIAYA_SUMBER or jenis not in _BIAYA_JENIS or statistik not in ("median", "rata", "rasio"):
-        raise HTTPException(400, "Parameter sumber/jenis/statistik tidak dikenal.")
-    kol, pnj = _BIAYA_SUMBER[sumber]
+    program = sumber == "program"
+    jenis_map = _BIAYA_JENIS_PROGRAM if program else _BIAYA_JENIS
+    if (not program and sumber not in _BIAYA_SUMBER) or jenis not in jenis_map \
+            or statistik not in ("median", "rata", "rasio"):
+        raise HTTPException(400, "Parameter sumber/jenis/statistik tidak dikenal untuk sumber ini.")
+    if program:
+        tabel, kol, pnj = "program_ijd_riwayat", "alokasi_rp", "panjang_jalan_km"
+        where = f"{pnj} > 0 AND {kol} > 0 AND provinsi IS NOT NULL AND {jenis_map[jenis]}"
+        importer = "scripts/import_program_ijd_riwayat.py"
+    else:
+        tabel, (kol, pnj) = "usulan_inpres_riwayat", _BIAYA_SUMBER[sumber]
+        where = (f"{pnj} > 0 AND {kol} > 0 AND provinsi IS NOT NULL "
+                 f"AND jenis_penanganan IS NOT NULL AND {jenis_map[jenis]}")
+        importer = "scripts/import_usulan_riwayat.py"
     agg = {
         "median": f"percentile_cont(0.5) WITHIN GROUP (ORDER BY {kol} / {pnj})",
         "rata": f"AVG({kol} / {pnj})",
         "rasio": f"SUM({kol}) / SUM({pnj})",
     }[statistik]
-    where = (f"{pnj} > 0 AND {kol} > 0 AND provinsi IS NOT NULL "
-             f"AND jenis_penanganan IS NOT NULL AND {_BIAYA_JENIS[jenis]}")
     with db_cursor() as cur:
-        cur.execute("SELECT to_regclass('public.usulan_inpres_riwayat') AS t")
+        cur.execute(f"SELECT to_regclass('public.{tabel}') AS t")
         if cur.fetchone()["t"] is None:
-            raise HTTPException(503, "Tabel usulan_inpres_riwayat belum diimpor (scripts/import_usulan_riwayat.py).")
+            raise HTTPException(503, f"Tabel {tabel} belum diimpor ({importer}).")
         cur.execute(
             f"SELECT UPPER(provinsi) AS provinsi, tahun, {agg} / 1e9 AS nilai, COUNT(*) AS n "
-            f"FROM usulan_inpres_riwayat WHERE {where} GROUP BY 1, 2"
+            f"FROM {tabel} WHERE {where} GROUP BY 1, 2"
         )
         per_prov = cur.fetchall()
-        cur.execute(f"SELECT tahun, {agg} / 1e9 AS nilai, COUNT(*) AS n FROM usulan_inpres_riwayat "
+        cur.execute(f"SELECT tahun, {agg} / 1e9 AS nilai, COUNT(*) AS n FROM {tabel} "
                     f"WHERE {where} GROUP BY 1")
         nasional = cur.fetchall()
 
@@ -8274,14 +8298,26 @@ def biaya_konstruksi_tren(sumber: str = "pemda", jenis: str = "jalan", statistik
         grup.setdefault(r["provinsi"], []).append(r)
     provinsi = [{"provinsi": p, **_seri(rows)} for p, rows in grup.items()]
     provinsi.sort(key=lambda x: (x["perubahan_total_pct"] is None, -(x["perubahan_total_pct"] or 0)))
+    if program:
+        return {
+            "sumber": sumber, "jenis": jenis, "statistik": statistik, "satuan": "Rp miliar/km",
+            "unit": "kegiatan", "ambang_n_tipis": _BIAYA_N_TIPIS, "nasional": _seri(nasional),
+            "provinsi": provinsi,
+            "catatan": ("Program IJD yang diprogramkan (DPP final) 2023–2026, Riwayat IJD Revisi R1 "
+                        "(2.083 kegiatan, sumber yang sama dengan deck Bappenas Okt 2026). Nilai per kegiatan = "
+                        "alokasi ÷ panjang jalan; kegiatan tanpa panjang jalan (jembatan murni) dilewati. "
+                        "Preservasi = Jenis Kegiatan PENINGKATAN di sumber. Provinsi apa adanya dari sumber "
+                        "(Papua/Papua Barat 2023–2024 masih label sebelum pemekaran). Nominal, tidak "
+                        "disesuaikan inflasi. Tanda * = n<5 (indikatif)."),
+        }
     return {
         "sumber": sumber, "jenis": jenis, "statistik": statistik, "satuan": "Rp miliar/km",
-        "ambang_n_tipis": _BIAYA_N_TIPIS, "nasional": _seri(nasional), "provinsi": provinsi,
+        "unit": "usulan", "ambang_n_tipis": _BIAYA_N_TIPIS, "nasional": _seri(nasional), "provinsi": provinsi,
         "catatan": ("Nilai per usulan = alokasi usulan ÷ panjang penanganan pada tahap yang sama (Pemda, "
                     "Balai, atau Kompetensi), SITIA 2023–2026 (usulan_inpres_riwayat). Usulan tanpa "
                     "panjang/alokasi dilewati. Nilai usulan, bukan realisasi "
-                    "kontrak. Tanda * = n<5 (indikatif). Metode slide Bappenas tidak terdokumentasi dan "
-                    "tidak dapat direproduksi persis; angka di sini bisa berbeda."),
+                    "kontrak. Tanda * = n<5 (indikatif). Angka slide Bappenas berasal dari program "
+                    "IJD final, bukan usulan -- pilih sumber \"Program IJD\" untuk mereproduksinya."),
     }
 
 

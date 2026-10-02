@@ -2181,6 +2181,20 @@ document.addEventListener("DOMContentLoaded", bindIjdDashboard);
    urutan cukup render ulang. */
 let biayaKonstruksiData = null;
 
+// Opsi "Jenis penanganan" berbeda antara usulan SITIA dan Program IJD (data-sumber
+// di index.html). Opsi yg tak berlaku disembunyikan; bila pilihan aktif jadi tak
+// berlaku, kembali ke "jalan" (ada di kedua sumber).
+function biayaSyncJenis() {
+  const grup = document.getElementById("biayaSumber").value === "program" ? "program" : "usulan";
+  const sel = document.getElementById("biayaJenis");
+  for (const opt of sel.options) {
+    const ok = (opt.dataset.sumber || "").split(" ").includes(grup);
+    opt.hidden = !ok;
+    opt.disabled = !ok;
+  }
+  if (sel.selectedOptions[0]?.disabled) sel.value = "jalan";
+}
+
 async function biayaKonstruksiLoad() {
   const view = document.getElementById("biayaKonstruksiView");
   view.innerHTML = `<div class="laporan-distribusi-empty"><i class="bi bi-hourglass-split"></i> Memuat...
@@ -2218,6 +2232,10 @@ function biayaPctBadge(p) {
 // Satu panel garis: 4 titik tahun, label nilai di tiap titik (hanya 4 -> tidak
 // padat), badge % antar tahun di bawah sumbu, garis putus-putus bila ada tahun
 // kosong di antaranya. Tooltip native (<title>) memuat n usulan.
+function biayaUnit() {
+  return biayaKonstruksiData?.unit || "usulan";
+}
+
 function biayaSparkSvg(seri, yMax, opts = {}) {
   const W = opts.w || 300, H = opts.h || 150, padL = 12, padR = 12, padT = 22, padB = 22;
   const tahun = seri.titik.map((t) => t.tahun);
@@ -2236,7 +2254,7 @@ function biayaSparkSvg(seri, yMax, opts = {}) {
     const lbl = `${biayaFmt(p.nilai)}${p.tipis ? "*" : ""}`;
     const ly = y(p.nilai) - 8 < 12 ? y(p.nilai) + 16 : y(p.nilai) - 8;
     const anchor = p.i === 0 ? "start" : p.i === tahun.length - 1 ? "end" : "middle";
-    return `<g><title>${p.tahun}: ${biayaFmt(p.nilai)} Rp M/km · n = ${p.n} usulan${p.tipis ? " (tipis, indikatif)" : ""}</title>
+    return `<g><title>${p.tahun}: ${biayaFmt(p.nilai)} Rp M/km · n = ${p.n} ${biayaUnit()}${p.tipis ? " (tipis, indikatif)" : ""}</title>
       <circle cx="${x(p.i)}" cy="${y(p.nilai)}" r="10" class="biaya-hit"/>
       <circle cx="${x(p.i)}" cy="${y(p.nilai)}" r="4" class="biaya-dot${p.tipis ? " tipis" : ""}"/>
       <text x="${x(p.i)}" y="${ly}" text-anchor="${anchor}" class="biaya-val">${lbl}</text></g>`;
@@ -2279,12 +2297,13 @@ function biayaKonstruksiRender() {
   const naik = prov.filter((p) => (p.perubahan_total_pct ?? 0) > 0).length;
   const turun = prov.filter((p) => (p.perubahan_total_pct ?? 0) < 0).length;
 
+  const unit = biayaUnit();
   document.getElementById("biayaKonstruksiMeta").textContent =
-    `${prov.length} provinsi · ${data.satuan} · ${nas.titik.reduce((s, t) => s + t.n, 0).toLocaleString("id-ID")} usulan terhitung`;
+    `${prov.length} provinsi · ${data.satuan} · ${nas.titik.reduce((s, t) => s + t.n, 0).toLocaleString("id-ID")} ${unit} terhitung`;
 
   const kpis = `<div class="laporan-kpi-row">
-    ${laporanKpiTile(`Nasional ${nAda[0]?.tahun ?? ""}`, `${biayaFmt(nAda[0]?.nilai)} Rp M/km`, `n = ${(nAda[0]?.n ?? 0).toLocaleString("id-ID")} usulan`)}
-    ${laporanKpiTile(`Nasional ${nAda[nAda.length - 1]?.tahun ?? ""}`, `${biayaFmt(nAda[nAda.length - 1]?.nilai)} Rp M/km`, `n = ${(nAda[nAda.length - 1]?.n ?? 0).toLocaleString("id-ID")} usulan`)}
+    ${laporanKpiTile(`Nasional ${nAda[0]?.tahun ?? ""}`, `${biayaFmt(nAda[0]?.nilai)} Rp M/km`, `n = ${(nAda[0]?.n ?? 0).toLocaleString("id-ID")} ${unit}`)}
+    ${laporanKpiTile(`Nasional ${nAda[nAda.length - 1]?.tahun ?? ""}`, `${biayaFmt(nAda[nAda.length - 1]?.nilai)} Rp M/km`, `n = ${(nAda[nAda.length - 1]?.n ?? 0).toLocaleString("id-ID")} ${unit}`)}
     ${laporanKpiTile("Perubahan Nasional", nas.perubahan_total_pct != null ? `${nas.perubahan_total_pct > 0 ? "+" : ""}${nas.perubahan_total_pct.toLocaleString("id-ID")}%` : "–", `${nas.dari_tahun ?? ""}→${nas.ke_tahun ?? ""}`)}
     ${laporanKpiTile("Provinsi Naik / Turun", `${naik} / ${turun}`, "titik pertama → terakhir yang tersedia")}
   </div>`;
@@ -2316,7 +2335,7 @@ function biayaKonstruksiRender() {
     <div class="laporan-chart-title"><i class="bi bi-grid-3x3-gap"></i> Per Provinsi</div>
     <div class="laporan-chart-sub">Label = nilai (${escapeHtml(data.satuan)}); badge di bawah = perubahan antar tahun;
       <span class="biaya-pct naik">oranye</span> naik, <span class="biaya-pct turun">hijau</span> turun;
-      * = n&lt;${data.ambang_n_tipis} usulan (indikatif); garis putus-putus = ada tahun tanpa data di antaranya.
+      * = n&lt;${data.ambang_n_tipis} ${unit} (indikatif); garis putus-putus = ada tahun tanpa data di antaranya.
       ${skala === "bersama" ? "Skala Y sama untuk semua panel (mulai 0)." : "Skala Y per panel — tinggi garis tidak bisa dibandingkan antarprovinsi."}</div>
     <div class="biaya-grid">${cards}</div>
   </div>`;
@@ -2507,9 +2526,14 @@ function bindBiayaKonstruksi() {
   document.getElementById("biayaKonstruksiClose").addEventListener("click", tutup);
   overlay.addEventListener("click", (e) => { if (e.target === overlay) tutup(); });
   document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !overlay.hidden) tutup(); });
-  for (const id of ["biayaSumber", "biayaJenis", "biayaStatistik"]) {
+  document.getElementById("biayaSumber").addEventListener("change", () => {
+    biayaSyncJenis();
+    biayaKonstruksiLoad();
+  });
+  for (const id of ["biayaJenis", "biayaStatistik"]) {
     document.getElementById(id).addEventListener("change", biayaKonstruksiLoad);
   }
+  biayaSyncJenis();
   for (const id of ["biayaSkala", "biayaUrut"]) {
     document.getElementById(id).addEventListener("change", biayaKonstruksiRender);
   }

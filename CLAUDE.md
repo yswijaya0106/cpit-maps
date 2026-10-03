@@ -732,6 +732,27 @@ Deps: `requirements.txt`, venv at `.venv/` (already gitignored).
   pre-migration; prefer flattening a new source to the plain
   provinsi/kabupaten shape over adding a special case (see `docs/MEMORY.md`
   §"Maps/ overlay").
+  **Per-provinsi split + zoom LOD (3 Oct 2026, map speed, Tahap 1):**
+  - National flat buckets (JALAN NASIONAL, PELABUHAN, TITIK POTONG, ...) now
+    show "Seluruh Indonesia" + one entry per provinsi in the tree. The provinsi
+    name works as a *virtual kabupaten* (key `(bucket, "Aceh", layer)`), so
+    mapLayerKey, print and SHP export need no changes.
+  - `scripts/build_map_layer_wilayah.py` fills `map_layers.wilayah_provinsi
+    text[]` from BATAS PROVINSI polygons. A line crossing a border goes to
+    every provinsi it touches and is not clipped. Points just offshore get the
+    nearest provinsi within ~11 km; the rest get `'{}'`.
+  - `_map_layer_sumber()` resolves real and virtual keys. A bucket that still
+    has NULL rows falls back to national-only. **Rerun the script after
+    reimporting any flat bucket.**
+  - Only the tree asks for the split (`per_provinsi=1`). The chat tool
+    `daftar_layer_peta_overlay` still sees the flat bucket as-is.
+  - `/api/maps/layer?lod=0|1|2`: heavy line/polygon layers (≥50k vertices)
+    are simplified to 0.01° / 0.002° at zoom ≤6 / 7–9. maps-overlay.js swaps
+    features on `idle` (`refreshMapLayerLod`), skipping layers with an active
+    identify/selection. Other layers always get lod 2 with
+    `lod_tersedia:false`, so the client never refetches them.
+  - Jalan Nasional nasional: 1.71 → 0.59 MB gz at lod 0. Wilayah SAR:
+    3.48 → 0.03 MB.
   **`GET /api/maps/layer/export/shp`** (28 Sep 2026) — download button (icon,
   `.maplayer-download`) added next to every layer row in the Overlay Peta
   tree (`maps-overlay.js`): zips a SHP of that one layer's FULL-resolution

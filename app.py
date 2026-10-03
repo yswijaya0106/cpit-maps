@@ -3956,12 +3956,24 @@ def rak_llaj_export(provinsi: str = "", q: str = ""):
 @app.get("/api/usulan-inpres/moda/dashboard")
 def usulan_moda_dashboard():
     with db_cursor() as cur:
+        # Penumpang AKTUAL (bandara_kemenhub, data tahunan Ditjen Hubud) vs kapasitas, dibandingkan
+        # hanya pada bandara yg punya KEDUA angka. Bukan SUM(demand_pax): satuannya tidak seragam
+        # antarbandara (sebagian per hari/penerbangan, sebagian proyeksi; hanya 7/100 sebanding dgn
+        # penumpang aktual) -- lihat docs/kajian_data_udara_bandara.md §5. Kapasitas = data valid,
+        # kecuali yg ditandai salah ketik oleh import_bps_data_bandara.py -> pakai estimasi.
         cur.execute(
+            "WITH b AS ("
+            "  SELECT d.lat, d.lon, k.lalu_lintas_tahun, k.lalu_lintas_penumpang AS penumpang, "
+            "         COALESCE(CASE WHEN d.catatan_data ILIKE '%%kapasitas valid%%' THEN NULL "
+            "                       ELSE d.kapasitas_eksisting_valid END, d.kapasitas_eksisting_estimasi) AS kapasitas "
+            "  FROM bps_data_bandara d LEFT JOIN bandara_kemenhub k ON k.bandara_id = d.bandara_kemenhub_id) "
             "SELECT COUNT(*) AS total, "
             "COUNT(*) FILTER (WHERE lat IS NOT NULL AND lon IS NOT NULL) AS dengan_koordinat, "
-            "SUM(demand_pax) AS total_demand_pax, "
-            "SUM(kapasitas_eksisting_estimasi) AS total_kapasitas "
-            "FROM bps_data_bandara"
+            "SUM(penumpang) FILTER (WHERE penumpang > 0 AND kapasitas > 0) AS penumpang_aktual, "
+            "SUM(kapasitas) FILTER (WHERE penumpang > 0 AND kapasitas > 0) AS kapasitas, "
+            "COUNT(*) FILTER (WHERE penumpang > 0 AND kapasitas > 0) AS n_pembanding, "
+            "MAX(lalu_lintas_tahun) AS tahun_penumpang "
+            "FROM b"
         )
         udara_summary = cur.fetchone()
         cur.execute(
@@ -4060,8 +4072,10 @@ def usulan_moda_dashboard():
         "udara": {
             "total": udara_summary["total"],
             "dengan_koordinat": udara_summary["dengan_koordinat"],
-            "total_demand_pax": jsonable_encoder(udara_summary["total_demand_pax"]),
-            "total_kapasitas_estimasi": jsonable_encoder(udara_summary["total_kapasitas"]),
+            "penumpang_aktual": jsonable_encoder(udara_summary["penumpang_aktual"]),
+            "kapasitas": jsonable_encoder(udara_summary["kapasitas"]),
+            "n_pembanding": udara_summary["n_pembanding"],
+            "tahun_penumpang": udara_summary["tahun_penumpang"],
             "per_hirarki": [dict(r) for r in udara_hirarki],
             "per_provinsi": [dict(r) for r in udara_provinsi],
         },

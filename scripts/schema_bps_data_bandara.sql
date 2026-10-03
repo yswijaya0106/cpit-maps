@@ -54,3 +54,15 @@ CREATE TABLE IF NOT EXISTS bps_data_bandara (
 -- scripts/match_bps_data_bandara_kemenhub.py.
 ALTER TABLE bps_data_bandara ADD COLUMN IF NOT EXISTS bandara_kemenhub_id INTEGER REFERENCES bandara_kemenhub (bandara_id);
 ALTER TABLE bps_data_bandara ADD COLUMN IF NOT EXISTS match_skor NUMERIC(4, 3);   -- rasio kemiripan nama (difflib), 0-1 -- referensi konfiden match
+
+-- Lapisan koreksi (3 Okt 2026, docs/kajian_data_udara_bandara.md). PERHATIAN:
+-- kode_provinsi/kode_kabupaten di atas = KP/KD SUMBER apa adanya, BUKAN kode
+-- BPS yg andal -- urutan Kemendagri utk Papua Tengah/Pegunungan (join
+-- langsung cocok ke kabupaten yg salah), 98xx utk Papua Barat Daya, beberapa
+-- Kab/Kota tertukar. Untuk join ke tabel wilayah lain pakai kolom *_bps.
+-- demand_pax: satuan TIDAK seragam antarbandara (sebagian per hari/
+-- penerbangan, sebagian proyeksi) -- jangan dijumlahkan/dibandingkan.
+ALTER TABLE bps_data_bandara ADD COLUMN IF NOT EXISTS kode_provinsi_bps SMALLINT;
+ALTER TABLE bps_data_bandara ADD COLUMN IF NOT EXISTS kode_kabupaten_bps INTEGER;  -- dari titik (BATAS KABUPATEN), dicek silang nama kabupaten
+ALTER TABLE bps_data_bandara ADD COLUMN IF NOT EXISTS koordinat_sumber TEXT;       -- 'sumber' | 'bandara_kemenhub'
+ALTER TABLE bps_data_bandara ADD COLUMN IF NOT EXISTS catatan_data TEXT;           -- koreksi/tanda per baris

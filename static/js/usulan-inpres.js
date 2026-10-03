@@ -1941,11 +1941,11 @@ function usulanModaDashboardRender(data) {
       const th24 = data.keselamatan.tren_nasional.find((t) => t.tahun === "2024");
       return th24 ? th24.kejadian.toLocaleString("id-ID") : "-";
     })(), "seluruh POLDA, sumber Korlantas POLRI")}
-    ${laporanKpiTile("Demand vs Kapasitas Bandara", (() => {
-      const demand = data.udara.total_demand_pax, kap = data.udara.total_kapasitas_estimasi;
-      if (!demand || !kap) return "-";
-      return `${Math.round(demand / kap * 100)}%`;
-    })(), `${Math.round((data.udara.total_demand_pax || 0) / 1e6)}jt demand / ${Math.round((data.udara.total_kapasitas_estimasi || 0) / 1e6)}jt kapasitas eksisting`)}
+    ${laporanKpiTile("Penumpang Aktual vs Kapasitas Bandara", (() => {
+      const pnp = data.udara.penumpang_aktual, kap = data.udara.kapasitas;
+      if (!pnp || !kap) return "-";
+      return `${Math.round(pnp / kap * 100)}%`;
+    })(), `${((data.udara.penumpang_aktual || 0) / 1e6).toLocaleString("id-ID", { maximumFractionDigits: 1 })}jt penumpang ${data.udara.tahun_penumpang || ""} / ${((data.udara.kapasitas || 0) / 1e6).toLocaleString("id-ID", { maximumFractionDigits: 1 })}jt kapasitas · ${data.udara.n_pembanding || 0} bandara (penumpang: Ditjen Hubud)`)}
   </div>`;
 
   const udaraHtml = `<div class="laporan-chart-block">

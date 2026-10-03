@@ -860,7 +860,18 @@ scripts/tables/layers out to staging.
 - New reference tables (all non-spatial except the `map_layers` overlay
   noted above), one importer each in `scripts/import_*.py` with a matching
   `scripts/schema_*.sql`: `bps_data_bandara` (Udara, per-airport
-  runway/apron/terminal/capacity detail); `angkutan_perintis` (Darat,
+  runway/apron/terminal/capacity detail; **gotchas**, see
+  `docs/kajian_data_udara_bandara.md`:
+  - `kode_kabupaten`/`kode_provinsi` are the source KD/KP as-is, which
+    silently join to the WRONG kab for Papua Tengah/Pegunungan
+    (Kemendagri order) and use 98xx for Papua Barat Daya. Join on
+    `kode_kabupaten_bps`/`kode_provinsi_bps` instead, which are derived from
+    the point.
+  - `demand_pax` has mixed units across airports, so never sum or compare
+    it. For actual traffic use `bandara_kemenhub.lalu_lintas_penumpang`,
+    which the moda dashboard now does.
+  - Corrections and flags are in `catatan_data`.
+  ); `angkutan_perintis` (Darat,
   perintis route service categories), `bps_lhr_ruas_nasional` (Darat, 2024
   AADT/LHR per national road segment — matches `map_layers` `LINKID` 1:1
   but kept as its own table), `anev_laka_lantas_polda` (Darat, 2020-2025

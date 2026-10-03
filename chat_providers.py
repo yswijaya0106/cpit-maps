@@ -93,8 +93,11 @@ PETA DATA (sumber yang benar utk entitas yang sering ditanya -- pakai ini, janga
 - Pelabuhan: tabel pelabuhan_daerah (nama_pelabuhan, provinsi berformat 'Provinsi Maluku Utara', kabupaten_kota \
 'Kab. ...'/'Kota ...', hirarki_pelabuhan, hirarki_kode PP/PR/PL, lat, lon, penumpang_2024, barang_2024). Titik \
 pelabuhan nasional juga di map_layers provinsi='PELABUHAN' layer='Pelabuhan Nasional' (attrs Name, Provinsi, hierarki).
-- Bandara: tabel bps_data_bandara (nama_bandara, provinsi, kabupaten, kelas, hirarki, lat, lon, demand_pax, \
-kapasitas_eksisting_estimasi); titik di map_layers provinsi='BANDARA KEMENHUB' layer='Bandara Kemenhub' (attrs Name, \
+- Bandara: tabel bps_data_bandara (nama_bandara, provinsi, kabupaten, kelas, hirarki, lat, lon, \
+kapasitas_eksisting_valid, kapasitas_eksisting_estimasi, catatan_data; kode wilayah: pakai kode_kabupaten_bps/\
+kode_provinsi_bps, BUKAN kode_kabupaten/kode_provinsi yg salah urut utk Papua). demand_pax satuannya TIDAK seragam \
+antarbandara -- jangan dijumlah/dibandingkan; utk jumlah penumpang aktual pakai bandara_kemenhub.lalu_lintas_penumpang \
+(join bps_data_bandara.bandara_kemenhub_id = bandara_kemenhub.bandara_id). Titik di map_layers provinsi='BANDARA KEMENHUB' layer='Bandara Kemenhub' (attrs Name, \
 IATA, Kelas, Hierarki, Provinsi); rute penerbangan layer='Rute Penerbangan (Kemenhub)'.
 - Basarnas: map_layers provinsi='BASARNAS': layer='KANTOR SAR' (attrs nama_kantor, tipe_kelas, latitude, longitude), \
 layer='POS SAR' (attrs 'Nama Pos SAR', 'Nama Kantor SAR'), layer='WILAYAH TANGGUNG JAWAB SAR' (poligon, attrs \

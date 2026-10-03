@@ -383,15 +383,84 @@ function runChatAction(action) {
 const CHAT_GREETING = "Halo! Saya bisa menganalisis **seluruh data** aplikasi ini — usulan IJD, BPS, pelabuhan, bandara, " +
   "kereta api, Basarnas, koridor, dan layer peta — lalu menyajikannya sebagai **tabel, grafik, peta**, dan " +
   "**unduhan Excel/Word**. Tanya bebas, atau coba contoh di bawah:";
-const CHAT_CONTOH = [
-  "Analisa semua pelabuhan dan bandara di Papua Selatan beserta koridor IJD dan Kantor SAR terdekat, tampilkan di peta",
+/* Contoh prompt DINAMIS: dulu 4 kalimat tetap. Sekarang (1) contoh kontekstual
+   dari apa yg sedang dibuka user -- usulan yg dilihat, layer overlay aktif, rute
+   aktif -- didahulukan, lalu (2) sisanya diacak dari CHAT_CONTOH_POOL dengan
+   {prov} diisi provinsi usulan yg dilihat, atau provinsi acak. Dibangun ulang
+   setiap panel dibuka selama percakapan belum dimulai. */
+const CHAT_PROVINSI = [
+  "Aceh", "Sumatera Utara", "Sumatera Barat", "Riau", "Jambi", "Sumatera Selatan", "Bengkulu", "Lampung",
+  "Kepulauan Bangka Belitung", "Kepulauan Riau", "Jawa Barat", "Jawa Tengah", "DI Yogyakarta", "Jawa Timur",
+  "Banten", "Bali", "Nusa Tenggara Barat", "Nusa Tenggara Timur", "Kalimantan Barat", "Kalimantan Tengah",
+  "Kalimantan Selatan", "Kalimantan Timur", "Kalimantan Utara", "Sulawesi Utara", "Sulawesi Tengah",
+  "Sulawesi Selatan", "Sulawesi Tenggara", "Gorontalo", "Sulawesi Barat", "Maluku", "Maluku Utara",
+  "Papua", "Papua Barat", "Papua Selatan", "Papua Tengah", "Papua Pegunungan", "Papua Barat Daya",
+];
+const CHAT_CONTOH_POOL = [
+  "Analisa semua pelabuhan dan bandara di {prov} beserta koridor IJD dan Kantor SAR terdekat, tampilkan di peta",
+  "Buat grafik 10 kabupaten/kota di {prov} dengan usulan IJD 2026 terbanyak beserta total panjang ruasnya",
   "Buat grafik 10 provinsi dengan usulan IJD 2026 terbanyak beserta total panjang ruasnya",
-  "Stasiun kereta api mana saja di Jawa Barat dan bagaimana utilisasi kapasitas lintasnya?",
   "Susun laporan Word kondisi jalan nasional (IRI) per provinsi",
+  "Bagaimana kondisi kemantapan jalan nasional (IRI) di {prov}? Tampilkan ruas terburuk dalam tabel",
+  "Stasiun kereta api mana saja di Jawa Barat dan bagaimana utilisasi kapasitas lintasnya?",
+  "Petak jalan KA mana di Sumatera yang kapasitas lintasnya paling padat? Tampilkan di peta",
+  "Tampilkan 10 usulan IJD 2026 dengan skor NPR tertinggi di {prov} dalam tabel dan ekspor ke Excel",
+  "Bandara di {prov} mana yang permintaan penumpangnya melebihi kapasitas terminal?",
+  "Berapa jumlah usulan IJD per jenis penanganan di {prov}? Buat grafik batang",
+  "Kantor SAR mana yang waktu respon operasinya paling lama? Buat tabel dan grafik",
+  "Bandingkan tren penumpang dan bongkar muat barang pelabuhan di {prov} beberapa tahun terakhir",
+  "Kabupaten/kota mana di {prov} yang tidak dilalui koridor IJD sama sekali?",
+  "Rangkum data kecelakaan lalu lintas di {prov} 2020-2025 dalam grafik tren",
 ];
 
+function chatAcak(arr) {
+  const a = arr.slice();
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
+
+function chatContohDinamis(jumlah = 4) {
+  const kontekstual = [];
+  const u = state.usulanDilihat;
+  if (u?.id != null) {
+    const nama = u.nama ? `"${u.nama}"` : `#${u.id}`;
+    kontekstual.push(`Hitung skor IJD usulan ${nama} (id ${u.id}) dan jelaskan komponen yang belum tersedia`);
+    kontekstual.push(`Bandara, pelabuhan, dan koridor IJD apa yang terdekat dari usulan ${nama} (id ${u.id})? Tampilkan di peta`);
+  }
+  if (state.routes?.[state.selectedIndex]) {
+    kontekstual.push("Usulan IJD apa saja di sekitar rute ini, dan bagaimana kondisi jalannya?");
+  }
+  const aktif = Object.keys(state.mapLayers?.active || {});
+  if (aktif.length && typeof mapLayerDisplayLabel === "function") {
+    const key = aktif[aktif.length - 1];
+    const m = state.mapLayers.meta[key] || {};
+    const lokasi = [m.kabupaten, m.provinsi].filter(Boolean).join(", ");
+    kontekstual.push(`Ringkas isi layer "${mapLayerDisplayLabel(key)}"${lokasi ? ` (${lokasi})` : ""} dalam tabel dan grafik`);
+  }
+
+  const prov = u?.provinsi || CHAT_PROVINSI[Math.floor(Math.random() * CHAT_PROVINSI.length)];
+  const hasil = chatAcak(kontekstual).slice(0, Math.min(2, jumlah));
+  for (const t of chatAcak(CHAT_CONTOH_POOL)) {
+    if (hasil.length >= jumlah) break;
+    const isi = t.replaceAll("{prov}", prov);
+    if (!hasil.includes(isi)) hasil.push(isi);
+  }
+  return hasil;
+}
+
+// Segarkan contoh hanya selama percakapan belum dimulai (cuma sapaan).
+function refreshChatContoh() {
+  const msgs = state.chat.messages;
+  if (msgs.length !== 1 || !msgs[0].contoh || state.chat.busy) return;
+  msgs[0].contoh = chatContohDinamis();
+  renderChatMessages();
+}
+
 function resetChat() {
-  state.chat.messages = [{ role: "assistant", text: CHAT_GREETING, contoh: CHAT_CONTOH }];
+  state.chat.messages = [{ role: "assistant", text: CHAT_GREETING, contoh: chatContohDinamis() }];
   state.chat.busy = false;
   Object.values(state.chatLayers || {}).forEach((l) => l.data.setMap(null));
   state.chatLayers = {};
@@ -409,7 +478,10 @@ function bindChatPanel() {
 
   toggleBtn.addEventListener("click", () => {
     panel.hidden = !panel.hidden;
-    if (!panel.hidden) input.focus();
+    if (!panel.hidden) {
+      refreshChatContoh();
+      input.focus();
+    }
   });
   closeBtn.addEventListener("click", () => (panel.hidden = true));
   wideBtn?.addEventListener("click", () => {

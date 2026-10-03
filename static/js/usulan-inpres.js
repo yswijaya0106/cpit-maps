@@ -724,6 +724,8 @@ async function loadUsulanDetail(id) {
     detailEl.innerHTML = `<div class="adv-error">Gagal memuat detail usulan: ${escapeHtml(String(err))}</div>`;
     return;
   }
+  // Dipakai chat.js untuk contoh prompt dinamis (chatContohDinamis)
+  state.usulanDilihat = { id: u.id, nama: u.nama_ruas || u.nama_kegiatan, provinsi: u.provinsi, kabupaten: u.kabupaten_kota };
 
   const rows = [
     ["Kode Ruas", u.kode_ruas],

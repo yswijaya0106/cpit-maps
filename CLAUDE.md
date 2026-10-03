@@ -927,6 +927,26 @@ scripts/tables/layers out to staging.
   ANGKUTAN PERINTIS) + lokus `bappenas_lokus_a`; **Wilayah Metropolitan tidak
   ada delineasinya** (perlu daftar dari pemilik kerangka). Jarak antarsimpul
   = haversine garis lurus, bukan jarak tempuh.
+  **Tahap A (29 Sep 2026)** adds slide-8 key indicators per kab/kota to the
+  Integrasi Antarmoda sheet (`_indikator_tahap_a`, `KOLOM_TAHAP_A`), plus a
+  new sheet "Indikator Slide 8" that maps all 15 framework indicators to a
+  column or status. They are proxies only: median inter-mode transfer
+  distance, simpul terpadu ≤1 km, population coverage via kecamatan
+  representative points, national-road MST (data for only ±1/3 of length)
+  and IRI kemantapan, perintis points per 100k population. Still no
+  index/weights. The 3T proxy no longer uses LOKPRI RPJMN, because that set
+  also holds kawasan perkotaan/metropolitan and was labelling Surabaya and
+  Bandung "3T".
+  **Gotcha fixed at the same time:** `BATAS KECAMATAN` polygons for all of
+  DKI Jakarta have a null `KODE_KECAMATAN` (the source uses Kemendagri
+  codes), and `road_safety._norm_prov` didn't strip "Daerah Khusus Ibukota",
+  so Jakarta simpul/kecamatan never mapped to a kab. Now
+  `road_safety.kode_kec_dari_nama` gives a name fallback (shared with the
+  Road Safety profile).
+  Next stages: B = WM delineation draft (the RPJMN source names WM Jakarta,
+  Medan, Palembang, Makassar, but its kab/kota column is misaligned, so it
+  needs owner confirmation); C = keterpaduan index (needs weights); D =
+  headway/tarif/O-D (external data).
 - **Riwayat usulan Inpres 2023-2026** (24 Sep 2026, ekspor SITIA di `docs/
   24092026/Jalan/`, kajian `docs/kajian_usulan_inpres_jalan_2023_2026.md`):
   tabel **`usulan_inpres_riwayat`** (kunci `tahun, id`, kolom slim untuk riwayat

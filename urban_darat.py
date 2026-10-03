@@ -8,6 +8,7 @@ Ketersediaan Data + Keterangan:
   Perintis Kab-Kota   per kab/kota (slide 10)
   Integrasi Antarmoda per kab/kota (slide 8-9), TANPA indeks komposit
   Terminal Tipe A     per terminal (slide 6)
+  Indikator Slide 8   pemetaan 15 indikator kunci slide 8 -> kolom/status (Tahap A)
 
 Dipakai endpoint /api/urban-darat/* (app.py, moda Darat). Sel kosong = data
 tidak tersedia, bukan nol. Tidak ada skor/bobot: deck tidak menetapkannya.
@@ -20,13 +21,13 @@ from collections import defaultdict
 import numpy as np
 import pandas as pd
 
-from road_safety import _q, load_wilayah, points_by_kab, write_workbook
+from road_safety import _q, kode_kec_dari_nama, load_wilayah, points_by_kab, write_workbook
 
 _CACHE_TTL_DETIK = 600
 _cache = {"ts": 0.0, "sheets": None}
 
 SHEETS = ["Penyeberangan", "Perintis Kab-Kota", "Integrasi Antarmoda", "Terminal Tipe A",
-          "Ketersediaan Data", "Keterangan"]
+          "Indikator Slide 8", "Ketersediaan Data", "Keterangan"]
 
 # Slide kerangka -> status data (dokumen kajian §1-2), agar celah terlihat langsung di file.
 KETERSEDIAAN = [
@@ -43,6 +44,7 @@ KETERSEDIAAN = [
     (7, "Penyeberangan: kedalaman kolam/alur, batimetri, kerawanan pesisir", "Belum ada", "-"),
     (8, "Integrasi antarmoda: jumlah simpul per moda, tipologi 3T/KSPEAN", "Tersedia", "-> sheet Integrasi Antarmoda (flag 3TP/KSPEAN dari layer Wilayah Prioritas + lokus Bappenas)"),
     (8, "Integrasi antarmoda: delineasi wilayah metropolitan (WM)", "Belum ada", "Perlu daftar kab/kota metropolitan dari pemilik kerangka"),
+    (8, "Integrasi antarmoda: indikator kunci per tipologi (jarak transfer, simpul terpadu, cakupan penduduk, jarak ke simpul, MST, kemantapan, layanan perintis per penduduk)", "Proksi (Tahap A)", "Dihitung dari data yang ada -> sheet Integrasi Antarmoda; pemetaan 15 indikator slide 8 -> sheet Indikator Slide 8"),
     (8, "Integrasi antarmoda: jadwal, headway, tarif/tiket, waktu transfer, O-D, biaya logistik", "Belum ada", "Hanya O-D LRT Jabodebek"),
     (9, "Indeks keterpaduan antarmoda", "Belum dihitung", "Bobot per tipologi tidak ditetapkan di deck; sheet Integrasi Antarmoda hanya memuat variabel penyusunnya"),
     (10, "Perintis: trayek, lintas, rute eksisting; wilayah layanan (3T, KSPN, prioritas)", "Tersedia", "angkutan_perintis (632) + layer rute/titik perintis -> sheet Perintis Kab-Kota"),
@@ -55,10 +57,13 @@ KETERANGAN = [
     "Titik layer (pelabuhan, terminal, stasiun, bandara, titik perintis) dipetakan ke kab/kota lewat spatial join ke poligon BATAS KECAMATAN.",
     "Jarak antarsimpul = garis lurus (haversine), bukan jarak tempuh jalan. Jarak ke jalan nasional dibatasi radius ~55 km (kosong bila lebih jauh).",
     "Terminal Tipe A hanya tercakup di 29 provinsi; di provinsi lain kolom jumlah terminal dikosongkan, bukan 0.",
-    "Tipologi: 3TP dan KSPEAN dari layer 'Wilayah Prioritas' (ANGKUTAN PERINTIS, 96 kab/kota); Lokus PKSN/Perbatasan/LOKPRI dari bappenas_lokus_a. Wilayah Metropolitan belum ada delineasinya.",
-    "'Lokus 3T tanpa titik layanan perintis' = perkiraan: kab/kota berflag 3TP/PKSN/Perbatasan/LOKPRI tanpa satu pun titik layer perintis (jalan, penyeberangan, laut, udara, KSPN, barang).",
+    "Tipologi: 3TP dan KSPEAN dari layer 'Wilayah Prioritas' (ANGKUTAN PERINTIS, 96 kab/kota); Lokus PKSN/Perbatasan dari bappenas_lokus_a (3T = 3TP/PKSN/Perbatasan). LOKPRI RPJMN ditampilkan tetapi TIDAK dipakai sbg penanda 3T karena juga memuat kawasan perkotaan/metropolitan. Wilayah Metropolitan belum ada delineasinya.",
+    "'Lokus 3T tanpa titik layanan perintis' = perkiraan: kab/kota berflag 3TP/PKSN/Perbatasan tanpa satu pun titik layer perintis (jalan, penyeberangan, laut, udara, KSPN, barang).",
     "Kolom 'Kode Status Operasi (sumber)' pada sheet Penyeberangan adalah kode mentah STAT_OPS dari layer sumber (makna kode belum terdokumentasi).",
     "Lintas perintis pada sheet Penyeberangan dicocokkan lewat kemiripan nama pelabuhan dengan nama trayek (perkiraan); angkutan_perintis tidak punya kunci join ke pelabuhan.",
+    "Tahap A (indikator slide 8): jarak transfer = jarak lurus tiap simpul (stasiun, bandara, pelabuhan laut & penyeberangan, terminal A) ke simpul MODA LAIN terdekat, dimedian per kab/kota; 'simpul terpadu' = ada simpul moda lain <=1 km.",
+    "Cakupan penduduk memakai titik representatif kecamatan (bukan grid penduduk): % penduduk kab/kota yang titik kecamatannya <=10 km dari simpul, dan % penduduk di kecamatan yang memiliki simpul. Radius 500 m-1 km pada kerangka tidak bisa dihitung tanpa grid penduduk.",
+    "MST jalan nasional hanya terisi utk +/-1/3 panjang jalan nasional (sisanya 0 = tidak diketahui): persentase MST >= 10 ton dihitung dari panjang yang ber-data, lihat kolom 'Data MST Tersedia'. Kemantapan = total_mantap_km / panjang_sk_km iri_ruas_nasional (survei IRI Juli 2026).",
     "Metropolitan/KSPEAN resmi, terminal tipe B/C, realisasi layanan perintis, LoS/kelembagaan/SUMP, dan data suplai-demand perkotaan belum ada di database (lihat sheet Ketersediaan Data).",
 ]
 
@@ -103,6 +108,141 @@ def _r(v, n=1):
     return None if v is None else round(v, n)
 
 
+# ---------------------------------------------------------------------------
+# Tahap A (29 Sep 2026): indikator keterpaduan slide 8 yang BISA dihitung dari data
+# yang ada, per kab/kota -- tanpa indeks/bobot (deck tidak menetapkannya). Semua jarak
+# garis lurus (haversine); "cakupan penduduk" memakai titik representatif kecamatan
+# (bukan grid penduduk), jadi radius 500 m-1 km WM tidak bisa dihitung -- dipakai 10 km.
+# ---------------------------------------------------------------------------
+RADIUS_SIMPUL_TERPADU_KM = 1.0
+RADIUS_CAKUPAN_KM = 10.0
+KOLOM_TAHAP_A = [  # urutan kolom di sheet Integrasi Antarmoda
+    "Jarak Transfer Median antar Moda (km)",
+    f"Simpul Terpadu <={RADIUS_SIMPUL_TERPADU_KM:g} km (jumlah)", f"Simpul Terpadu <={RADIUS_SIMPUL_TERPADU_KM:g} km (%)",
+    f"Penduduk <={RADIUS_CAKUPAN_KM:g} km dari Simpul (%)", "Penduduk di Kecamatan Bersimpul (%)",
+    "Jarak Median Kecamatan ke Simpul Terdekat (km)",
+    "Jalan Nasional (km)", "Data MST Tersedia (% panjang)", "Jalan Nasional MST >= 10 ton (% panjang ber-data MST)",
+    "Kemantapan Jalan Nasional (IRI, % mantap)",
+]
+
+# Pemetaan indikator slide 8 -> kolom sheet Integrasi Antarmoda / status (sheet "Indikator Slide 8").
+INDIKATOR_SLIDE8 = [
+    ("WM", "Jarak dan waktu transfer antarsimpul", "Proksi",
+     "Jarak Transfer Median antar Moda (km) -- jarak lurus ke simpul moda lain terdekat; waktu transfer belum ada"),
+    ("WM", "Cakupan penduduk dalam radius 500 m-1 km dari simpul", "Proksi",
+     "Penduduk <=10 km dari Simpul (%) & Penduduk di Kecamatan Bersimpul (%) -- grid penduduk tidak ada, radius 500 m-1 km tak bisa dihitung"),
+    ("WM", "Headway, waktu tunggu, dan kesesuaian jadwal antarmoda", "Belum ada", "Jadwal/headway tidak ada di database"),
+    ("WM", "Pangsa angkutan umum dan jumlah perpindahan moda", "Belum ada", "Hanya O-D LRT Jabodebek"),
+    ("WM", "Ketersediaan tiket serta informasi perjalanan terpadu", "Belum ada", "-"),
+    ("KSPEAN", "Waktu dan jarak tempuh sentra produksi ke simpul terdekat", "Proksi",
+     "Jarak Median Kecamatan ke Simpul Terdekat (km) -- titik kecamatan sbg proksi sentra; jarak lurus, bukan jarak tempuh"),
+    ("KSPEAN", "Biaya logistik per ton-km dan jumlah alih muat", "Belum ada", "-"),
+    ("KSPEAN", "Kelas jalan dan daya dukung terhadap MST kendaraan angkut", "Sebagian",
+     "Jalan Nasional MST >= 10 ton (% panjang ber-data MST); data MST hanya ada utk +/-1/3 panjang jalan nasional"),
+    ("KSPEAN", "Volume komoditas terhadap kapasitas simpul", "Belum ada", "Kapasitas simpul & volume komoditas per simpul tidak ada"),
+    ("KSPEAN", "Ketersediaan gudang, cold storage, dan alat bongkar muat", "Belum ada", "-"),
+    ("3T", "Jumlah pulau atau desa yang belum terlayani reguler", "Proksi",
+     "Lokus 3T tanpa Titik Layanan Perintis (perkiraan) -- per kab/kota, belum per desa/pulau"),
+    ("3T", "Frekuensi layanan per minggu dan waktu tunggu transfer", "Belum ada", "Hanya target_trip_2026 penyeberangan perintis (per lintas)"),
+    ("3T", "Waktu tempuh ke ibu kota kabupaten dan fasilitas dasar", "Belum ada", "Titik ibu kota kab & mesin rute belum ada"),
+    ("3T", "Keterisian dan cakupan layanan perintis atau subsidi", "Sebagian",
+     "Titik Layanan Perintis per 100rb Penduduk (cakupan); keterisian tidak ada"),
+    ("3T", "Ketersediaan simpul alih moda di titik naik-turun", "Proksi",
+     "Simpul Terpadu <=1 km (jumlah & %) -- simpul yang punya simpul moda lain dalam 1 km"),
+]
+
+
+def _jarak_matriks(a, b):
+    """Jarak haversine (km) semua pasangan a (n,2) x b (m,2)."""
+    la1, lo1 = np.radians(a[:, 0])[:, None], np.radians(a[:, 1])[:, None]
+    la2, lo2 = np.radians(b[:, 0])[None, :], np.radians(b[:, 1])[None, :]
+    h = np.sin((la2 - la1) / 2) ** 2 + np.cos(la1) * np.cos(la2) * np.sin((lo2 - lo1) / 2) ** 2
+    return 2 * 6371.0088 * np.arcsin(np.sqrt(h))
+
+
+def _indikator_tahap_a(simpul_per_moda, kode_from_text):
+    """simpul_per_moda: {nama_moda: rows points_by_kab}. -> {kode_kab: {kolom: nilai}}."""
+    hasil = defaultdict(dict)
+
+    # 1. transfer antarmoda: tiap simpul -> simpul MODA LAIN terdekat
+    semua = [(m, r) for m, rows in simpul_per_moda.items() for r in rows
+             if r["_lat"] is not None and r["_lon"] is not None]
+    if semua:
+        xy = np.array([[r["_lat"], r["_lon"]] for _, r in semua])
+        moda = np.array([m for m, _ in semua])
+        d_min = np.full(len(semua), np.inf)
+        for i0 in range(0, len(semua), 500):  # per blok, hemat memori
+            d = _jarak_matriks(xy[i0:i0 + 500], xy)
+            d[moda[i0:i0 + 500][:, None] == moda[None, :]] = np.inf  # abaikan moda yang sama
+            d_min[i0:i0 + 500] = d.min(axis=1)
+        per_kab = defaultdict(list)
+        for (_, r), dm in zip(semua, d_min):
+            if r["_kode_kab"] and np.isfinite(dm):
+                per_kab[r["_kode_kab"]].append(dm)
+        for k, ds in per_kab.items():
+            ds = np.array(ds)
+            hasil[k]["Jarak Transfer Median antar Moda (km)"] = _r(float(np.median(ds)))
+            hasil[k][f"Simpul Terpadu <={RADIUS_SIMPUL_TERPADU_KM:g} km (jumlah)"] = int((ds <= RADIUS_SIMPUL_TERPADU_KM).sum())
+            hasil[k][f"Simpul Terpadu <={RADIUS_SIMPUL_TERPADU_KM:g} km (%)"] = _r(100 * float((ds <= RADIUS_SIMPUL_TERPADU_KM).mean()))
+
+    # 2. cakupan penduduk: titik representatif kecamatan -> simpul terdekat (moda apa pun)
+    # KODE_KECAMATAN kosong di sebagian poligon (seluruh DKI Jakarta) -> kode dari nama kab + kecamatan
+    pdd_kec = {str(r["kode_kecamatan"]): r["jumlah_penduduk"] for r in _q(
+        "select kode_kecamatan, jumlah_penduduk from penduduk_kecamatan")}
+    kec = []
+    for r in _q("""select k.attrs->>'KODE_KECAMATAN' as kode, k.attrs->>'PROVINSI' as prov,
+                          k.attrs->>'KABUPATEN_KOTA' as kab, k.attrs->>'KECAMATAN' as nama,
+                          ST_Y(ST_PointOnSurface(k.geom)) as lat, ST_X(ST_PointOnSurface(k.geom)) as lon
+                   from map_layers k where k.provinsi = 'BATAS KECAMATAN'"""):
+        kode = (str(int(float(r["kode"]))) if r["kode"]
+                else kode_kec_dari_nama(kode_from_text(r["prov"], r["kab"]), r["nama"]))
+        if kode and kode in pdd_kec:
+            kec.append({"kode_kec": int(kode), "lat": r["lat"], "lon": r["lon"], "pdd": pdd_kec[kode]})
+    kec_bersimpul = {r["_kode_kec"] for _, r in semua if r.get("_kode_kec")}
+    if kec and semua:
+        kxy = np.array([[r["lat"], r["lon"]] for r in kec])
+        d_kec = np.concatenate([_jarak_matriks(kxy[i0:i0 + 1000], xy).min(axis=1)
+                                for i0 in range(0, len(kec), 1000)])
+        agg = defaultdict(lambda: {"pdd": 0.0, "dekat": 0.0, "bersimpul": 0.0, "jarak": []})
+        for r, dk in zip(kec, d_kec):
+            kk = str(r["kode_kec"] // 1000)
+            pdd = float(r["pdd"] or 0)
+            a = agg[kk]
+            a["pdd"] += pdd
+            a["dekat"] += pdd if dk <= RADIUS_CAKUPAN_KM else 0
+            a["bersimpul"] += pdd if str(r["kode_kec"]) in kec_bersimpul else 0
+            a["jarak"].append(dk)
+        for k, a in agg.items():
+            if a["pdd"] > 0:
+                hasil[k][f"Penduduk <={RADIUS_CAKUPAN_KM:g} km dari Simpul (%)"] = _r(100 * a["dekat"] / a["pdd"])
+                hasil[k]["Penduduk di Kecamatan Bersimpul (%)"] = _r(100 * a["bersimpul"] / a["pdd"])
+            hasil[k]["Jarak Median Kecamatan ke Simpul Terdekat (km)"] = _r(float(np.median(a["jarak"])))
+
+    # 3. jalan nasional per kab (CITY_ID = kode kab BPS): panjang, MST, kemantapan (IRI)
+    for r in _q("""
+        with seg as (
+            select attrs->>'CITY_ID' as kab, attrs->>'LINKID' as linkid,
+                   nullif((attrs->>'MST')::numeric, 0) as mst,
+                   ST_Length(geom::geography) / 1000 as km
+            from map_layers where provinsi = 'JALAN NASIONAL' and layer = 'Jalan Nasional')
+        select s.kab, sum(s.km) as km,
+               sum(s.km) filter (where s.mst is not null) as km_mst,
+               sum(s.km) filter (where s.mst >= 10) as km_mst10,
+               (select sum(i.total_mantap_km) / nullif(sum(i.panjang_sk_km), 0) * 100
+                  from iri_ruas_nasional i where i.linkid = any(array_agg(distinct s.linkid))) as pct_mantap
+        from seg s group by s.kab"""):
+        k = r["kab"]
+        if not k:
+            continue
+        km, km_mst = float(r["km"] or 0), float(r["km_mst"] or 0)
+        hasil[k]["Jalan Nasional (km)"] = _r(km)
+        hasil[k]["Data MST Tersedia (% panjang)"] = _r(100 * km_mst / km) if km else None
+        hasil[k]["Jalan Nasional MST >= 10 ton (% panjang ber-data MST)"] = (
+            _r(100 * float(r["km_mst10"] or 0) / km_mst) if km_mst else None)
+        hasil[k]["Kemantapan Jalan Nasional (IRI, % mantap)"] = _r(float(r["pct_mantap"])) if r["pct_mantap"] is not None else None
+    return hasil
+
+
 def _build():
     master, kode_from_text = load_wilayah()
     pend = dict(zip(master.kode_kab, master.penduduk_2025))
@@ -132,6 +272,9 @@ def _build():
         return c
 
     A_st, A_bd, A_pl, A_pp, A_tm = _arr(stasiun), _arr(bandara), _arr(plaut), _arr(pp), _arr(term)
+    ind_a = _indikator_tahap_a({"Stasiun KA": stasiun, "Bandara": bandara, "Pelabuhan Laut": plaut,
+                                "Pelabuhan Penyeberangan": pp, "Terminal Tipe A": term}, kode_from_text)
+    kolom_ind_a = sorted({c for v in ind_a.values() for c in v}, key=lambda c: KOLOM_TAHAP_A.index(c))
 
     # ---- flag tipologi & lokus per kab
     wilayah_prioritas = {}
@@ -231,7 +374,7 @@ def _build():
         fks = bool(wp and wp.get("KSPEAN"))
         pksn, perb, lokpri = k in lokus["PKSN"], k in lokus["PERBATASAN"], k in lokus["LOKPRI_RPJMN"]
         total_per = sum(c_per[n].get(k, 0) for n in c_per)
-        lokus3t = f3tp or pksn or perb or lokpri
+        lokus3t = f3tp or pksn or perb  # LOKPRI tidak dipakai: memuat kawasan perkotaan/metropolitan
         fs = fiskal.get(k)
         penduduk = int(m.penduduk_2025) or None
 
@@ -261,7 +404,7 @@ def _build():
         moda = {"Terminal Tipe A": (c_tm.get(k, 0) if k[:2] in cov_term else None),
                 "Stasiun KA": c_st.get(k, 0), "Pelabuhan Laut": c_pl.get(k, 0),
                 "Pelabuhan Penyeberangan": c_pp.get(k, 0), "Bandara": c_bd.get(k, 0)}
-        tipologi = [t for t, on in (("3T", f3tp or pksn or perb or lokpri), ("KSPEAN", fks)) if on]
+        tipologi = [t for t, on in (("3T", lokus3t), ("KSPEAN", fks)) if on]
         row_int = dict(base)
         row_int.update({
             "Tipologi Wilayah (proksi)": ", ".join(tipologi) or "Belum terklasifikasi (WM belum ada delineasi)",
@@ -272,6 +415,9 @@ def _build():
             "Jumlah Jenis Simpul Tersedia (dari 5)": sum(1 for v in moda.values() if v),
             "Total Titik Layanan Perintis": total_per,
             "Lokus 3T tanpa Titik Layanan Perintis (perkiraan)": row_per["Lokus 3T tanpa Titik Layanan Perintis (perkiraan)"],
+            # Tahap A -- indikator slide 8 (proksi; lihat sheet "Indikator Slide 8")
+            "Titik Layanan Perintis per 100rb Penduduk": _r(100000 * total_per / penduduk, 2) if penduduk else None,
+            **{c: ind_a.get(k, {}).get(c) for c in kolom_ind_a},
         })
         rows_int.append(row_int)
 
@@ -281,6 +427,8 @@ def _build():
         "Perintis Kab-Kota": pd.DataFrame(rows_per),
         "Integrasi Antarmoda": pd.DataFrame(rows_int),
         "Terminal Tipe A": sh_tm,
+        "Indikator Slide 8": pd.DataFrame(INDIKATOR_SLIDE8, columns=["Tipologi", "Indikator Kunci (slide 8)", "Status",
+                                                                     "Kolom di Sheet Integrasi Antarmoda / Keterangan"]),
         "Ketersediaan Data": sh_ket,
         "Keterangan": pd.DataFrame({"Keterangan": KETERANGAN}),
     }

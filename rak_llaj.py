@@ -28,11 +28,11 @@ Keputusan metode (disetujui user 30 Sep 2026, ditandai "ilustratif" sesuai slide
 """
 import io
 import re
-import time
 
 import pandas as pd
 
 from db import db_cursor
+from shared_cache import SharedCache
 import road_safety
 
 SHEETS = ["Skor Provinsi", "Data Kecelakaan POLDA", "Validasi Data", "Keterangan"]
@@ -76,7 +76,7 @@ KETERANGAN = [
 ]
 
 _CACHE_TTL_DETIK = 600
-_cache = {"ts": 0.0, "sheets": None}
+_cache = SharedCache("rak_llaj", _CACHE_TTL_DETIK)  # lihat shared_cache.py
 
 
 def _norm_prov(s):
@@ -324,10 +324,7 @@ def validasi_df(polda_map):
 
 
 def get_sheets(polda_map):
-    if _cache["sheets"] is None or time.time() - _cache["ts"] > _CACHE_TTL_DETIK:
-        _cache["sheets"] = _build(polda_map)
-        _cache["ts"] = time.time()
-    return _cache["sheets"]
+    return _cache.get("sheets", lambda: _build(polda_map))
 
 
 def filter_sheets(sheets, provinsi="", q=""):

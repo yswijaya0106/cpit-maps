@@ -55,6 +55,7 @@ import wilayah_pulau  # noqa: E402
 import road_safety  # noqa: E402
 import urban_darat  # noqa: E402
 import rak_llaj  # noqa: E402
+from shared_cache import SharedCache, kunci_startup, lepas_kunci_startup  # noqa: E402
 import map_print  # noqa: E402
 # _llm_plain/_plain_* (penilaian Bappenas AI) masih tinggal di app.py dan
 # butuh konstanta model/URL yang ikut pindah ke chat_providers saat refactor
@@ -94,32 +95,38 @@ async def _warm_ijd_bulk_cache_nasional():
     request pertama yang KEBETULAN nyerempet sebelum warm-up selesai tetap
     akan menunggu wajar (bukan bug, cuma race biasa antara warm-up & user).
     Kegagalan (mis. DB belum siap) sengaja diredam -- ini optimasi cache,
-    bukan bagian kritis start-up, tidak boleh bikin server gagal nyala."""
+    bukan bagian kritis start-up, tidak boleh bikin server gagal nyala.
+
+    3 Okt 2026: SEMUA warm-up startup (skor IJD nasional, profil Road Safety &
+    Urban-Darat, cache disk layer peta, geometri peta Program IJD) kini jalan
+    BERURUTAN di SATU thread dan hanya di SATU worker (kunci_startup). Dulu tiap
+    worker menjalankan 5 hitungan berat paralel -> ~9 hitungan sekaligus di
+    staging 2 core, load ~9 selama ~6 menit, aplikasi terasa macet tiap restart.
+    Hasilnya disimpan lewat shared_cache.SharedCache (disk), jadi worker lain
+    cukup memuat file, tidak menghitung ulang."""
     loop = asyncio.get_event_loop()
 
-    def _warm():
+    def _warm_semua():
+        if not kunci_startup():
+            return  # worker lain sudah/sedang menjalankan warm-up
         try:
-            _ijd_score_bulk_rows([], 2026)
-        except Exception as e:
-            print(f"  [warm-cache] gagal pra-hitung skor IJD nasional: {e}")
+            for nama, fn in (
+                ("skor IJD nasional", lambda: _ijd_score_bulk_rows([], 2026)),
+                ("profil road safety", road_safety.get_sheets),
+                ("profil urban & darat", urban_darat.get_sheets),
+                ("layer peta populer", _warm_map_layer_cache),
+                ("geometri peta Program IJD", _warm_program_geom),
+            ):
+                mulai = time.time()
+                try:
+                    fn()
+                    print(f"  [warm-cache] {nama}: {time.time() - mulai:.0f} dtk")
+                except Exception as e:  # noqa: BLE001
+                    print(f"  [warm-cache] gagal pra-hitung {nama}: {e}")
+        finally:
+            lepas_kunci_startup()
 
-    def _warm_road_safety():
-        # Profil Road Safety (moda Darat): spatial join titik->kecamatan ~20 detik
-        # pada panggilan pertama, lalu di-cache 10 menit di road_safety.py.
-        try:
-            road_safety.get_sheets()
-        except Exception as e:
-            print(f"  [warm-cache] gagal pra-hitung profil road safety: {e}")
-
-    def _warm_urban_darat():
-        try:
-            urban_darat.get_sheets()
-        except Exception as e:
-            print(f"  [warm-cache] gagal pra-hitung profil urban & darat: {e}")
-
-    loop.run_in_executor(None, _warm)
-    loop.run_in_executor(None, _warm_road_safety)
-    loop.run_in_executor(None, _warm_urban_darat)
+    loop.run_in_executor(None, _warm_semua)
 
 
 # APP_USERNAME/APP_PASSWORD (.env) TIDAK LAGI dipakai sbg kredensial aktif --
@@ -3073,8 +3080,15 @@ def _outlier_produksi_keterangan(produksi: dict) -> str:
 # navigasi berulang ke halaman preview/export dalam sesi kerja yang sama
 # tetap kena cache (biaya bulk nasional masih puluhan detik, lihat docstring
 # _ijd_score_bulk_rows).
+#
+# 3 Okt 2026: dipindah ke shared_cache.SharedCache -- hasil dibagi antar worker
+# lewat disk (staging 2 worker dulu menghitung masing-masing), dan lewat TTL nilai
+# lama tetap tersaji sambil dihitung ulang di background, jadi user tidak menunggu
+# hitung ulang bulk nasional. .clear() tetap dipanggil di titik yang sama dan kini
+# berlaku utk SEMUA worker (penanda generasi di disk); setelah clear, permintaan
+# berikutnya menunggu hitungan baru (tidak menyajikan nilai lama).
 _IJD_BULK_CACHE_TTL_DETIK = 600
-_ijd_bulk_cache: dict = {}
+_ijd_bulk_cache = SharedCache("ijd_bulk", _IJD_BULK_CACHE_TTL_DETIK)
 
 
 def _normalisasi_provinsi_multi(provinsi) -> tuple:
@@ -3159,6 +3173,13 @@ def _program_ijd_info(rows) -> dict:
 
 
 def _ijd_score_bulk_rows(provinsi, tahun: int):
+    """Hasil _ijd_score_bulk_rows_hitung lewat _ijd_bulk_cache (dibagi antar
+    worker, basi-sambil-diperbarui) -- semua pemanggil memakai fungsi ini."""
+    provinsi = _normalisasi_provinsi_multi(provinsi)
+    return _ijd_bulk_cache.get((provinsi, tahun), lambda: _ijd_score_bulk_rows_hitung(provinsi, tahun))
+
+
+def _ijd_score_bulk_rows_hitung(provinsi: tuple, tahun: int):
     """Skoring IJD massal (opsional difilter per provinsi, BISA lebih dari
     satu -- provinsi: tuple/list nama provinsi, tuple/list kosong = nasional,
     lihat _normalisasi_provinsi_multi): identitas usulan + penilaian
@@ -3173,16 +3194,9 @@ def _ijd_score_bulk_rows(provinsi, tahun: int):
     wilayah_mapping) lalu dioper lewat `ctx` supaya scorer tidak query per baris.
 
     Return (header_row_full, header_row_short, data_rows) — data_rows berupa
-    list of list, urutan kolom SAMA dgn header_row_*.
+    list of list, urutan kolom SAMA dgn header_row_*. provinsi sudah
+    dinormalisasi (_normalisasi_provinsi_multi) oleh _ijd_score_bulk_rows.
     """
-    provinsi = _normalisasi_provinsi_multi(provinsi)
-    key = (provinsi, tahun)
-    cached = _ijd_bulk_cache.get(key)
-    if cached is not None:
-        result, dibuat_pada = cached
-        if time.time() - dibuat_pada < _IJD_BULK_CACHE_TTL_DETIK:
-            return result
-
     with db_cursor() as cur:
         if provinsi:
             cur.execute("SELECT * FROM usulan_inpres WHERE provinsi = ANY(%s)", (list(provinsi),))
@@ -3635,9 +3649,7 @@ def _ijd_score_bulk_rows(provinsi, tahun: int):
                      *program_info[row["id"]]]
         data_rows.append(data_row)
 
-    result = (header_row, header_row_short, data_rows)
-    _ijd_bulk_cache[key] = (result, time.time())
-    return result
+    return (header_row, header_row_short, data_rows)
 
 
 @app.get("/api/usulan-inpres/ijd-score/preview")
@@ -7959,29 +7971,15 @@ def _map_layer_payload(provinsi: str, kabupaten: str, layer: str):
     return etag, gz
 
 
-@app.on_event("startup")
-async def _warm_map_layer_cache():
-    """Bangun cache disk layer populer di thread terpisah begitu server nyala (pertama kali
-    Jalan Nasional ~7 dtk). Berkas kunci mencegah dua worker menghitung bersamaan."""
-    loop = asyncio.get_event_loop()
-
-    def _warm():
-        kunci = _MAP_LAYER_CACHE_DIR / ".warm.lock"
+def _warm_map_layer_cache():
+    """Bangun cache disk layer populer (pertama kali Jalan Nasional ~7 dtk). Dipanggil
+    berurutan oleh warm-up startup tunggal (_warm_ijd_bulk_cache_nasional), yang sudah
+    memastikan hanya satu worker menjalankannya."""
+    for prov, kab, lay in _MAP_LAYER_WARM:
         try:
-            _MAP_LAYER_CACHE_DIR.mkdir(parents=True, exist_ok=True)
-            if kunci.exists() and time.time() - kunci.stat().st_mtime < 600:
-                return
-            kunci.write_text(str(os.getpid()))
-            for prov, kab, lay in _MAP_LAYER_WARM:
-                try:
-                    _map_layer_payload(prov, kab, lay)
-                except Exception as e:
-                    print(f"  [warm-cache] layer {lay}: {e}")
-            kunci.unlink(missing_ok=True)
-        except Exception as e:
-            print(f"  [warm-cache] gagal: {e}")
-
-    loop.run_in_executor(None, _warm)
+            _map_layer_payload(prov, kab, lay)
+        except Exception as e:  # noqa: BLE001
+            print(f"  [warm-cache] layer {lay}: {e}")
 
 
 @app.get("/api/maps/layer")
@@ -8685,7 +8683,7 @@ _PROGRAM_PULAU = (
 )
 _PROGRAM_PULAU_BY_PROV = {k: (p, w) for p, w, ks in _PROGRAM_PULAU for k in ks}
 _PROGRAM_FISKAL_URUT = ("Sangat Tinggi", "Tinggi", "Sedang", "Rendah", "Sangat Rendah")
-_program_geom_cache: dict = {}
+_program_geom_cache = SharedCache("program_geom", 7 * 24 * 3600)
 
 
 def _program_ijd_cek_tabel(cur):
@@ -8740,11 +8738,20 @@ def _program_geom(cur, level: str, kode_provinsi: Optional[int]):
     """Poligon batas (map_layers BATAS PROVINSI / BATAS KABUPATEN) yg sudah
     disederhanakan utk choropleth: pulau sangat kecil dibuang (poligon terbesar
     tiap wilayah tetap dipertahankan supaya kab kepulauan kecil tidak hilang).
-    Aslinya ~940 ribu titik utk provinsi -> ~0,8 MB. Cache in-process (geometri
-    batas tidak berubah selama server jalan)."""
-    kunci = (level, kode_provinsi)
-    if kunci in _program_geom_cache:
-        return _program_geom_cache[kunci]
+    Aslinya ~940 ribu titik utk provinsi -> ~0,8 MB. Cache dibagi antar worker
+    lewat disk (shared_cache, TTL 7 hari -- geometri batas jarang berubah; impor
+    ulang BATAS_ADMINISTRASI terlihat paling lambat 7 hari, atau hapus
+    .cache/shared/program_geom). `cur` tidak dipakai: hitungan membuka koneksi
+    sendiri supaya refresh background tidak memakai cursor yg sudah ditutup."""
+    return _program_geom_cache.get((level, kode_provinsi), lambda: _program_geom_hitung(level, kode_provinsi))
+
+
+def _program_geom_hitung(level: str, kode_provinsi: Optional[int]):
+    with db_cursor() as cur:
+        return _program_geom_query(cur, level, kode_provinsi)
+
+
+def _program_geom_query(cur, level: str, kode_provinsi: Optional[int]):
     if level == "provinsi":
         filt, params, tol, min_area = "l.provinsi = 'BATAS PROVINSI'", [], 0.01, 0.001
         cur.execute("SELECT kode_provinsi AS k, nama_provinsi AS n FROM ref_wilayah_provinsi")
@@ -8787,7 +8794,6 @@ def _program_geom(cur, level: str, kode_provinsi: Optional[int]):
         # menyisipkannya apa adanya ke respons. jsonable_encoder + json.dumps atas
         # ~70 ribu pasangan koordinat makan ~4 dtk per request di staging (2 core).
         fitur.append({"kode": int(kode), "nama": nama, "geometry_json": r["gj"]})
-    _program_geom_cache[kunci] = fitur
     return fitur
 
 
@@ -8880,17 +8886,10 @@ def program_ijd_peta(level: str = "provinsi", kode_provinsi: Optional[int] = Non
     return Response(content=body.encode("utf-8"), media_type="application/json")
 
 
-@app.on_event("startup")
-async def _warm_program_geom():
-    """Geometri choropleth provinsi (~11 dtk menyederhanakan ~940 ribu titik) di
-    thread terpisah, supaya klik pertama peta Riwayat Program IJD tidak menunggu."""
-    def _warm():
-        try:
-            with db_cursor() as cur:
-                _program_geom(cur, "provinsi", None)
-        except Exception as e:  # noqa: BLE001 -- bukan bagian kritis start-up
-            print(f"[warm program geom] dilewati: {e}")
-    asyncio.get_event_loop().run_in_executor(None, _warm)
+def _warm_program_geom():
+    """Geometri choropleth provinsi (~11 dtk lokal, ~25 dtk staging) -- dipanggil
+    warm-up startup tunggal supaya klik pertama peta Riwayat Program IJD tidak menunggu."""
+    _program_geom(None, "provinsi", None)
 
 
 @app.get("/api/program-ijd/kegiatan")

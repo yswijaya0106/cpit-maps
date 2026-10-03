@@ -15,16 +15,16 @@ tidak tersedia, bukan nol. Tidak ada skor/bobot: deck tidak menetapkannya.
 """
 import io
 import re
-import time
 from collections import defaultdict
 
 import numpy as np
 import pandas as pd
 
+from shared_cache import SharedCache
 from road_safety import _q, kode_kec_dari_nama, load_wilayah, points_by_kab, write_workbook
 
 _CACHE_TTL_DETIK = 600
-_cache = {"ts": 0.0, "sheets": None}
+_cache = SharedCache("urban_darat", _CACHE_TTL_DETIK)  # lihat shared_cache.py
 
 SHEETS = ["Penyeberangan", "Perintis Kab-Kota", "Integrasi Antarmoda", "Terminal Tipe A",
           "Indikator Slide 8", "Ketersediaan Data", "Keterangan"]
@@ -435,11 +435,9 @@ def _build():
 
 
 def get_sheets():
-    """Cache in-process 10 menit (spatial join titik->kecamatan + jarak jalan terdekat)."""
-    if _cache["sheets"] is None or time.time() - _cache["ts"] > _CACHE_TTL_DETIK:
-        _cache["sheets"] = _build()
-        _cache["ts"] = time.time()
-    return _cache["sheets"]
+    """Cache 10 menit dibagi antar worker, basi-sambil-diperbarui (shared_cache.py):
+    spatial join titik->kecamatan + jarak jalan terdekat."""
+    return _cache.get("sheets", _build)
 
 
 def _filter_df(df, provinsi, q):

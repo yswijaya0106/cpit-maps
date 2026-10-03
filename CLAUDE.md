@@ -1554,6 +1554,32 @@ for road/transport-node connectivity validation.
 
 ## Conventions / gotchas
 
+- **Heavy caches are shared across workers (3 Oct 2026,
+  [shared_cache.py](shared_cache.py)).** Staging runs 2 uvicorn workers. Before
+  this, each worker computed its own in-process caches, and on every restart
+  both ran 5 warm-ups in parallel. That meant ~9 heavy jobs on 2 cores, load
+  ~9 for ~6 min, and the app felt frozen (one Road Safety request took 436 s).
+  `SharedCache(nama, ttl)` now backs `_ijd_bulk_cache`, `_program_geom_cache`
+  and the `get_sheets()` caches in road_safety, urban_darat and rak_llaj:
+  - **Shared via disk.** Results are pickled to `.cache/shared/<nama>/`, so
+    other workers load the file instead of recomputing. A per-key lock file
+    stops two workers computing the same key at once.
+  - **Stale-while-revalidate.** Past the TTL, the old value is still served
+    while one background thread recomputes it, so users never wait for a
+    recompute. Served data can be up to TTL + compute time old.
+  - **`clear()` is cross-process.** It writes a generation marker that every
+    worker honours, so the existing invalidation calls (import endpoints, AI
+    narrative) still work across workers. After a clear, the next request
+    waits for a fresh compute instead of getting the stale value.
+  - **Startup warm-up runs in one worker only.** `_warm_ijd_bulk_cache_nasional`
+    runs all warm-ups (IJD bulk, Road Safety, Urban & Darat, map layers,
+    Program IJD geometry) sequentially, in one thread, in one worker, guarded
+    by `kunci_startup()`.
+  - **Rules for new caches.** Values must be picklable. Background refreshes
+    must not use a request's DB cursor; open your own `db_cursor()` (see
+    `_program_geom_hitung`).
+  - **Forcing a recompute** from the shell: delete `.cache/shared/<nama>/`.
+  - Still per-worker: the IJD dashboard's NPR cache (~3–4 s once per worker).
 - Coordinate order and the no-test-suite verification approach are common
   trip-ups — see `docs/ARCHITECTURE.md` (§"Coordinate order",
   §"Verification without a test suite") rather than re-deriving them.

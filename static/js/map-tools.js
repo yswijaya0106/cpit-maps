@@ -753,11 +753,12 @@ function updateMapLegend() {
       + (meta && rawCounts[raw] > 1 ? ` — ${meta.kabupaten || meta.provinsi}` : "");
     const row = document.createElement("div");
     row.className = "map-legend-item";
-    // layer titik: ikon jenis (pesawat/jangkar/...) sama dgn di peta, bukan kotak warna
-    const ikonTitik = pointLegendIconHtml(key, raw === STASIUN_LAYER_NAME ? STASIUN_STATUS_DEFAULT_COLOR
+    // simbol sesuai geometri: titik = ikon jenis (pesawat/jangkar/...) sama dgn di peta,
+    // garis = garis patah, poligon = kotak berisi
+    const simbol = layerLegendSymbolHtml(key, raw === STASIUN_LAYER_NAME ? STASIUN_STATUS_DEFAULT_COLOR
       : raw === "KAPLIN STASIUN" ? "#1f2937" : mapLayerColor(raw));
     row.innerHTML = `
-      ${ikonTitik || `<span class="maplayer-swatch" style="background:${mapLayerColor(raw)}"></span>`}
+      ${simbol || `<span class="maplayer-swatch" style="background:${mapLayerColor(raw)}"></span>`}
       <span class="map-legend-item-label">${escapeHtml(label)}</span>
       <button type="button" class="map-legend-item-remove" data-key="${escapeHtml(key)}" title="Matikan layer ini"><i class="bi bi-x-lg"></i></button>
     `;

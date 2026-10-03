@@ -770,11 +770,13 @@ const PERLINTASAN_BTP_LEGEND = [
 const arusFilter = { pulau: "", provinsi: "", arah: "keduanya", antarPulau: false };
 
 /* ---------- Ikon titik per jenis (bandara = pesawat, pelabuhan = jangkar, dst.) ----------
-   Titik digambar sbg lingkaran berwarna + glyph putih. Warna lingkaran tetap
-   warna layer / _warna / warna status (Stasiun KA, Perlintasan BTP), jadi
-   legenda warna yang sudah ada tetap berlaku; glyph menunjukkan JENIS titik.
-   Path glyph: Material Design Icons (viewBox 24x24). */
+   Titik digambar sbg glyph berwarna (tanpa lingkaran latar) dgn halo putih
+   supaya tetap terbaca di atas basemap. Warnanya = warna layer / _warna /
+   warna status (Stasiun KA, Perlintasan BTP), jadi legenda warna yang sudah
+   ada tetap berlaku; bentuk glyph menunjukkan JENIS titik.
+   Path glyph: Material Design Icons (viewBox 24x24), kecuali kapalPenumpang. */
 const POINT_GLYPHS = {
+  kapalPenumpang: "M10 3h2.6v3.6H10zM13.4 4.2H16v2.4h-2.6zM7.5 7.4h9.5v3H7.5zM4.5 11.2h15v3h-15zM2 15h20l-3.2 6H5.2z",
   pesawat: "M21 16v-2l-8-5V3.5c0-.83-.67-1.5-1.5-1.5S10 2.67 10 3.5V9l-8 5v2l8-2.5V19l-2 1.5V22l3.5-1 3.5 1v-1.5L13 19v-5.5l8 2.5z",
   jangkar: "M12 2a3 3 0 0 0-3 3c0 1.27.8 2.4 2 2.83V10H8v2h3v6.92c-1.84-.29-3.47-1.35-4.47-2.92H8v-2H3v5h2v-1.7C6.58 19.61 9.18 21 12 21s5.42-1.39 7-3.7V19h2v-5h-5v2h1.47c-1 1.57-2.63 2.63-4.47 2.92V12h3v-2h-3V7.82C14.2 7.4 15 6.27 15 5a3 3 0 0 0-3-3zm0 2a1 1 0 1 1 0 2 1 1 0 0 1 0-2z",
   kapal: "M20 21c-1.39 0-2.78-.47-4-1.32-2.44 1.71-5.56 1.71-8 0C6.78 20.53 5.39 21 4 21H2v2h2c1.38 0 2.74-.35 4-.99 2.52 1.29 5.48 1.29 8 0 1.26.65 2.62.99 4 .99h2v-2h-2zM3.95 19H4c1.6 0 3.02-.88 4-2 .98 1.12 2.4 2 4 2s3.02-.88 4-2c.98 1.12 2.4 2 4 2h.05l1.89-6.68c.08-.26.06-.54-.06-.78s-.34-.42-.6-.5L20 10.62V6c0-1.1-.9-2-2-2h-3V1H9v3H6c-1.1 0-2 .9-2 2v4.62l-1.29.42c-.26.08-.48.26-.6.5s-.15.52-.06.78L3.95 19zM6 6h12v3.97L12 8 6 9.97V6z",
@@ -807,7 +809,9 @@ const POINT_GLYPH_RULES = [
   [/PENYEBERANGAN|PENYEBRANGAN|::PP$/, "kapal"],
   [/ANGKUTAN.*LAUT/, "kapal"],
   [/BANDARA|UDARA|MASKAPAI/, "pesawat"],
-  [/PELABUHAN|TERSUS/, "jangkar"],
+  [/TERSUS|TUKS/, "gudang"],
+  [/PELABUHAN PENUMPANG|ANGKUTAN PENUMPANG LAUT/, "kapalPenumpang"],
+  [/PELABUHAN/, "jangkar"],
   [/TERMINAL/, "bus"],
   [/ANGKUTAN DARAT BARANG/, "truk"],
   [/KSPN/, "bintang"],
@@ -837,9 +841,11 @@ const _pointIconUrlCache = {};
 function pointIconUrl(glyph, color, opacity = 1) {
   const ck = `${glyph}|${color}|${opacity}`;
   if (!_pointIconUrlCache[ck]) {
-    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" opacity="${opacity}">`
-      + `<circle cx="12" cy="12" r="11" fill="${color}" stroke="#ffffff" stroke-width="1.5"/>`
-      + `<path d="${POINT_GLYPHS[glyph] || POINT_GLYPHS.titik}" fill="#ffffff" fill-rule="evenodd" transform="translate(5.4 5.4) scale(0.55)"/>`
+    const d = POINT_GLYPHS[glyph] || POINT_GLYPHS.titik;
+    // path pertama = halo putih (stroke tebal), path kedua = glyph berwarna di atasnya
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="26" height="26" viewBox="-1 -1 26 26" opacity="${opacity}">`
+      + `<path d="${d}" fill="#ffffff" stroke="#ffffff" stroke-width="3" stroke-linejoin="round"/>`
+      + `<path d="${d}" fill="${color}" fill-rule="evenodd"/>`
       + `</svg>`;
     _pointIconUrlCache[ck] = "data:image/svg+xml;charset=UTF-8," + encodeURIComponent(svg);
   }
@@ -847,7 +853,7 @@ function pointIconUrl(glyph, color, opacity = 1) {
 }
 
 // fillColor/scale ikut disimpan supaya print-map.js (yang membaca icon.fillColor/scale) tetap dapat warnanya.
-function pointIcon(glyph, color, opacity, size = 22) {
+function pointIcon(glyph, color, opacity, size = 24) {
   return {
     url: pointIconUrl(glyph, color, opacity),
     scaledSize: new google.maps.Size(size, size),
@@ -857,13 +863,20 @@ function pointIcon(glyph, color, opacity, size = 22) {
   };
 }
 
-// <img> ikon utk legenda (null kalau layer bukan layer titik)
-function pointLegendIconHtml(key, color, size = 16) {
+// Simbol legenda per jenis geometri layer: titik = ikon jenisnya, garis = garis
+// patah, poligon = kotak berisi + tepi. null kalau layer belum punya fitur.
+function layerLegendSymbolHtml(key, color, size = 18) {
   const data = state.mapLayers.active[key];
-  let isPoint = false;
-  if (data) data.forEach((f) => { if (!isPoint) isPoint = /Point/.test(f.getGeometry()?.getType() || ""); });
-  if (!isPoint) return null;
-  return `<img src="${pointIconUrl(pointGlyphFor(key), color)}" width="${size}" height="${size}" alt="" style="flex:none;vertical-align:middle">`;
+  let type = "";
+  if (data) data.forEach((f) => { if (!type) type = f.getGeometry()?.getType() || ""; });
+  if (!type) return null;
+  const img = (src) => `<img src="${src}" width="${size}" height="${size}" alt="" style="flex:none;vertical-align:middle">`;
+  if (/Point/.test(type)) return img(pointIconUrl(pointGlyphFor(key), color));
+  const svg = /Polygon/.test(type)
+    ? `<rect x="3" y="3" width="18" height="18" rx="2" fill="${color}" fill-opacity="0.45" stroke="${color}" stroke-width="2"/>`
+    : `<polyline points="2,19 8,9 14,15 22,4" fill="none" stroke="${color}" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/>`;
+  return img("data:image/svg+xml;charset=UTF-8," + encodeURIComponent(
+    `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24">${svg}</svg>`));
 }
 
 function arusFeatureVisible(f) {

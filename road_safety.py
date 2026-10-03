@@ -11,15 +11,16 @@ Sel kosong = data tidak tersedia, bukan nol.
 import io
 import math
 import re
-import time
 from collections import defaultdict
 
 import pandas as pd
 
 from db import db_cursor
+from shared_cache import SharedCache
 
 _CACHE_TTL_DETIK = 600  # sama dgn _IJD_BULK_CACHE_TTL_DETIK: perubahan data via CLI ikut terlihat
-_cache = {"ts": 0.0, "sheets": None}
+# Cache dibagi antar worker + disajikan basi sambil diperbarui (shared_cache.py)
+_cache = SharedCache("road_safety", _CACHE_TTL_DETIK)
 
 _ALIAS_KAB = {  # ejaan sumber -> ejaan master BPS
     "PARE PARE": "PAREPARE", "TOLITOLI": "TOLI TOLI",
@@ -364,12 +365,10 @@ def _build():
 
 
 def get_sheets():
-    """Hasil _build() di-cache in-process (TTL 10 menit): spatial join titik->kecamatan
-    memakan beberapa detik, tidak layak diulang tiap halaman preview."""
-    if _cache["sheets"] is None or time.time() - _cache["ts"] > _CACHE_TTL_DETIK:
-        _cache["sheets"] = _build()
-        _cache["ts"] = time.time()
-    return _cache["sheets"]
+    """Hasil _build() di-cache (TTL 10 menit, dibagi antar worker lewat disk; lewat
+    TTL nilai lama tetap tersaji sambil dihitung ulang di background): spatial join
+    titik->kecamatan memakan puluhan detik, tidak layak diulang tiap halaman preview."""
+    return _cache.get("sheets", _build)
 
 
 def filter_sheets(sheets, provinsi="", q=""):

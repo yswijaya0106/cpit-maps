@@ -112,6 +112,7 @@ function printLegendSubitems(key, raw, meta, jenis) {
   if (raw === "KAPLIN PETAK JALAN") items = KAPLIN_UTILISASI_LEGEND;
   else if (raw === "KAPLIN KORIDOR UTAMA") items = KAPLIN_KORIDOR_LEGEND;
   else if (meta && meta.provinsi === KLASTER_BUCKET) items = KLASTER_LEGEND;
+  else if (raw === PERLINTASAN_BTP_LAYER) return PERLINTASAN_BTP_LEGEND.map(([warna, teks]) => ({ warna, teks, jenis: "titik" }));
   else if (typeof RTRW_PAPSEL_LEGEND !== "undefined" && RTRW_PAPSEL_LEGEND[raw]) items = RTRW_PAPSEL_LEGEND[raw];
   if (items) return items.map(([warna, teks]) => ({ warna, teks, jenis }));
   if (raw === STASIUN_LAYER_NAME) {

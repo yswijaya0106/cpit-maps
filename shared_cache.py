@@ -29,6 +29,22 @@ from pathlib import Path
 
 CACHE_ROOT = Path(__file__).resolve().parent / ".cache" / "shared"
 _KUNCI_BASI_DETIK = 15 * 60  # kunci lebih tua dari ini dianggap sisa proses yang mati
+_VERSI_LAMA_HAPUS_DETIK = 3600  # file cache versi kode lain dibuang setelah setua ini
+
+
+def _versi_kode() -> str:
+    """Sidik jari kode: hash semua *.py di root repo. Masuk ke nama file cache, jadi
+    deploy yg mengubah kode TIDAK menyajikan pickle dari kode lama (struktur hasil
+    bisa berubah, mis. kolom export skor IJD bertambah -> kode baru bisa error
+    membaca hasil lama). Restart tanpa perubahan kode tetap memakai cache disk."""
+    h = hashlib.sha1()
+    for p in sorted(Path(__file__).resolve().parent.glob("*.py")):
+        h.update(p.name.encode())
+        h.update(p.read_bytes())
+    return h.hexdigest()[:10]
+
+
+VERSI_KODE = _versi_kode()
 
 
 def _ambil_kunci(path: Path) -> bool:
@@ -62,7 +78,7 @@ class SharedCache:
 
     # -- utilitas -----------------------------------------------------------
     def _hash(self, key) -> str:
-        return hashlib.sha1(repr(key).encode("utf-8")).hexdigest()[:20]
+        return f"{VERSI_KODE}-" + hashlib.sha1(repr(key).encode("utf-8")).hexdigest()[:20]
 
     def _gen_ts(self) -> float:
         try:
@@ -91,6 +107,14 @@ class SharedCache:
         ts = (self.dir / f"{h}.pkl").stat().st_mtime
         with self._lock:
             self._mem[h] = (ts, nilai)
+        # buang file milik versi kode lain yg sudah lama (proses lama mungkin masih
+        # hidup sebentar saat deploy, jadi beri jeda 1 jam)
+        for p in self.dir.glob("*.pkl"):
+            try:
+                if not p.name.startswith(f"{VERSI_KODE}-") and ts - p.stat().st_mtime > _VERSI_LAMA_HAPUS_DETIK:
+                    p.unlink(missing_ok=True)
+            except OSError:
+                pass
 
     def _hitung_dgn_kunci(self, h: str, compute, pakai_disk_gen=None):
         """Hitung + simpan, memegang kunci lintas worker. None bila kunci dipegang

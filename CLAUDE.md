@@ -1579,6 +1579,11 @@ for road/transport-node connectivity validation.
     must not use a request's DB cursor; open your own `db_cursor()` (see
     `_program_geom_hitung`).
   - **Forcing a recompute** from the shell: delete `.cache/shared/<nama>/`.
+  - **File names start with `VERSI_KODE`**, a hash of every root `*.py`. A
+    deploy that changes code computes fresh results instead of serving
+    pickles whose structure may have changed. A restart with the same code
+    reuses the disk cache, so warm-up finishes in about 0 s. Files from other
+    code versions are deleted an hour after a newer write.
   - Still per-worker: the IJD dashboard's NPR cache (~3–4 s once per worker).
 - Coordinate order and the no-test-suite verification approach are common
   trip-ups — see `docs/ARCHITECTURE.md` (§"Coordinate order",

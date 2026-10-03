@@ -903,9 +903,42 @@ function pointGlyphForFeature(layerGlyph, feature) {
   return hit ? hit[1] : layerGlyph;
 }
 
+/* Bandara: lencana bulat bergradasi + pesawat putih miring (lebih menonjol dari
+   glyph polos). Warna per sumber layer supaya layer bandara yang aktif bersamaan
+   tetap terbedakan: Kemenhub = biru, RBI/Simpul Transportasi = abu, lainnya
+   (Titik Udara perintis, Maskapai, bandar udara RTRW) = ungu tua. */
+const BANDARA_WARNA = {
+  biru: { atas: "#60a5fa", bawah: "#1d4ed8" },
+  abu: { atas: "#9ca3af", bawah: "#4b5563" },
+  unguTua: { atas: "#7c3aed", bawah: "#3b0764" },
+};
+
+function bandaraWarnaLayer(key) {
+  const meta = state.mapLayers.meta[key] || {};
+  if (meta.provinsi === "BANDARA KEMENHUB") return BANDARA_WARNA.biru.bawah;
+  if (meta.provinsi === "BANDARA" || /^Bandara/i.test(meta.layer || "")) return BANDARA_WARNA.abu.bawah;
+  return BANDARA_WARNA.unguTua.bawah;
+}
+
+function bandaraBadgeSvg(color) {
+  const tone = Object.values(BANDARA_WARNA).find((t) => t.bawah === color) || { atas: color, bawah: color };
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">`
+    + `<defs><linearGradient id="g" x1="0" y1="0" x2="0" y2="1">`
+    + `<stop offset="0" stop-color="${tone.atas}"/><stop offset="1" stop-color="${tone.bawah}"/></linearGradient>`
+    + `<filter id="s" x="-30%" y="-30%" width="160%" height="160%"><feDropShadow dx="0" dy="1.2" stdDeviation="1.2" flood-color="#0f172a" flood-opacity="0.45"/></filter></defs>`
+    + `<circle cx="16" cy="15.5" r="12.5" fill="url(#g)" stroke="#ffffff" stroke-width="2.2" filter="url(#s)"/>`
+    + `<circle cx="16" cy="15.5" r="9.6" fill="none" stroke="#ffffff" stroke-opacity="0.35" stroke-width="0.8"/>`
+    + `<path d="${POINT_GLYPHS.pesawat}" fill="#ffffff" transform="translate(16 15.5) rotate(45) scale(0.66) translate(-12 -12)"/>`
+    + `</svg>`;
+}
+
 const _pointIconUrlCache = {};
 function pointIconUrl(glyph, color, opacity = 1) {
   const ck = `${glyph}|${color}|${opacity}`;
+  if (!_pointIconUrlCache[ck] && glyph === "pesawat") {
+    _pointIconUrlCache[ck] = "data:image/svg+xml;charset=UTF-8,"
+      + encodeURIComponent(bandaraBadgeSvg(color).replace("<svg ", `<svg opacity="${opacity}" `));
+  }
   if (!_pointIconUrlCache[ck]) {
     const d = POINT_GLYPHS[glyph] || POINT_GLYPHS.titik;
     // path pertama = halo putih (stroke tebal), path kedua = glyph berwarna di atasnya
@@ -920,6 +953,7 @@ function pointIconUrl(glyph, color, opacity = 1) {
 
 // fillColor/scale ikut disimpan supaya print-map.js (yang membaca icon.fillColor/scale) tetap dapat warnanya.
 function pointIcon(glyph, color, opacity, size = 24) {
+  if (glyph === "pesawat") size = Math.round(size * 1.2); // lencana bandara sedikit lebih besar
   return {
     url: pointIconUrl(glyph, color, opacity),
     scaledSize: new google.maps.Size(size, size),
@@ -937,7 +971,10 @@ function layerLegendSymbolHtml(key, color, size = 18) {
   if (data) data.forEach((f) => { if (!type) type = f.getGeometry()?.getType() || ""; });
   if (!type) return null;
   const img = (src) => `<img src="${src}" width="${size}" height="${size}" alt="" style="flex:none;vertical-align:middle">`;
-  if (/Point/.test(type)) return img(pointIconUrl(pointGlyphFor(key), color));
+  if (/Point/.test(type)) {
+    const glyph = pointGlyphFor(key);
+    return img(pointIconUrl(glyph, glyph === "pesawat" ? bandaraWarnaLayer(key) : color));
+  }
   const svg = /Polygon/.test(type)
     ? `<rect x="3" y="3" width="18" height="18" rx="2" fill="${color}" fill-opacity="0.45" stroke="${color}" stroke-width="2"/>`
     : `<polyline points="2,19 8,9 14,15 22,4" fill="none" stroke="${color}" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/>`;
@@ -994,10 +1031,12 @@ function applyLayerStyle(key) {
     }
     if (type === "Point" || type === "MultiPoint") {
       // _warna per titik dari server (mis. Perlintasan KA per BTP: warna per status penjagaan)
+      const glyph = glyphPerJenis ? pointGlyphForFeature(layerGlyph, feature) : layerGlyph;
       const pointColor = mapLayerRawName(key) === STASIUN_LAYER_NAME
         ? stasiunStatusColor(feature.getProperty(STASIUN_STATUS_FIELD))
+        : glyph === "pesawat" ? bandaraWarnaLayer(key)
         : feature.getProperty("_warna") || color;
-      return { icon: pointIcon(glyphPerJenis ? pointGlyphForFeature(layerGlyph, feature) : layerGlyph, pointColor, opacity) };
+      return { icon: pointIcon(glyph, pointColor, opacity), zIndex: glyph === "pesawat" ? 40 : undefined };
     }
     if (type === "Polygon" || type === "MultiPolygon") {
       // poligon dgn warna per kategori dari server (mis. Klaster/Subklaster: _warna per klaster)

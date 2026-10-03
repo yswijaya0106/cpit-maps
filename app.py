@@ -895,6 +895,14 @@ DATA_TABLES = {
     "koridor_simpul_terdekat": "Peta Koridor — Jarak Terdekat ke Simpul Bandara & Pelabuhan",
     "iri_ruas_nasional": "IRI & Kemantapan Jalan Nasional per Ruas (Survei Juli 2026)",
     "subklaster_analisis_transportasi": "Analisis Konektivitas Klaster/Subklaster Merauke (Bandara/Pelabuhan/Jalan Terdekat)",
+    # BPSDM Perhubungan (scripts/import_bpsdm_perhubungan.py, docs/kajian_data_bpsdm_perhubungan.md)
+    "bpsdm_upt": "BPSDM Perhubungan — Daftar UPT & Ringkasan",
+    "bpsdm_prodi": "BPSDM Perhubungan — Program Studi",
+    "bpsdm_dosen_prodi": "BPSDM Perhubungan — Dosen & Akreditasi per Prodi",
+    "bpsdm_mahasiswa_lulusan": "BPSDM Perhubungan — Peminat, Mahasiswa & Lulusan per Prodi 2022-2026",
+    "bpsdm_penyerapan_lulusan": "BPSDM Perhubungan — Penyerapan Lulusan 2025 di Dunia Kerja",
+    "bpsdm_sertifikat": "BPSDM Perhubungan — Sertifikat Diterbitkan per UPT 2022-2026",
+    "bpsdm_fasilitas": "BPSDM Perhubungan — Fasilitas (Simulator, Sarana Latih, Prasarana) 2021-2025",
 }
 # kolom yang tidak ditampilkan (payload besar)
 DATA_TABLE_SKIP_COLS = {"geom_geojson", "detail_fasilitas"}
@@ -931,6 +939,10 @@ DATA_TABLE_GEO = {
     "pelabuhan_daerah": ("kode_provinsi", "kode_kabupaten"),
     "koridor_simpul_terdekat": ("kode_provinsi", "kode_kab"),
     "program_ijd_riwayat": ("kode_provinsi", "kode_kabupaten"),
+    # kode dari lokasi titik UPT (bukan "Kode Daerah" sumber), lihat import_bpsdm_perhubungan.py
+    **{t: ("kode_provinsi", "kode_kabupaten") for t in (
+        "bpsdm_upt", "bpsdm_prodi", "bpsdm_dosen_prodi", "bpsdm_mahasiswa_lulusan",
+        "bpsdm_penyerapan_lulusan", "bpsdm_sertifikat", "bpsdm_fasilitas")},
 }
 
 # Tabel yang punya filter "Pulau" (nasional / pulau / provinsi) di viewer Data
@@ -7661,6 +7673,51 @@ def kantor_sar_join_data(nama_kantor: str, tabel: str = "basarnas_alut"):
         "tabel": tabel,
         "label": KANTOR_SAR_JOIN_TABLES[tabel],
         "tabel_tersedia": [{"tabel": k, "label": v} for k, v in KANTOR_SAR_JOIN_TABLES.items()],
+        "columns": columns,
+        "rows": [[jsonable_encoder(r[c]) for c in columns] for r in rows],
+    }
+
+
+# Join identify-popup titik UPT BPSDM Perhubungan (bucket "BPSDM PERHUBUNGAN",
+# scripts/import_bpsdm_perhubungan.py) ke tabel bpsdm_* -- pola sama dgn
+# KANTOR_SAR_JOIN_TABLES, tapi kuncinya kode_upt exact (attrs "Kode UPT BPSDMP"),
+# bukan pencocokan teks: nama UPT sudah dipetakan ke kode saat impor.
+BPSDM_JOIN_TABLES = {
+    "bpsdm_mahasiswa_lulusan": ("Peminat, Mahasiswa & Lulusan per Prodi",
+        "SELECT program_studi, mahasiswa_2026, peminat_mandiri_2025, peminat_mandiri_2026, "
+        "peminat_polbit_2025, lulusan_2023, lulusan_2024, lulusan_2025, lulusan_2026 "
+        "FROM bpsdm_mahasiswa_lulusan WHERE kode_upt = %s ORDER BY id"),
+    "bpsdm_penyerapan_lulusan": ("Penyerapan Lulusan 2025",
+        "SELECT program_studi, pns, ppnpn, bumn_bumd, swasta, belum_bekerja, total_bekerja, total_lulusan, "
+        "terserap_pct, catatan_data FROM bpsdm_penyerapan_lulusan WHERE kode_upt = %s ORDER BY id"),
+    "bpsdm_dosen_prodi": ("Dosen & Akreditasi per Prodi",
+        "SELECT jenjang, program_studi, akreditasi, asisten_ahli, lektor, lektor_kepala, guru_besar, jumlah_dosen "
+        "FROM bpsdm_dosen_prodi WHERE kode_upt = %s ORDER BY id"),
+    "bpsdm_prodi": ("Daftar Program Studi",
+        "SELECT jenjang, program_studi FROM bpsdm_prodi WHERE kode_upt = %s ORDER BY id"),
+    "bpsdm_sertifikat": ("Sertifikat Diterbitkan",
+        "SELECT periode, jumlah_jenis_sertifikat, jumlah_orang_tersertifikasi, catatan_data "
+        "FROM bpsdm_sertifikat WHERE kode_upt = %s ORDER BY id"),
+    "bpsdm_fasilitas": ("Fasilitas per Tahun",
+        "SELECT tahun, simulator_unit, kendaraan_kapal_pesawat_latih_unit, kelas_unit, kelas_kapasitas_orang, "
+        "laboratorium_unit, asrama_unit, asrama_kapasitas_orang, aula_unit "
+        "FROM bpsdm_fasilitas WHERE kode_upt = %s ORDER BY tahun DESC"),
+}
+
+
+@app.get("/api/bpsdm/data")
+def bpsdm_join_data(kode_upt: str, tabel: str = "bpsdm_mahasiswa_lulusan"):
+    if tabel not in BPSDM_JOIN_TABLES:
+        raise HTTPException(400, "Tabel tidak dikenal untuk join UPT BPSDM")
+    label, sql = BPSDM_JOIN_TABLES[tabel]
+    with db_cursor() as cur:
+        cur.execute(sql, (kode_upt,))
+        rows = cur.fetchall()
+    columns = list(rows[0].keys()) if rows else []
+    return {
+        "tabel": tabel,
+        "label": label,
+        "tabel_tersedia": [{"tabel": k, "label": v[0]} for k, v in BPSDM_JOIN_TABLES.items()],
         "columns": columns,
         "rows": [[jsonable_encoder(r[c]) for c in columns] for r in rows],
     }

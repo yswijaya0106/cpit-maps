@@ -1483,6 +1483,23 @@ upsert, so they're safe to re-run:
   structural diff (`--save`/`--check`) over a fixed list of read-only
   endpoints, meant as a safety net while incrementally refactoring app.py
   (e.g. moving functions to a new module) without changing behavior.
+- `import_bpsdm_perhubungan.py` (3 Okt 2026, kajian `docs/kajian_data_bpsdm_
+  perhubungan.md`) — 7 xlsx from `docs/Konektivitas/7. BPSDM PERHUBUNGAN/` → 7
+  `bpsdm_*` tables (Data menu, geo-filterable) + point overlay bucket `BPSDM
+  PERHUBUNGAN` (one layer per matra + "KANTOR PUSAT & PPSDM"). The identify popup
+  joins via attr `Kode UPT BPSDMP` → `GET /api/bpsdm/data` (`BPSDM_JOIN_TABLES`,
+  generic `attachTabelJoin` in map-tools.js).
+  - The join key is the 13-digit `kode_upt` from file 1 only. Other files name
+    UPTs inconsistently, "PPI" means both Madiun and Curug, and "Kode Daerah" is
+    not unique per UPT. Names map through explicit rules in
+    `kode_upt_dari_nama()`, and an unmapped name fails the run.
+  - `kode_kabupaten` comes from the point's coordinates, not the source code (3
+    UPTs were wrong; the original is kept in `kode_daerah_sumber`).
+  - Aggregates are summed from prodi rows, because 8 UPT subtotals in file 5-7
+    are blank.
+  - File 9's broken total columns are repaired or flagged per row in
+    `catatan_data`.
+  - Not related to IJD scoring.
 - `build_basarnas_analisis_kantor.py` — answers, per Kantor/Pos SAR, exactly
   the 13 columns requested in `docs/Requierment/Analisis Basarnas (1).xlsx`
   sheet "Lembar1" (an empty template) by aggregating existing BASARNAS data

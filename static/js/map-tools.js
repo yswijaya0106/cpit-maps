@@ -134,6 +134,8 @@ function showIdentifyInfo(layerName, feature, latLng) {
     attachKantorSarWilayah(container, namaKantorSar, !feature.getProperty("nama_kantor"));
     attachKantorSarJoin(container, namaKantorSar);
   }
+  const kodeUptBpsdm = feature.getProperty("Kode UPT BPSDMP");
+  if (kodeUptBpsdm) attachBpsdmJoin(container, kodeUptBpsdm);
   if (layerName.startsWith("BATAS PROVINSI::")) {
     const namaProvinsi = feature.getProperty("PROVINSI");
     if (namaProvinsi) attachLakaLantasJoin(container, namaProvinsi);
@@ -300,6 +302,22 @@ function attachKecamatanJoin(container, kodeKec) {
    nama kota (best-effort text match, lihat _kantor_sar_kota di app.py),
    bukan kode angka. TIDAK terkait usulan_inpres/IJD. */
 function attachKantorSarJoin(container, namaKantor) {
+  attachTabelJoin(container,
+    (tabel) => `/api/kantor-sar/data?nama_kantor=${encodeURIComponent(namaKantor)}${tabel}`,
+    "Tidak ada baris di tabel ini untuk kantor SAR ini.");
+}
+
+/* Join titik UPT BPSDM Perhubungan ke tabel bpsdm_* (kunci kode_upt exact,
+   lihat BPSDM_JOIN_TABLES di app.py). */
+function attachBpsdmJoin(container, kodeUpt) {
+  attachTabelJoin(container,
+    (tabel) => `/api/bpsdm/data?kode_upt=${encodeURIComponent(kodeUpt)}${tabel}`,
+    "Tidak ada baris di tabel ini untuk UPT ini.");
+}
+
+/* Dropdown "Data database" generik di popup identify: urlFor(tabelParam)
+   -> URL endpoint yang membalas {tabel, tabel_tersedia, columns, rows}. */
+function attachTabelJoin(container, urlFor, pesanKosong) {
   const wrap = document.createElement("div");
   wrap.className = "identify-join";
   wrap.innerHTML = `
@@ -317,7 +335,7 @@ function attachKantorSarJoin(container, namaKantor) {
     bodyEl.textContent = "Memuat...";
     try {
       const tabel = sel.value ? `&tabel=${encodeURIComponent(sel.value)}` : "";
-      const res = await fetch(`/api/kantor-sar/data?nama_kantor=${encodeURIComponent(namaKantor)}${tabel}`);
+      const res = await fetch(urlFor(tabel));
       const data = await res.json();
       if (!res.ok) throw new Error(data.detail || "Gagal memuat");
       if (!sel.options.length) {
@@ -331,7 +349,7 @@ function attachKantorSarJoin(container, namaKantor) {
       }
       bodyEl.className = "identify-join-body";
       if (!data.rows.length) {
-        bodyEl.innerHTML = `<div class="hint">Tidak ada baris di tabel ini untuk kantor SAR ini.</div>`;
+        bodyEl.innerHTML = `<div class="hint">${escapeHtml(pesanKosong)}</div>`;
         return;
       }
       const boolCols = data.columns.map(isBoolDbCol);

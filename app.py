@@ -8726,7 +8726,10 @@ def _program_geom(cur, level: str, kode_provinsi: Optional[int]):
                 kode = ref.get((kp, nama.upper().startswith("KOTA"), _program_nama_kunci(nama)))
         if kode is None:
             continue
-        fitur.append({"kode": int(kode), "nama": nama, "geometry": json.loads(r["gj"])})
+        # Geometri disimpan sbg string GeoJSON mentah, BUKAN dict: program_ijd_peta
+        # menyisipkannya apa adanya ke respons. jsonable_encoder + json.dumps atas
+        # ~70 ribu pasangan koordinat makan ~4 dtk per request di staging (2 core).
+        fitur.append({"kode": int(kode), "nama": nama, "geometry_json": r["gj"]})
     _program_geom_cache[kunci] = fitur
     return fitur
 
@@ -8791,9 +8794,12 @@ def program_ijd_peta(level: str = "provinsi", kode_provinsi: Optional[int] = Non
         wilayah.append(b)
     wilayah.sort(key=lambda b: -b["alokasi_m"])
     per_kode = {b["kode"]: b for b in wilayah}
-    features = [{"type": "Feature", "geometry": f["geometry"],
-                 "properties": {**per_kode.get(f["kode"], _baris(f["kode"], f["nama"])), "nama_batas": f["nama"]}}
-                for f in geom]
+    features = ",".join(
+        '{"type":"Feature","geometry":%s,"properties":%s}' % (
+            f["geometry_json"],
+            json.dumps(jsonable_encoder({**per_kode.get(f["kode"], _baris(f["kode"], f["nama"])),
+                                         "nama_batas": f["nama"]}), ensure_ascii=False))
+        for f in geom)
     total = {k: round(sum(b[k] for b in wilayah), 2) for k in ("alokasi_m", "panjang_km", "jembatan_m", "n_kegiatan")}
     if tingkat_prov and tingkat_prov["n_kegiatan"]:
         tp = {"n_kegiatan": tingkat_prov["n_kegiatan"],
@@ -8803,9 +8809,9 @@ def program_ijd_peta(level: str = "provinsi", kode_provinsi: Optional[int] = Non
             total[k] = round(total[k] + tp[k], 2)
     else:
         tp = None
-    return jsonable_encoder({
+    payload = jsonable_encoder({
         "level": level, "kode_provinsi": kode_provinsi, "tahun": tahun, "kategori": kategori,
-        "type": "FeatureCollection", "features": features, "wilayah": wilayah,
+        "type": "FeatureCollection", "wilayah": wilayah,
         "tingkat_provinsi": tp, "total": total,
         "tanpa_poligon": [b["nama"] for b in wilayah if not b["ada_poligon"] and b["n_kegiatan"]],
         "catatan": ("Sumber: Riwayat Program IJD 2023-2026 (DPP final, Revisi R1). Nilai nominal. "
@@ -8813,6 +8819,8 @@ def program_ijd_peta(level: str = "provinsi", kode_provinsi: Optional[int] = Non
                     "Rp/km (jalan) = hanya kegiatan dengan panjang jalan > 0. Kegiatan usulan provinsi tidak "
                     "punya kab/kota, ditampilkan terpisah di level kabupaten. Fiskal = kategori SITIA."),
     })
+    body = json.dumps(payload, ensure_ascii=False)[:-1] + ',"features":[' + features + "]}"
+    return Response(content=body.encode("utf-8"), media_type="application/json")
 
 
 @app.on_event("startup")

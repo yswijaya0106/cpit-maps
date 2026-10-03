@@ -392,15 +392,15 @@ function clearSubklasterAnalisis() {
 function attachSubklasterAnalisis(container, feature) {
   clearSubklasterAnalisis();
   // titik kecil (referensi, semua bandara/pelabuhan di pulau -- hanya jarak garis lurus)
-  const titikKecil = (lat, lon, warna, judul) => new google.maps.Marker({
+  const titikKecil = (lat, lon, warna, judul, glyph) => new google.maps.Marker({
     position: { lat, lng: lon }, map: state.map, title: judul,
-    icon: { path: google.maps.SymbolPath.CIRCLE, scale: 4, fillColor: warna, fillOpacity: 0.85, strokeColor: "#0f1420", strokeWeight: 1 },
+    icon: pointIcon(glyph, warna, 0.9, 18),
     zIndex: 150,
   });
   // titik besar berlabel (yang TERDEKAT -- bandara/pelabuhan/koridor terpilih)
-  const titikBesar = (lat, lon, label, warna) => new google.maps.Marker({
+  const titikBesar = (lat, lon, label, warna, glyph) => new google.maps.Marker({
     position: { lat, lng: lon }, map: state.map, title: label,
-    icon: { path: google.maps.SymbolPath.CIRCLE, scale: 7, fillColor: warna, fillOpacity: 1, strokeColor: "#ffffff", strokeWeight: 2 },
+    icon: pointIcon(glyph, warna, 1, 28),
     label: { text: label, color: "#0f1420", fontSize: "11px", fontWeight: "700", className: "subklaster-marker-label" },
     zIndex: 200,
   });
@@ -417,10 +417,10 @@ function attachSubklasterAnalisis(container, feature) {
     strokeColor: warna, strokeOpacity: 0.9, strokeWeight: 3.5, zIndex: 195,
   });
   const overlay = [];
-  const gambarTarget = (labelKey, latKey, lonKey, refLatKey, refLonKey, ruteKey, warna) => {
+  const gambarTarget = (labelKey, latKey, lonKey, refLatKey, refLonKey, ruteKey, warna, glyph) => {
     const lat = feature.getProperty(latKey), lon = feature.getProperty(lonKey);
     if (lat == null) return;
-    overlay.push(titikBesar(lat, lon, feature.getProperty(labelKey) || "?", warna));
+    overlay.push(titikBesar(lat, lon, feature.getProperty(labelKey) || "?", warna, glyph));
     const rute = feature.getProperty(ruteKey);
     if (rute) {
       overlay.push(garisRute(rute, warna));
@@ -429,16 +429,16 @@ function attachSubklasterAnalisis(container, feature) {
       if (refLat != null) overlay.push(garisLurus(refLat, refLon, lat, lon, warna));
     }
   };
-  gambarTarget("Bandara Terdekat", "_bandara_lat", "_bandara_lon", "_bandara_ref_lat", "_bandara_ref_lon", "_bandara_rute", "#2563eb");
-  gambarTarget("Pelabuhan Terdekat", "_pelabuhan_lat", "_pelabuhan_lon", "_pelabuhan_ref_lat", "_pelabuhan_ref_lon", "_pelabuhan_rute", "#0d9488");
-  gambarTarget("Koridor IJD Terdekat", "_koridor_lat", "_koridor_lon", "_koridor_ref_lat", "_koridor_ref_lon", "_koridor_rute", "#d97706");
+  gambarTarget("Bandara Terdekat", "_bandara_lat", "_bandara_lon", "_bandara_ref_lat", "_bandara_ref_lon", "_bandara_rute", "#2563eb", "pesawat");
+  gambarTarget("Pelabuhan Terdekat", "_pelabuhan_lat", "_pelabuhan_lon", "_pelabuhan_ref_lat", "_pelabuhan_ref_lon", "_pelabuhan_rute", "#0d9488", "jangkar");
+  gambarTarget("Koridor IJD Terdekat", "_koridor_lat", "_koridor_lon", "_koridor_ref_lat", "_koridor_ref_lon", "_koridor_rute", "#d97706", "jalan");
 
   // SEMUA bandara & pelabuhan di pulau Papua (titik kecil, jarak garis lurus di title/tooltip saja)
   (feature.getProperty("_semua_bandara") || []).forEach((b) => {
-    overlay.push(titikKecil(b.lat, b.lon, "#93c5fd", `${b.nama} (${b.jarak_km} km garis lurus)`));
+    overlay.push(titikKecil(b.lat, b.lon, "#93c5fd", `${b.nama} (${b.jarak_km} km garis lurus)`, "pesawat"));
   });
   (feature.getProperty("_semua_pelabuhan") || []).forEach((p) => {
-    overlay.push(titikKecil(p.lat, p.lon, "#5eead4", `${p.nama} (${p.jarak_km} km garis lurus)`));
+    overlay.push(titikKecil(p.lat, p.lon, "#5eead4", `${p.nama} (${p.jarak_km} km garis lurus)`, "jangkar"));
   });
   subklasterAnalisisOverlay = overlay;
 
@@ -753,8 +753,11 @@ function updateMapLegend() {
       + (meta && rawCounts[raw] > 1 ? ` — ${meta.kabupaten || meta.provinsi}` : "");
     const row = document.createElement("div");
     row.className = "map-legend-item";
+    // layer titik: ikon jenis (pesawat/jangkar/...) sama dgn di peta, bukan kotak warna
+    const ikonTitik = pointLegendIconHtml(key, raw === STASIUN_LAYER_NAME ? STASIUN_STATUS_DEFAULT_COLOR
+      : raw === "KAPLIN STASIUN" ? "#1f2937" : mapLayerColor(raw));
     row.innerHTML = `
-      <span class="maplayer-swatch" style="background:${mapLayerColor(raw)}"></span>
+      ${ikonTitik || `<span class="maplayer-swatch" style="background:${mapLayerColor(raw)}"></span>`}
       <span class="map-legend-item-label">${escapeHtml(label)}</span>
       <button type="button" class="map-legend-item-remove" data-key="${escapeHtml(key)}" title="Matikan layer ini"><i class="bi bi-x-lg"></i></button>
     `;
@@ -767,13 +770,16 @@ function updateMapLegend() {
     const kaplinLegend = raw === "KAPLIN PETAK JALAN" ? KAPLIN_UTILISASI_LEGEND
       : raw === "KAPLIN KORIDOR UTAMA" ? KAPLIN_KORIDOR_LEGEND
       : isKlaster ? KLASTER_LEGEND
+      : raw === PERLINTASAN_BTP_LAYER ? PERLINTASAN_BTP_LEGEND
       : RTRW_PAPSEL_LEGEND[raw] || null;
     if (kaplinLegend) {
+      const titik = raw === PERLINTASAN_BTP_LAYER;
       const sub = document.createElement("div");
       sub.className = "map-legend-subitems";
       sub.innerHTML = kaplinLegend.map(([c, t]) => `
         <div class="map-legend-subitem">
-          <span style="display:inline-block;width:28px;height:${isKlaster ? 12 : 4}px;background:${c};border-radius:2px"></span>
+          ${titik ? `<img src="${pointIconUrl("perlintasan", c)}" width="14" height="14" alt="">`
+            : `<span style="display:inline-block;width:28px;height:${isKlaster ? 12 : 4}px;background:${c};border-radius:2px"></span>`}
           <span class="map-legend-subitem-label">${escapeHtml(t)}</span>
         </div>`).join("");
       listEl.appendChild(sub);
@@ -789,7 +795,7 @@ function updateMapLegend() {
       sub.className = "map-legend-subitems";
       sub.innerHTML = Object.entries(STASIUN_STATUS_COLORS).map(([status, c]) => `
         <div class="map-legend-subitem">
-          <span class="maplayer-swatch" style="background:${c}"></span>
+          <img src="${pointIconUrl("kereta", c)}" width="14" height="14" alt="">
           <span class="map-legend-subitem-label">${escapeHtml(status)}</span>
         </div>
       `).join("");

@@ -759,7 +759,112 @@ const RTRW_PAPSEL_LEGEND = {
     ["#0D47A1", "Alur pelayaran masuk pelabuhan"],
   ],
 };
+// Legenda Perlintasan KA per BTP (import_perlintasan_btp_to_postgis.py) -- warna sama persis dgn WARNA skrip.
+const PERLINTASAN_BTP_LAYER = "Perlintasan KA (Data BTP)";
+const PERLINTASAN_BTP_LEGEND = [
+  ["#1565C0", "Dijaga PT KAI"], ["#00897B", "Dijaga Pemda/Dishub"],
+  ["#F9A825", "Dijaga swadaya/swasta/lainnya"], ["#E53935", "Tidak dijaga (resmi)"],
+  ["#6A1B9A", "Liar"], ["#9E9E9E", "Tidak sebidang"], ["#424242", "Ditutup"],
+  ["#BDBDBD", "Status tidak tercatat"],
+];
 const arusFilter = { pulau: "", provinsi: "", arah: "keduanya", antarPulau: false };
+
+/* ---------- Ikon titik per jenis (bandara = pesawat, pelabuhan = jangkar, dst.) ----------
+   Titik digambar sbg lingkaran berwarna + glyph putih. Warna lingkaran tetap
+   warna layer / _warna / warna status (Stasiun KA, Perlintasan BTP), jadi
+   legenda warna yang sudah ada tetap berlaku; glyph menunjukkan JENIS titik.
+   Path glyph: Material Design Icons (viewBox 24x24). */
+const POINT_GLYPHS = {
+  pesawat: "M21 16v-2l-8-5V3.5c0-.83-.67-1.5-1.5-1.5S10 2.67 10 3.5V9l-8 5v2l8-2.5V19l-2 1.5V22l3.5-1 3.5 1v-1.5L13 19v-5.5l8 2.5z",
+  jangkar: "M12 2a3 3 0 0 0-3 3c0 1.27.8 2.4 2 2.83V10H8v2h3v6.92c-1.84-.29-3.47-1.35-4.47-2.92H8v-2H3v5h2v-1.7C6.58 19.61 9.18 21 12 21s5.42-1.39 7-3.7V19h2v-5h-5v2h1.47c-1 1.57-2.63 2.63-4.47 2.92V12h3v-2h-3V7.82C14.2 7.4 15 6.27 15 5a3 3 0 0 0-3-3zm0 2a1 1 0 1 1 0 2 1 1 0 0 1 0-2z",
+  kapal: "M20 21c-1.39 0-2.78-.47-4-1.32-2.44 1.71-5.56 1.71-8 0C6.78 20.53 5.39 21 4 21H2v2h2c1.38 0 2.74-.35 4-.99 2.52 1.29 5.48 1.29 8 0 1.26.65 2.62.99 4 .99h2v-2h-2zM3.95 19H4c1.6 0 3.02-.88 4-2 .98 1.12 2.4 2 4 2s3.02-.88 4-2c.98 1.12 2.4 2 4 2h.05l1.89-6.68c.08-.26.06-.54-.06-.78s-.34-.42-.6-.5L20 10.62V6c0-1.1-.9-2-2-2h-3V1H9v3H6c-1.1 0-2 .9-2 2v4.62l-1.29.42c-.26.08-.48.26-.6.5s-.15.52-.06.78L3.95 19zM6 6h12v3.97L12 8 6 9.97V6z",
+  kereta: "M12 2c-4 0-8 .5-8 4v9.5C4 17.43 5.57 19 7.5 19L6 20.5v.5h2.23l2-2H14l2 2h2v-.5L16.5 19c1.93 0 3.5-1.57 3.5-3.5V6c0-3.5-3.58-4-8-4zM7.5 17c-.83 0-1.5-.67-1.5-1.5S6.67 14 7.5 14s1.5.67 1.5 1.5S8.33 17 7.5 17zm3.5-7H6V6h5v4zm2 0V6h5v4h-5zm3.5 7c-.83 0-1.5-.67-1.5-1.5s.67-1.5 1.5-1.5 1.5.67 1.5 1.5-.67 1.5-1.5 1.5z",
+  bus: "M4 16c0 .88.39 1.67 1 2.22V20c0 .55.45 1 1 1h1c.55 0 1-.45 1-1v-1h8v1c0 .55.45 1 1 1h1c.55 0 1-.45 1-1v-1.78c.61-.55 1-1.34 1-2.22V6c0-3.5-3.58-4-8-4s-8 .5-8 4v10zm3.5 1c-.83 0-1.5-.67-1.5-1.5S6.67 14 7.5 14s1.5.67 1.5 1.5S8.33 17 7.5 17zm9 0c-.83 0-1.5-.67-1.5-1.5s.67-1.5 1.5-1.5 1.5.67 1.5 1.5-.67 1.5-1.5 1.5zm1.5-6H6V6h12v5z",
+  truk: "M20 8h-3V4H3c-1.1 0-2 .9-2 2v11h2c0 1.66 1.34 3 3 3s3-1.34 3-3h6c0 1.66 1.34 3 3 3s3-1.34 3-3h2v-5l-3-4zM6 18.5c-.83 0-1.5-.67-1.5-1.5s.67-1.5 1.5-1.5 1.5.67 1.5 1.5-.67 1.5-1.5 1.5zm13.5-9l1.96 2.5H17V9.5h2.5zm-1.5 9c-.83 0-1.5-.67-1.5-1.5s.67-1.5 1.5-1.5 1.5.67 1.5 1.5-.67 1.5-1.5 1.5z",
+  perlintasan: "M4.6 3.2 12 10.6l7.4-7.4 1.4 1.4-7.4 7.4 7.4 7.4-1.4 1.4-7.4-7.4-7.4 7.4-1.4-1.4 7.4-7.4-7.4-7.4z",
+  jembatan: "M2 13h20v2h-2v5h-2v-5H6v5H4v-5H2zM2 11c3-5.33 17-5.33 20 0v1H2z",
+  peringatan: "M1 21h22L12 2 1 21zm12-3h-2v-2h2v2zm0-4h-2v-4h2v4z",
+  medis: "M19 3H5c-1.1 0-1.99.9-1.99 2L3 19c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-1 11h-4v4h-4v-4H6v-4h4V6h4v4h4v4z",
+  sar: "M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zm0 4.5a5.5 5.5 0 1 1 0 11 5.5 5.5 0 0 1 0-11zM10.5 2.2h3v4.4h-3zM10.5 17.4h3v4.4h-3zM2.2 10.5h4.4v3H2.2zM17.4 10.5h4.4v3h-4.4z",
+  sekolah: "M5 13.18v4L12 21l7-3.82v-4L12 17l-7-3.82zM12 3L1 9l11 6 9-4.91V17h2V9L12 3z",
+  gedung: "M12 7V3H2v18h20V7H10zM6 19H4v-2h2v2zm0-4H4v-2h2v2zm0-4H4V9h2v2zm0-4H4V5h2v2zm4 12H8v-2h2v2zm0-4H8v-2h2v2zm0-4H8V9h2v2zm0-4H8V5h2v2zm10 12h-8v-2h2v-2h-2v-2h2v-2h-2V9h8v10zm-2-8h-2v2h2v-2zm0 4h-2v2h2v-2z",
+  gudang: "M22 21V7L12 3 2 7v14h5v-9h10v9h5zm-11-2H9v2h2v-2zm2-3h-2v2h2v-2zm2 3h-2v2h2v-2z",
+  bintang: "M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z",
+  jalan: "M11 2h2v3h6l2 2.5L19 10h-6v12h-2V12H5l-2-2.5L5 7h6z",
+  titik: "M12 7a5 5 0 1 0 0 10 5 5 0 0 0 0-10z",
+};
+// Aturan glyph per nama bucket+layer (urutan penting: yang lebih spesifik dulu).
+const POINT_GLYPH_RULES = [
+  [/BPSDM/, "sekolah"],
+  [/PERLINTASAN|TITIK POTONG|JPL/, "perlintasan"],
+  [/JEMBATAN/, "jembatan"],
+  [/STASIUN/, "kereta"],
+  [/GUDANG/, "gudang"],
+  [/BATAS BTP/, "gedung"],
+  [/BLACKSPOT|RAWAN KECELAKAAN/, "peringatan"],
+  [/PSC/, "medis"],
+  [/BASARNAS|KANTOR SAR|POS SAR/, "sar"],
+  [/PENYEBERANGAN|PENYEBRANGAN|::PP$/, "kapal"],
+  [/ANGKUTAN.*LAUT/, "kapal"],
+  [/BANDARA|UDARA|MASKAPAI/, "pesawat"],
+  [/PELABUHAN|TERSUS/, "jangkar"],
+  [/TERMINAL/, "bus"],
+  [/ANGKUTAN DARAT BARANG/, "truk"],
+  [/KSPN/, "bintang"],
+  [/JALAN|STA_|TRACK/, "jalan"],
+];
+// Layer RTRW "Simpul Transportasi" mencampur bandara/pelabuhan/terminal -> per fitur dari atribut Jenis.
+const RTRW_JENIS_GLYPH_RULES = [
+  [/BANDAR UDARA/, "pesawat"], [/PENYEBERANGAN/, "kapal"], [/PELABUHAN|PENDARATAN IKAN|TERMINAL (KHUSUS|UMUM)/, "jangkar"],
+  [/TERMINAL PENUMPANG/, "bus"], [/TERMINAL BARANG|TIMBANG/, "truk"], [/JEMBATAN/, "jembatan"],
+];
+
+function pointGlyphFor(key) {
+  const meta = state.mapLayers.meta[key] || {};
+  const nama = `${meta.provinsi || ""}::${mapLayerRawName(key)}`.toUpperCase();
+  const hit = POINT_GLYPH_RULES.find(([re]) => re.test(nama));
+  return hit ? hit[1] : "titik";
+}
+
+function pointGlyphForFeature(layerGlyph, feature) {
+  const jenis = feature.getProperty("Jenis");
+  if (!jenis) return layerGlyph;
+  const hit = RTRW_JENIS_GLYPH_RULES.find(([re]) => re.test(String(jenis).toUpperCase()));
+  return hit ? hit[1] : layerGlyph;
+}
+
+const _pointIconUrlCache = {};
+function pointIconUrl(glyph, color, opacity = 1) {
+  const ck = `${glyph}|${color}|${opacity}`;
+  if (!_pointIconUrlCache[ck]) {
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" opacity="${opacity}">`
+      + `<circle cx="12" cy="12" r="11" fill="${color}" stroke="#ffffff" stroke-width="1.5"/>`
+      + `<path d="${POINT_GLYPHS[glyph] || POINT_GLYPHS.titik}" fill="#ffffff" fill-rule="evenodd" transform="translate(5.4 5.4) scale(0.55)"/>`
+      + `</svg>`;
+    _pointIconUrlCache[ck] = "data:image/svg+xml;charset=UTF-8," + encodeURIComponent(svg);
+  }
+  return _pointIconUrlCache[ck];
+}
+
+// fillColor/scale ikut disimpan supaya print-map.js (yang membaca icon.fillColor/scale) tetap dapat warnanya.
+function pointIcon(glyph, color, opacity, size = 22) {
+  return {
+    url: pointIconUrl(glyph, color, opacity),
+    scaledSize: new google.maps.Size(size, size),
+    anchor: new google.maps.Point(size / 2, size / 2),
+    labelOrigin: new google.maps.Point(size / 2, -6),
+    fillColor: color, scale: 4,
+  };
+}
+
+// <img> ikon utk legenda (null kalau layer bukan layer titik)
+function pointLegendIconHtml(key, color, size = 16) {
+  const data = state.mapLayers.active[key];
+  let isPoint = false;
+  if (data) data.forEach((f) => { if (!isPoint) isPoint = /Point/.test(f.getGeometry()?.getType() || ""); });
+  if (!isPoint) return null;
+  return `<img src="${pointIconUrl(pointGlyphFor(key), color)}" width="${size}" height="${size}" alt="" style="flex:none;vertical-align:middle">`;
+}
 
 function arusFeatureVisible(f) {
   const pa = f.getProperty("Pulau Asal"), pt = f.getProperty("Pulau Tujuan");
@@ -786,6 +891,8 @@ function applyLayerStyle(key) {
   const color = mapLayerColor(mapLayerRawName(key));
   const opacity = state.mapLayers.opacity[key] ?? 1;
   const isArus = mapLayerRawName(key).startsWith(ARUS_LAYER_PREFIX);
+  const layerGlyph = pointGlyphFor(key);
+  const glyphPerJenis = state.mapLayers.meta[key]?.provinsi === "RTRW";
   data.setStyle((feature) => {
     if (isArus && !arusFeatureVisible(feature)) return { visible: false };
     if (feature.getProperty("DILINTASI_RUTE") === "YA") {
@@ -799,10 +906,7 @@ function applyLayerStyle(key) {
       // titik dgn label (stasiun KAPLIN): nama tampil di atas titik mulai zoom tertentu
       const zoom = state.map ? state.map.getZoom() : 0;
       return {
-        icon: {
-          path: google.maps.SymbolPath.CIRCLE, scale: 4.5, fillColor: "#ffffff", fillOpacity: opacity,
-          strokeColor: "#1f2937", strokeWeight: 1.6, labelOrigin: new google.maps.Point(0, -2.4),
-        },
+        icon: pointIcon(layerGlyph, "#1f2937", opacity, 20),
         label: zoom >= KAPLIN_LABEL_MIN_ZOOM
           ? { text: String(feature.getProperty("_label")), fontSize: "11px", fontWeight: "600", color: "#111827" }
           : null,
@@ -810,19 +914,11 @@ function applyLayerStyle(key) {
       };
     }
     if (type === "Point" || type === "MultiPoint") {
+      // _warna per titik dari server (mis. Perlintasan KA per BTP: warna per status penjagaan)
       const pointColor = mapLayerRawName(key) === STASIUN_LAYER_NAME
         ? stasiunStatusColor(feature.getProperty(STASIUN_STATUS_FIELD))
-        : color;
-      return {
-        icon: {
-          path: google.maps.SymbolPath.CIRCLE,
-          scale: 4,
-          fillColor: pointColor,
-          fillOpacity: 0.9 * opacity,
-          strokeColor: "#0f1420",
-          strokeWeight: 1,
-        },
-      };
+        : feature.getProperty("_warna") || color;
+      return { icon: pointIcon(glyphPerJenis ? pointGlyphForFeature(layerGlyph, feature) : layerGlyph, pointColor, opacity) };
     }
     if (type === "Polygon" || type === "MultiPolygon") {
       // poligon dgn warna per kategori dari server (mis. Klaster/Subklaster: _warna per klaster)

@@ -283,6 +283,10 @@ async function loadKabupatenChildren(provinsi, opts = {}) {
     // exclude apapun -- justru itu yang mau ditampilkan.
     if (opts.onlyLayer) qs.set("only_layer", opts.onlyLayer);
     else qs.set("exclude_layer", "PETA KORIDOR");
+    // Bucket nasional flat (JALAN NASIONAL, PELABUHAN, ...) dipecah jadi entri
+    // "Seluruh Indonesia" + satu entri per provinsi (kabupaten virtual = nama
+    // provinsi, lihat _map_layer_pecahan_provinsi di app.py).
+    qs.set("per_provinsi", "1");
     const res = await fetch(`/api/maps/kabupaten?${qs}`);
     if (!res.ok) throw new Error(await res.text());
     rows = await res.json();
@@ -554,10 +558,7 @@ async function showMapLayer(provinsi, kabupaten, layer) {
   state.mapLayers.meta[key] = { provinsi, kabupaten, layer };
 
   try {
-    const url = `/api/maps/layer?provinsi=${encodeURIComponent(provinsi)}&kabupaten=${encodeURIComponent(kabupaten)}&layer=${encodeURIComponent(layer)}`;
-    const res = await fetch(url);
-    if (!res.ok) throw new Error(await res.text());
-    const geojson = await res.json();
+    const geojson = await fetchMapLayerGeojson(provinsi, kabupaten, layer, mapLayerLodForZoom());
 
     if (!geojson.features || !geojson.features.length) {
       // File .shp ada tapi tidak berisi fitur geometri sama sekali — tanpa
@@ -594,6 +595,8 @@ async function showMapLayer(provinsi, kabupaten, layer) {
 
     state.mapLayers.active[key] = data;
     state.mapLayers.meta[key] = { provinsi, kabupaten, layer };
+    state.mapLayers.lod[key] = { lod: geojson.lod ?? 2, tersedia: !!geojson.lod_tersedia };
+    bindMapLayerLodRefresh();
     applyLayerStyle(key);
     if (layer === "KAPLIN STASIUN") bindKaplinLabelZoom();
     if (provinsi === "BATAS KECAMATAN") updateKecamatanLintasan();
@@ -606,6 +609,69 @@ async function showMapLayer(provinsi, kabupaten, layer) {
     if (cb) cb.checked = false;
     delete state.mapLayers.meta[key];
   }
+}
+
+async function fetchMapLayerGeojson(provinsi, kabupaten, layer, lod) {
+  const qs = new URLSearchParams({ provinsi, kabupaten, layer, lod });
+  const res = await fetch(`/api/maps/layer?${qs}`);
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
+/* ---------- level of detail geometri menurut zoom ----------
+   Layer garis/poligon berat (server menandai lod_tersedia) dimuat dlm 3 tingkat
+   detail: 0 = zoom <=6, 1 = zoom 7-9, 2 = detail (lihat _MAP_LAYER_LOD_TOLERANSI
+   di app.py). Saat zoom berhenti di tingkat lain, fitur layer ditukar dgn versi
+   yang sesuai -- di zoom jauh browser tidak lagi menggambar ribuan vertex yang
+   toh lebih rapat dari satu piksel (penyebab utama peta patah-patah saat pan).
+   Layer yang sedang di-identify/dipilih tidak ditukar dulu (referensi fiturnya
+   akan hilang); ditukar pada zoom berikutnya setelah dilepas. */
+function mapLayerLodForZoom() {
+  const z = state.map ? state.map.getZoom() : 5;
+  return z <= 6 ? 0 : z <= 9 ? 1 : 2;
+}
+
+function bindMapLayerLodRefresh() {
+  if (state._mapLayerLodBound || !state.map) return;
+  state._mapLayerLodBound = true;
+  state.map.addListener("idle", refreshMapLayerLod);
+}
+
+function mapLayerSedangDipakai(key) {
+  return state.identifyHighlight?.layer === key || state.selectedFeatures.some((s) => s.layer === key);
+}
+
+function refreshMapLayerLod() {
+  const target = mapLayerLodForZoom();
+  Object.entries(state.mapLayers.lod).forEach(([key, info]) => {
+    if (!info.tersedia || info.memuat || info.lod === target) return;
+    if (!state.mapLayers.active[key] || mapLayerSedangDipakai(key)) return;
+    swapMapLayerLod(key, target);
+  });
+}
+
+async function swapMapLayerLod(key, lod) {
+  const info = state.mapLayers.lod[key];
+  const { provinsi, kabupaten, layer } = state.mapLayers.meta[key] || {};
+  info.memuat = true;
+  let tertukar = false;
+  try {
+    const geojson = await fetchMapLayerGeojson(provinsi, kabupaten, layer, lod);
+    const data = state.mapLayers.active[key];
+    // layer bisa saja dimatikan / user mulai identify selama unduhan berjalan
+    if (!data || state.mapLayers.lod[key] !== info || mapLayerSedangDipakai(key)) return;
+    data.forEach((f) => data.remove(f));
+    data.addGeoJson(geojson);
+    info.lod = geojson.lod ?? lod;
+    tertukar = true;
+    if (provinsi === "BATAS KECAMATAN") updateKecamatanLintasan();
+  } catch (err) {
+    console.error(err); // tetap pakai geometri yang sudah tampil
+  } finally {
+    info.memuat = false;
+  }
+  // zoom bisa sudah berubah lagi selama unduhan
+  if (tertukar && info.lod !== mapLayerLodForZoom()) refreshMapLayerLod();
 }
 
 // Saat layer dibuka: geser peta ke tengah layer TANPA mengubah zoom -- hanya
@@ -996,6 +1062,7 @@ function hideMapLayer(key) {
   delete state.mapLayers.active[key];
   delete state.mapLayers.opacity[key];
   delete state.mapLayers.meta[key];
+  delete state.mapLayers.lod[key];
   clearSelectionForLayer(key);
   updateMapLayerLabel();
   updateMapLegend();
@@ -1019,6 +1086,7 @@ function clearActiveMapLayers() {
   state.mapLayers.active = {};
   state.mapLayers.opacity = {};
   state.mapLayers.meta = {};
+  state.mapLayers.lod = {};
   updateMapLayerLabel();
   updateMapLegend();
 }

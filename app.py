@@ -7839,8 +7839,98 @@ def maps_provinces():
              "kabupaten_count_tanpa_koridor": r["kabupaten_count_tanpa_koridor"]} for r in rows]
 
 
+# Pemecahan per provinsi utk bucket nasional FLAT (kabupaten="", mis. JALAN
+# NASIONAL, PELABUHAN): scripts/build_map_layer_wilayah.py mengisi
+# map_layers.wilayah_provinsi (array nama provinsi dari poligon BATAS PROVINSI).
+# Nama provinsi itu lalu dipakai sbg "kabupaten virtual" -- kunci
+# (bucket, "Aceh", layer) -- jadi frontend (mapLayerKey, cetak, unduh SHP)
+# tak perlu tahu apa-apa. Aman krn bucket flat tak punya kabupaten asli selain "".
+# Bucket yang masih punya baris NULL (baru diimpor ulang, skrip belum dijalankan
+# ulang) otomatis kembali ke tampilan nasional saja.
+_MAP_BUCKET_TANPA_PECAHAN = {"BATAS PROVINSI"}
+
+
+def _map_layers_punya_kolom_wilayah(cur) -> bool:
+    cur.execute("SELECT 1 FROM information_schema.columns "
+                "WHERE table_name = 'map_layers' AND column_name = 'wilayah_provinsi'")
+    return cur.fetchone() is not None
+
+
+def _map_layer_pecahan_provinsi(cur, provinsi: str, exclude_layer: str = ""):
+    """Daftar entri virtual per provinsi utk bucket flat, atau None bila tak berlaku."""
+    if provinsi in _MAP_BUCKET_TANPA_PECAHAN or not _map_layers_punya_kolom_wilayah(cur):
+        return None
+    cur.execute("SELECT bool_and(kabupaten = '') AS flat, COUNT(*) FILTER (WHERE layer <> %s) AS n "
+                "FROM map_layer_meta WHERE provinsi = %s", (exclude_layer, provinsi))
+    meta = cur.fetchone()
+    if not meta or not meta["flat"]:
+        return None
+    cur.execute("SELECT 1 FROM map_layers WHERE provinsi = %s AND kabupaten = '' "
+                "AND wilayah_provinsi IS NULL LIMIT 1", (provinsi,))
+    if cur.fetchone():
+        return None
+    cur.execute(
+        "SELECT w, COUNT(DISTINCT layer) AS layer_count "
+        "FROM map_layers, unnest(wilayah_provinsi) AS w "
+        "WHERE provinsi = %s AND kabupaten = '' AND layer <> %s GROUP BY w ORDER BY w",
+        (provinsi, exclude_layer),
+    )
+    rows = cur.fetchall()
+    if len(rows) < 2:  # semua fitur di satu provinsi (mis. Klaster Merauke): tak perlu dipecah
+        return None
+    return ([{"kabupaten": "", "layer_count": meta["n"], "label": "Seluruh Indonesia"}]
+            + [{"kabupaten": r["w"], "layer_count": r["layer_count"]} for r in rows])
+
+
+def _map_layer_sumber(cur, provinsi: str, kabupaten: str, layer: str):
+    """(meta, where_sql, params) satu layer overlay, termasuk kunci virtual per
+    provinsi (lihat _map_layer_pecahan_provinsi). 404 bila tak ditemukan."""
+    cur.execute(
+        "SELECT label, feature_count, size_mb, imported_at FROM map_layer_meta "
+        "WHERE provinsi=%s AND kabupaten=%s AND layer=%s",
+        (provinsi, kabupaten, layer),
+    )
+    meta = cur.fetchone()
+    if meta:
+        return dict(meta), "provinsi=%s AND kabupaten=%s AND layer=%s", (provinsi, kabupaten, layer)
+    if kabupaten and provinsi not in _MAP_BUCKET_TANPA_PECAHAN and _map_layers_punya_kolom_wilayah(cur):
+        cur.execute(
+            "SELECT label, feature_count, size_mb, imported_at FROM map_layer_meta "
+            "WHERE provinsi=%s AND kabupaten='' AND layer=%s",
+            (provinsi, layer),
+        )
+        meta = cur.fetchone()
+        if meta:
+            cur.execute(
+                "SELECT COUNT(*) FILTER (WHERE wilayah_provinsi @> ARRAY[%s]) AS n, "
+                "COUNT(*) FILTER (WHERE wilayah_provinsi IS NULL) AS belum "
+                "FROM map_layers WHERE provinsi=%s AND kabupaten='' AND layer=%s",
+                (kabupaten, provinsi, layer),
+            )
+            hit = cur.fetchone()
+            if hit["n"] and not hit["belum"]:
+                meta = dict(meta)
+                total = meta["feature_count"] or hit["n"]
+                meta["size_mb"] = (round(float(meta["size_mb"]) * hit["n"] / total, 2)
+                                   if meta["size_mb"] is not None else None)
+                meta["feature_count"] = hit["n"]
+                meta["feature_count_sumber"] = total  # dasar keputusan simplifikasi = layer nasionalnya
+                meta["label"] = f"{meta['label'] or _map_layer_label(layer)} — {kabupaten}"
+                return (meta, "provinsi=%s AND kabupaten='' AND layer=%s AND wilayah_provinsi @> ARRAY[%s]",
+                        (provinsi, layer, kabupaten))
+    raise HTTPException(404, "Layer tidak ditemukan")
+
+
 @app.get("/api/maps/kabupaten")
-def maps_kabupaten(provinsi: str, exclude_layer: str = "", only_layer: str = ""):
+def maps_kabupaten(provinsi: str, exclude_layer: str = "", only_layer: str = "", per_provinsi: bool = False):
+    # per_provinsi: hanya dikirim tree Overlay Peta (maps-overlay.js). Tool chat
+    # daftar_layer_peta_overlay memanggil fungsi ini tanpa argumen tsb, jadi
+    # tetap melihat bucket flat apa adanya (kabupaten="").
+    if per_provinsi and not only_layer:
+        with db_cursor() as cur:
+            pecahan = _map_layer_pecahan_provinsi(cur, provinsi, exclude_layer)
+        if pecahan:
+            return pecahan
     # exclude_layer: dipakai frontend (lihat maps-overlay.js) supaya kabupaten
     # yang HANYA punya layer "PETA KORIDOR" (kabupaten itu dari shp PETA
     # KORIDOR yang tidak persis merge nama dgn folder Maps/ RBI lama, lihat
@@ -7891,6 +7981,20 @@ def maps_layers(provinsi: str, kabupaten: str = ""):
             (provinsi, kabupaten),
         )
         rows = cur.fetchall()
+        if (not rows and kabupaten and provinsi not in _MAP_BUCKET_TANPA_PECAHAN
+                and _map_layers_punya_kolom_wilayah(cur)):
+            # kunci virtual per provinsi: layer bucket flat yang punya fitur di provinsi itu;
+            # size_mb = perkiraan proporsional jumlah fitur
+            cur.execute(
+                """SELECT m.layer, meta.label,
+                          ROUND(meta.size_mb * COUNT(*) / NULLIF(meta.feature_count, 0), 2) AS size_mb
+                   FROM map_layers m JOIN map_layer_meta meta
+                     ON meta.provinsi = m.provinsi AND meta.kabupaten = '' AND meta.layer = m.layer
+                   WHERE m.provinsi=%s AND m.kabupaten='' AND m.wilayah_provinsi @> ARRAY[%s]
+                   GROUP BY m.layer, meta.label, meta.size_mb, meta.feature_count ORDER BY m.layer""",
+                (provinsi, kabupaten),
+            )
+            rows = cur.fetchall()
     return [
         {"layer": r["layer"], "label": r["label"] or _map_layer_label(r["layer"]),
          "size_mb": float(r["size_mb"]) if r["size_mb"] is not None else None}
@@ -7910,53 +8014,80 @@ def maps_layers(provinsi: str, kabupaten: str = ""):
 # Skrip yang mengubah attrs TANPA menyentuh meta (mis. import_iri_ruas_nasional.py)
 # wajib memperbarui imported_at.
 _MAP_LAYER_CACHE_DIR = Path(__file__).resolve().parent / ".cache" / "maplayer"
-_MAP_LAYER_CACHE_VERSI = "v2-5dec"  # ubah bila format payload berubah
+_MAP_LAYER_CACHE_VERSI = "v3-wilayah"  # ubah bila format payload berubah
 _MAP_LAYER_WARM = [
     ("JALAN NASIONAL", "", "Jalan Nasional"), ("JALAN PROVINSI", "", "Jalan Provinsi_up"),
     ("JALAN TOL", "", "Jalan_Tol"), ("BANDARA", "", "Bandara"),
 ]
+# Level of detail menurut zoom (maps-overlay.js mapLayerLodForZoom): 0 = zoom <=6
+# (nasional), 1 = zoom 7-9 (provinsi), 2 = detail (perilaku lama). Toleransi
+# dalam derajat (0.01 ~ 1 km, 0.002 ~ 200 m) -- di bawah 1 piksel pada zoom itu.
+# Hanya berlaku utk layer garis/poligon BERAT (>= _MAP_LAYER_LOD_MIN_TITIK
+# vertex); layer lain selalu dilayani lod 2 dan payload-nya memberi tahu klien
+# (lod_tersedia=false) supaya tidak minta ulang saat zoom berubah.
+_MAP_LAYER_LOD_TOLERANSI = {0: 0.01, 1: 0.002}
+_MAP_LAYER_LOD_MIN_TITIK = 50_000
 
 
-def _map_layer_payload(provinsi: str, kabupaten: str, layer: str):
+def _map_layer_payload(provinsi: str, kabupaten: str, layer: str, lod: int = 2):
     """(etag, bytes_gzip) payload GeoJSON layer; dibangun dari PostGIS bila belum ada di cache disk."""
     import gzip
     import hashlib
+    if lod not in _MAP_LAYER_LOD_TOLERANSI:
+        lod = 2
+
+    def lokasi(lod_):
+        kunci = f"{provinsi}|{kabupaten}|{layer}" + (f"|lod{lod_}" if lod_ != 2 else "")
+        awalan_ = hashlib.sha1(kunci.encode()).hexdigest()[:16]
+        versi = f"{meta['imported_at']}|{meta['feature_count']}|{_MAP_LAYER_CACHE_VERSI}"
+        etag_ = f'"{awalan_}-{hashlib.sha1(versi.encode()).hexdigest()[:12]}"'
+        return awalan_, etag_, _MAP_LAYER_CACHE_DIR / (etag_.strip('"') + ".json.gz")
+
     with db_cursor() as cur:
-        cur.execute(
-            "SELECT label, feature_count, imported_at FROM map_layer_meta "
-            "WHERE provinsi=%s AND kabupaten=%s AND layer=%s",
-            (provinsi, kabupaten, layer),
-        )
-        meta = cur.fetchone()
-        if not meta:
-            raise HTTPException(404, "Layer tidak ditemukan")
-        awalan = hashlib.sha1(f"{provinsi}|{kabupaten}|{layer}".encode()).hexdigest()[:16]
-        etag = f'"{awalan}-{hashlib.sha1(f"{meta['imported_at']}|{meta['feature_count']}|{_MAP_LAYER_CACHE_VERSI}".encode()).hexdigest()[:12]}"'
-        berkas = _MAP_LAYER_CACHE_DIR / (etag.strip('"') + ".json.gz")
+        meta, where_sql, where_params = _map_layer_sumber(cur, provinsi, kabupaten, layer)
+        awalan, etag, berkas = lokasi(lod)
         if berkas.exists():
             return etag, berkas.read_bytes()
 
-        # Heavy layers (e.g. KONTUR, tens of MB of contour lines) are
-        # simplified so the browser doesn't choke on rendering; tolerance is
-        # in degrees (~0.00015 deg ~ 15-17m at this latitude), fine for
-        # on-screen display. Koordinat dibulatkan 5 desimal (~1 m): ~30% lebih kecil.
-        simplify = (meta["feature_count"] or 0) > 3000
-        geom_expr = "ST_SimplifyPreserveTopology(geom, 0.00015)" if simplify else "geom"
+        cur.execute(
+            f"SELECT COALESCE(SUM(ST_NPoints(geom)), 0) AS titik, MAX(ST_Dimension(geom)) AS dim "
+            f"FROM map_layers WHERE {where_sql}",
+            where_params,
+        )
+        info = cur.fetchone()
+        lod_tersedia = (info["dim"] or 0) > 0 and info["titik"] >= _MAP_LAYER_LOD_MIN_TITIK
+        if lod != 2 and not lod_tersedia:
+            lod = 2
+            awalan, etag, berkas = lokasi(lod)
+            if berkas.exists():
+                return etag, berkas.read_bytes()
+
+        if lod != 2:
+            geom_expr, presisi = f"ST_SimplifyPreserveTopology(geom, {_MAP_LAYER_LOD_TOLERANSI[lod]})", 4
+        else:
+            # Heavy layers (e.g. KONTUR, tens of MB of contour lines) are
+            # simplified so the browser doesn't choke on rendering; tolerance is
+            # in degrees (~0.00015 deg ~ 15-17m at this latitude), fine for
+            # on-screen display. Koordinat dibulatkan 5 desimal (~1 m): ~30% lebih kecil.
+            simplify = (meta.get("feature_count_sumber") or meta["feature_count"] or 0) > 3000
+            geom_expr, presisi = ("ST_SimplifyPreserveTopology(geom, 0.00015)" if simplify else "geom"), 5
         cur.execute(
             f"""SELECT jsonb_build_object(
                     'type', 'FeatureCollection',
                     'features', COALESCE(jsonb_agg(jsonb_build_object(
                         'type', 'Feature',
-                        'geometry', ST_AsGeoJSON({geom_expr}, 5)::jsonb,
+                        'geometry', ST_AsGeoJSON({geom_expr}, {presisi})::jsonb,
                         'properties', attrs
                     )), '[]'::jsonb)
                 ) AS fc
-                FROM map_layers WHERE provinsi=%s AND kabupaten=%s AND layer=%s""",
-            (provinsi, kabupaten, layer),
+                FROM map_layers WHERE {where_sql}""",
+            where_params,
         )
         geojson = cur.fetchone()["fc"]
 
     geojson["label"] = meta["label"] or _map_layer_label(layer)
+    geojson["lod"] = lod
+    geojson["lod_tersedia"] = lod_tersedia
     gz = gzip.compress(json.dumps(geojson, ensure_ascii=False, separators=(",", ":")).encode("utf-8"), 6)
     try:
         _MAP_LAYER_CACHE_DIR.mkdir(parents=True, exist_ok=True)
@@ -7976,16 +8107,17 @@ def _warm_map_layer_cache():
     berurutan oleh warm-up startup tunggal (_warm_ijd_bulk_cache_nasional), yang sudah
     memastikan hanya satu worker menjalankannya."""
     for prov, kab, lay in _MAP_LAYER_WARM:
-        try:
-            _map_layer_payload(prov, kab, lay)
-        except Exception as e:  # noqa: BLE001
-            print(f"  [warm-cache] layer {lay}: {e}")
+        for lod in (2, 0):  # detail + tampilan nasional (zoom awal peta)
+            try:
+                _map_layer_payload(prov, kab, lay, lod)
+            except Exception as e:  # noqa: BLE001
+                print(f"  [warm-cache] layer {lay} lod {lod}: {e}")
 
 
 @app.get("/api/maps/layer")
-def maps_layer(request: Request, provinsi: str, layer: str, kabupaten: str = ""):
+def maps_layer(request: Request, provinsi: str, layer: str, kabupaten: str = "", lod: int = 2):
     import gzip
-    etag, gz = _map_layer_payload(provinsi, kabupaten, layer)
+    etag, gz = _map_layer_payload(provinsi, kabupaten, layer, lod)
     kepala = {"ETag": etag, "Cache-Control": "no-cache", "Vary": "Accept-Encoding"}
     if request.headers.get("if-none-match") == etag:
         return Response(status_code=304, headers=kepala)
@@ -8021,31 +8153,24 @@ def maps_layer_export_shp(provinsi: str, layer: str, kabupaten: str = ""):
     import shapely.wkb
 
     with db_cursor() as cur:
-        cur.execute(
-            "SELECT label, feature_count FROM map_layer_meta WHERE provinsi=%s AND kabupaten=%s AND layer=%s",
-            (provinsi, kabupaten, layer),
-        )
-        meta = cur.fetchone()
-        if not meta:
-            raise HTTPException(404, "Layer tidak ditemukan")
+        meta, where_sql, where_params = _map_layer_sumber(cur, provinsi, kabupaten, layer)
 
         # Sebagian kecil layer (mis. SUBKLASTER) punya baris GeometryCollection nyasar di antara
         # Polygon/MultiPolygon (sisa proses geopandas dissolve/union saat impor) -- SHP mewajibkan
         # satu jenis geometri per file, jadi dipaksa ke dimensi geometri yang PALING BANYAK dulu
         # (0=titik, 1=garis, 2=poligon) via ST_CollectionExtract; baris yg jenisnya beda dilewati.
         cur.execute(
-            "SELECT ST_Dimension(geom) AS d, count(*) AS n FROM map_layers "
-            "WHERE provinsi=%s AND kabupaten=%s AND layer=%s GROUP BY 1 ORDER BY n DESC LIMIT 1",
-            (provinsi, kabupaten, layer),
+            f"SELECT ST_Dimension(geom) AS d, count(*) AS n FROM map_layers "
+            f"WHERE {where_sql} GROUP BY 1 ORDER BY n DESC LIMIT 1",
+            where_params,
         )
         dim_row = cur.fetchone()
         dim = int(dim_row["d"]) if dim_row and dim_row["d"] is not None else None
         geom_expr = f"ST_CollectionExtract(ST_MakeValid(geom), {dim + 1})" if dim is not None else "geom"
 
         cur.execute(
-            f"SELECT attrs, ST_AsBinary({geom_expr}) AS g FROM map_layers "
-            "WHERE provinsi=%s AND kabupaten=%s AND layer=%s",
-            (provinsi, kabupaten, layer),
+            f"SELECT attrs, ST_AsBinary({geom_expr}) AS g FROM map_layers WHERE {where_sql}",
+            where_params,
         )
         rows = cur.fetchall()
 
@@ -8070,7 +8195,7 @@ def maps_layer_export_shp(provinsi: str, layer: str, kabupaten: str = ""):
         records.append(rec)
     gdf = gpd.GeoDataFrame(records, crs="EPSG:4326")
 
-    nama_dasar = re.sub(r"[^A-Za-z0-9_]+", "_", f"{layer}").strip("_")[:60] or "layer"
+    nama_dasar = re.sub(r"[^A-Za-z0-9_]+", "_", f"{layer} {kabupaten}").strip("_")[:60] or "layer"
     with TemporaryDirectory() as tmp:
         shp_path = Path(tmp) / f"{nama_dasar}.shp"
         gdf.to_file(shp_path, driver="ESRI Shapefile", engine="pyogrio", encoding="utf-8")

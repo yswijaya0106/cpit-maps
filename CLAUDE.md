@@ -1120,6 +1120,28 @@ scripts/tables/layers out to staging.
   distance. This is not travel time. The other xlsx in that folder are identical to the
   `docs/New/8. KESELAMATAN` copies already imported. The LHR file there is
   the pre-`lhr_spatial_join.py` original.
+- **Perlintasan KA per BTP** (3 Okt 2026): `scripts/import_perlintasan_btp_to_postgis.py`
+  turns the BTP crossing inventories in `docs/Konektivitas/4. KERETA (KA)/`
+  into 3,831 points. Sources are Bandung, Medan, Padang, Semarang,
+  Surabaya, and Palembang. BTP Jakarta has no coordinates and is skipped.
+  They go into layer `Perlintasan KA (Data BTP)` in bucket `PERLINTASAN
+  SEBIDANG KA`. Every BTP file has a different layout, so the parser is
+  generic, with only sheet and first-header-row config per BTP:
+  - Header levels are joined into a column label. A merged cell fills
+    right ONLY while the upper header group is the same; otherwise
+    Padang's "Tidak Dijaga" leaked into the road-name columns.
+  - Data starts at the first row with a sequence number plus text. Do
+    NOT use "first row with coordinates": Surabaya/Bojonegoro's first row
+    is an underpass without coordinates, and it became a header label.
+  - Status (text column or resmi/liar × penjaga tick boxes) is normalised
+    to Kategori/Legalitas/Penjagaan and a colour in `_warna`. Points now
+    honour `_warna` in `applyLayerStyle`.
+  - The legend is `PERLINTASAN_BTP_LEGEND`, in map-tools and print-map;
+    its colours must match `WARNA` in the script.
+  - Enrichment adds the kab/kota from the BATAS KABUPATEN polygon and
+    whether a TITIK POTONG JALAN-REL point is within 100 m (1,284/3,831).
+  The KAI Pusat list of 3,674 crossings (no coordinates) is NOT imported
+  yet.
 - `scripts/lhr_spatial_join.py` — ad-hoc (not part of the rerun-safe
   pipeline) spatial join of each LHR ruas against BATAS KECAMATAN polygons,
   writing provinsi/kabupaten/kecamatan directly into the source LHR xlsx.
@@ -1214,6 +1236,11 @@ upsert, so they're safe to re-run:
   SELATAN/Kabupaten Barru/JALANLINE.shp`) is genuinely corrupt (bad `.shx`
   record length) and is skipped permanently, logged as `GAGAL` — not
   fixable from the read side.
+- `build_map_layer_wilayah.py` — tags every feature of the national flat
+  overlay buckets with the provinsi it touches (`map_layers.wilayah_provinsi`,
+  ~40 s, only NULL rows unless `--force`). This drives the per-provinsi split
+  of the Overlay Peta tree. It also bumps `map_layer_meta.imported_at`, which
+  invalidates the layer disk cache. Rerun after reimporting any flat bucket.
 - `import_batas_administrasi_kecamatan.py` — replaces the whole "BATAS
   KECAMATAN" `map_layers` bucket (DELETE + reinsert, not incremental) from
   `Maps/BATAS_ADMINISTRASI.gdb` (layer `ADMINISTRASI_KECAMATAN_AR`, BIG file

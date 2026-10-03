@@ -611,7 +611,7 @@ async function loadUsulanModaList(reset) {
 
 const USULAN_IJD_ONLY_BUTTONS = [
   "btnUsulanImport", "btnUsulanExport", "btnUsulanExportIjdScore", "btnIjdDashboard", "btnUsulanExportNpr",
-  "btnBiayaKonstruksi",
+  "btnBiayaKonstruksi", "btnProgramIjd",
 ];
 
 const USULAN_MODA_SEARCH_PLACEHOLDER = {

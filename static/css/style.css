@@ -1693,3 +1693,39 @@ html::-webkit-scrollbar, body::-webkit-scrollbar, .sidebar::-webkit-scrollbar, .
 .biaya-usulan-row:hover td { background: var(--panel-alt); }
 .biaya-acuan-line { font-size: 12.5px; margin: 6px 0; }
 .biaya-filter-row[hidden], #biayaKonstruksiView[hidden], #biayaAcuanView[hidden], #biayaLolosView[hidden] { display: none; }
+
+/* --- Riwayat Program IJD (program-ijd.js) --- */
+.pijd-peta-view { display: flex; flex: 1 1 auto; min-height: 0; }
+.pijd-peta-view[hidden] { display: none; }
+.pijd-map { flex: 1 1 60%; min-width: 0; background: var(--panel-alt); }
+.pijd-side { flex: 0 0 400px; overflow-y: auto; padding: 14px 16px; border-left: 1px solid var(--border); background: var(--bg); }
+.pijd-side .laporan-kpi-row { gap: 8px; margin-bottom: 14px; }
+.pijd-side .laporan-kpi-tile { flex: 1 1 110px; min-width: 0; padding: 10px 12px; }
+.pijd-side .laporan-kpi-value { font-size: 16px; }
+.pijd-crumb { display: flex; align-items: center; gap: 6px; font-size: 13px; margin-bottom: 10px; flex-wrap: wrap; }
+.pijd-crumb button { background: none; border: 0; color: var(--primary); cursor: pointer; padding: 0; font: inherit; }
+.pijd-crumb b { color: var(--text); }
+.pijd-legend { display: flex; flex-direction: column; gap: 4px; font-size: 11.5px; color: var(--text-dim); margin: 4px 0 12px; }
+.pijd-legend-row { display: flex; align-items: center; gap: 8px; }
+.pijd-swatch { width: 18px; height: 12px; border-radius: 3px; flex: 0 0 auto; border: 1px solid rgba(255,255,255,.15); }
+.pijd-table { border-collapse: collapse; font-size: 12px; width: 100%; }
+.pijd-table th, .pijd-table td { padding: 5px 6px; border-bottom: 1px solid var(--border); text-align: left; vertical-align: top; }
+.pijd-table th { color: var(--text-dim); font-weight: 600; white-space: nowrap; position: sticky; top: 0; background: var(--bg); }
+.pijd-table td.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.pijd-row { cursor: pointer; }
+.pijd-row:hover td, .pijd-row.aktif td { background: var(--panel-alt); }
+.pijd-tooltip { position: absolute; pointer-events: none; z-index: 5; background: var(--panel); color: var(--text); border: 1px solid var(--border);
+  border-radius: 8px; padding: 8px 10px; font-size: 12px; box-shadow: var(--shadow); max-width: 260px; }
+.pijd-tooltip .hint { margin: 2px 0 0; }
+.pijd-stack { display: flex; height: 22px; border-radius: 4px; overflow: hidden; gap: 2px; background: var(--bg); }
+.pijd-stack span { display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 600; color: #0f1420; min-width: 0; }
+.pijd-stack-row { display: grid; grid-template-columns: 48px 1fr; gap: 8px; align-items: center; margin-bottom: 6px; font-size: 12px; color: var(--text-dim); }
+.pijd-key { display: inline-flex; align-items: center; gap: 6px; margin-right: 14px; font-size: 12px; color: var(--text-dim); }
+#programIjdOverlay .laporan-hbar-value { flex: 0 0 auto; min-width: 150px; white-space: nowrap; }
+#programIjdOverlay th.num { text-align: right; }
+.pijd-pill { display: inline-block; font-size: 10.5px; padding: 1px 6px; border-radius: 6px; background: rgba(148,163,196,.14); color: var(--text-dim); margin: 1px 2px 1px 0; white-space: nowrap; }
+@media (max-width: 900px) {
+  .pijd-peta-view { flex-direction: column; }
+  .pijd-map { flex: 0 0 48%; }
+  .pijd-side { flex: 1 1 auto; border-left: 0; border-top: 1px solid var(--border); }
+}

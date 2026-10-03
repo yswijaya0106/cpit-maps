@@ -2994,6 +2994,13 @@ IJD_EXPORT_SKOR_TEKNOKRATIS_100_LABEL = "Skor Teknokratis A-E (Ternormalisasi 0-
 # total NPR + kategori, sesuai permintaan ("masukkan skor NPR").
 IJD_EXPORT_NPR_LABEL = "Skor NPR (Eksperimental, Belum Policy Resmi)"
 IJD_EXPORT_NPR_KATEGORI_LABEL = "Kategori NPR (Eksperimental)"
+# Kolom INFORMASI dari program_ijd_riwayat (Riwayat Program IJD R1, DPP final
+# 2023-2026; scripts/import_program_ijd_riwayat.py), ditambah 3 Okt 2026.
+# TIDAK memengaruhi skor/ranking apa pun -- Parameter E tetap dari
+# penuntasan_ijd_kompetensi / lanjutan_ijd_2025 sampai pemilik kaidah
+# memutuskan apakah riwayat 2023-2024 ikut dihitung (lihat _program_ijd_info).
+IJD_EXPORT_PROGRAM_2026_LABEL = "Diprogramkan 2026 (Program IJD R1, info)"
+IJD_EXPORT_RIWAYAT_PROGRAM_LABEL = "Riwayat Program IJD 2023-2025 (info, cocok nama ruas)"
 
 # Ambang heuristik "tidak masuk akal" per kolom produksi kecamatan
 # (bps_kecamatan_potensi_tematik) -- BUKAN batas resmi apa pun, cuma jauh di
@@ -3066,6 +3073,77 @@ def _normalisasi_provinsi_multi(provinsi) -> tuple:
     if isinstance(provinsi, str):
         provinsi = [provinsi] if provinsi else []
     return tuple(sorted({p for p in provinsi if p}))
+
+
+_PROGRAM_IJD_AWALAN = re.compile(
+    r"^(PRESERVASI|PENINGKATAN|PEMBANGUNAN|PERBAIKAN|REHABILITASI|REKONSTRUKSI|PELEBARAN|"
+    r"PEMELIHARAAN BERKALA|PENGGANTIAN)\b(\s+(JALAN|JL)\.?)?(\s+BARU)?(\s+(JALAN|JL|RUAS JALAN|RUAS)\.?)*\s*")
+
+
+def _program_ijd_kunci(nama) -> str:
+    """Kunci nama ruas utk mencocokkan nama kegiatan Program IJD ("Preservasi Jalan
+    X - Y (Segmen 2)") dgn nama ruas usulan ("X - Y"): buang kata kerja penanganan
+    di depan, isi kurung, dan ekor segmen/STA/tahap; sisakan huruf+angka."""
+    s = _PROGRAM_IJD_AWALAN.sub("", str(nama or "").upper().strip())
+    s = re.sub(r"\(.*?\)", "", s)
+    s = re.split(r"\bSEGMEN\b|\bSTA\b|\bTAHAP\b", s)[0]
+    return re.sub(r"[^A-Z0-9]", "", s)
+
+
+def _program_ijd_info(rows) -> dict:
+    """id usulan -> (teks kolom Diprogramkan 2026, teks kolom Riwayat 2023-2025).
+    2026: tautan usulan_inpres_id hasil importer (alokasi Kompetensi persis &
+    tunggal). 2023-2025: kunci nama ruas/kegiatan di kab/kota yang sama (kegiatan
+    Program milik provinsi -> provinsi yang sama). Pencocokan nama persis setelah
+    dinormalisasi -- ruas yg namanya ditulis lain bisa terlewat (tidak dikarang)."""
+    def _rp(v):
+        return f"Rp {v / 1e9:,.2f} M".replace(",", "X").replace(".", ",").replace("X", ".")
+
+    with db_cursor() as cur:
+        cur.execute("SELECT to_regclass('public.program_ijd_riwayat') AS t")
+        if cur.fetchone()["t"] is None:
+            kosong = "Data Program IJD belum diimpor (scripts/import_program_ijd_riwayat.py)"
+            return {r["id"]: (kosong, kosong) for r in rows}
+        cur.execute("SELECT tahun, kode_provinsi, kode_kabupaten, nama_kegiatan, kategori, "
+                    "panjang_jalan_km, alokasi_rp, usulan_inpres_id FROM program_ijd_riwayat")
+        program = cur.fetchall()
+
+    per_usulan_2026, per_kab, per_prov = {}, {}, {}
+    for p in program:
+        if p["tahun"] == 2026:
+            if p["usulan_inpres_id"]:
+                per_usulan_2026.setdefault(p["usulan_inpres_id"], []).append(p)
+            continue
+        k = _program_ijd_kunci(p["nama_kegiatan"])
+        if len(k) < 6:  # nama terlalu pendek -> rawan salah cocok
+            continue
+        if p["kode_kabupaten"]:
+            per_kab.setdefault((p["kode_kabupaten"], k), []).append(p)
+        else:
+            per_prov.setdefault((p["kode_provinsi"], k), []).append(p)
+
+    out = {}
+    for r in rows:
+        p26 = per_usulan_2026.get(r["id"])
+        if p26:
+            p = p26[0]
+            teks26 = (f"Ya — {_rp(float(p['alokasi_rp'] or 0))}"
+                      + (f" · {float(p['panjang_jalan_km']):.2f} km".replace(".", ",") if p["panjang_jalan_km"] else "")
+                      + f" · {(p['kategori'] or '').capitalize()}")
+        else:
+            teks26 = "Tidak tercatat"
+        kunci = {_program_ijd_kunci(r.get("nama_ruas")), _program_ijd_kunci(r.get("nama_kegiatan"))} - {""}
+        cocok = {id(p): p for k in kunci
+                 for p in per_kab.get((r.get("kode_kabupaten"), k), []) + per_prov.get((r.get("kode_provinsi"), k), [])}
+        if cocok:
+            ps = sorted(cocok.values(), key=lambda p: p["tahun"])
+            tahun = ", ".join(str(t) for t in sorted({p["tahun"] for p in ps}))
+            teks_riw = (f"{tahun} — {len(ps)} kegiatan, total {_rp(sum(float(p['alokasi_rp'] or 0) for p in ps))}"
+                        f" ({ps[-1]['nama_kegiatan']})")
+        else:
+            teks_riw = "Tidak tercatat"
+        out[r["id"]] = (teks26, teks_riw)
+    return out
 
 
 def _ijd_score_bulk_rows(provinsi, tahun: int):
@@ -3456,6 +3534,7 @@ def _ijd_score_bulk_rows(provinsi, tahun: int):
     for i, sk in enumerate(spn_sorted_scores, start=1):
         spn_rank_by_score.setdefault(sk, i)
     spn_jumlah_ternilai = len(spn_sorted_scores)
+    program_info = _program_ijd_info(rows)  # 2 kolom informasi, tidak masuk skor
 
     # Struktur & label kolom mengikuti sheet "Output Penilaian" di
     # docs/docs/2_Analisis Prioritas untuk Bappenas dan Teknokratis
@@ -3469,13 +3548,15 @@ def _ijd_score_bulk_rows(provinsi, tahun: int):
                   + [IJD_EXPORT_TEKNOKRATIS_HEADERS[k] for k in IJD_EXPORT_TEKNOKRATIS_KODE]
                   + [IJD_EXPORT_RANKING_LABEL, IJD_EXPORT_KELENGKAPAN_LABEL, IJD_EXPORT_OUTLIER_LABEL,
                      IJD_EXPORT_PRIORITAS_NASIONAL_LABEL, IJD_EXPORT_RANKING_NASIONAL_LABEL,
-                     IJD_EXPORT_SKOR_TEKNOKRATIS_100_LABEL, IJD_EXPORT_NPR_LABEL, IJD_EXPORT_NPR_KATEGORI_LABEL])
+                     IJD_EXPORT_SKOR_TEKNOKRATIS_100_LABEL, IJD_EXPORT_NPR_LABEL, IJD_EXPORT_NPR_KATEGORI_LABEL,
+                     IJD_EXPORT_PROGRAM_2026_LABEL, IJD_EXPORT_RIWAYAT_PROGRAM_LABEL])
     header_row_short = (["No.", "ID"] + [label for label, _ in IJD_EXPORT_IDENTITAS_COLS]
                          + IJD_EXPORT_BAPPENAS_HEADERS_SHORT
                          + [IJD_EXPORT_TEKNOKRATIS_HEADERS[k] for k in IJD_EXPORT_TEKNOKRATIS_KODE]
                          + [IJD_EXPORT_RANKING_LABEL, IJD_EXPORT_KELENGKAPAN_LABEL, IJD_EXPORT_OUTLIER_LABEL,
                             IJD_EXPORT_PRIORITAS_NASIONAL_LABEL, IJD_EXPORT_RANKING_NASIONAL_LABEL,
-                            IJD_EXPORT_SKOR_TEKNOKRATIS_100_LABEL, IJD_EXPORT_NPR_LABEL, IJD_EXPORT_NPR_KATEGORI_LABEL])
+                            IJD_EXPORT_SKOR_TEKNOKRATIS_100_LABEL, IJD_EXPORT_NPR_LABEL, IJD_EXPORT_NPR_KATEGORI_LABEL,
+                     IJD_EXPORT_PROGRAM_2026_LABEL, IJD_EXPORT_RIWAYAT_PROGRAM_LABEL])
 
     data_rows = []
     for i, (row, skor) in enumerate(hasil, start=1):
@@ -3538,7 +3619,8 @@ def _ijd_score_bulk_rows(provinsi, tahun: int):
         npr_skor = npr_by_id[row["id"]]
         data_row += [rank_in_provinsi[row["id"]], kelengkapan, outlier_keterangan,
                      prioritas_nasional_ket, peringkat_nasional,
-                     skor["skor_ternormalisasi_100"], npr_skor["npr"], npr_skor["kategori"]]
+                     skor["skor_ternormalisasi_100"], npr_skor["npr"], npr_skor["kategori"],
+                     *program_info[row["id"]]]
         data_rows.append(data_row)
 
     result = (header_row, header_row_short, data_rows)
@@ -8522,6 +8604,436 @@ def usulan_riwayat_lolos_kompetensi():
         "catatan": ("Entitas ruas = baris lintas tahun dengan kab/kota sama dan nama ruas sama (setelah "
                     "dinormalisasi) atau kode ruas sama. Lolos = Alokasi Usulan (Kompetensi) > 0. "
                     "Kab/kota tanpa kode BPS (baris SITIA tanpa provinsi/kab) tidak dihitung per kab."),
+    })
+
+
+# --- Riwayat Program IJD 2023-2026 (3 Okt 2026) ----------------------------
+# Dashboard dari program_ijd_riwayat (DPP final R1, sama dgn sumber deck Bappenas
+# "20261002 Preparation, Implementation and Validation of IJD"): peta 3 level
+# Indonesia -> provinsi -> kab/kota (deck hal. 4), sebaran Barat-Timur & pulau
+# (hal. 15-16), ruas berulang x fiskal (hal. 17-18), kab/kota tanpa IJD
+# (hal. 19-20), rekap per tahun (hal. 22-33). Murni informasi -- tidak memengaruhi
+# skor/ranking apa pun.
+# Pulau mengikuti deck (Bali terpisah dari Nusa Tenggara, masuk Barat) -- beda dgn
+# wilayah_pulau.py ("Bali & Nusa Tenggara") yg dipakai filter viewer Data.
+_PROGRAM_PULAU = (
+    ("Sumatera", "Barat", (11, 12, 13, 14, 15, 16, 17, 18, 19, 21)),
+    ("Jawa", "Barat", (31, 32, 33, 34, 35, 36)),
+    ("Bali", "Barat", (51,)),
+    ("Nusa Tenggara", "Timur", (52, 53)),
+    ("Kalimantan", "Timur", (61, 62, 63, 64, 65)),
+    ("Sulawesi", "Timur", (71, 72, 73, 74, 75, 76)),
+    ("Maluku", "Timur", (81, 82)),
+    ("Papua", "Timur", (91, 92, 94, 95, 96, 97)),
+)
+_PROGRAM_PULAU_BY_PROV = {k: (p, w) for p, w, ks in _PROGRAM_PULAU for k in ks}
+_PROGRAM_FISKAL_URUT = ("Sangat Tinggi", "Tinggi", "Sedang", "Rendah", "Sangat Rendah")
+_program_geom_cache: dict = {}
+
+
+def _program_ijd_cek_tabel(cur):
+    cur.execute("SELECT to_regclass('public.program_ijd_riwayat') AS t")
+    if cur.fetchone()["t"] is None:
+        raise HTTPException(503, "Data Program IJD belum diimpor (scripts/import_program_ijd_riwayat.py).")
+
+
+def _program_ijd_filter(tahun: str, kategori: str):
+    """(klausa WHERE, params) utk filter tahun ('semua' | 2023..2026) & kategori."""
+    where, params = ["TRUE"], []
+    if tahun != "semua":
+        if not tahun.isdigit() or int(tahun) not in _BIAYA_TAHUN:
+            raise HTTPException(400, "tahun harus 'semua' atau 2023-2026.")
+        where.append("tahun = %s")
+        params.append(int(tahun))
+    if kategori != "semua":
+        if kategori not in ("preservasi", "pembangunan"):
+            raise HTTPException(400, "kategori harus semua/preservasi/pembangunan.")
+        where.append("kategori = %s")
+        params.append(kategori)
+    return " AND ".join(where), params
+
+
+def _program_nama_kunci(nama: str) -> str:
+    """Nama wilayah -> kunci pencocokan: buang awalan administratif, samakan
+    singkatan, sisakan huruf+angka. Hanya fallback utk poligon batas yg kodenya
+    kosong (DIY, DKI, Kep. Sitaro di layer BATAS_ADMINISTRASI.gdb)."""
+    s = str(nama or "").upper()
+    s = s.replace("DAERAH ISTIMEWA", "DI").replace("DAERAH KHUSUS IBUKOTA", "DKI").replace("KEP.", "KEPULAUAN")
+    s = re.sub(r"^(KABUPATEN ADMINISTRASI|KOTA ADMINISTRASI|KABUPATEN|KOTA|KAB\.)\s+", "", s.strip())
+    return re.sub(r"[^A-Z0-9]", "", s)
+
+
+def _program_fiskal(cur):
+    """Kategori kapasitas fiskal (kolom SITIA usulan_inpres.kapasitas_fiskal):
+    kab/kota dari usulan bupati/walikota, provinsi dari usulan gubernur. Deck
+    memakai KFD PMK 97/2025 -- kategorinya sama (5 kelas) tapi sumbernya beda."""
+    norm = {k.upper(): k for k in _PROGRAM_FISKAL_URUT}
+    cur.execute("SELECT kode_kabupaten AS k, MAX(UPPER(kapasitas_fiskal)) AS f FROM usulan_inpres "
+                "WHERE kapasitas_fiskal IS NOT NULL AND kode_kabupaten IS NOT NULL "
+                "AND nama_pengusul NOT ILIKE 'Gubernur%%' GROUP BY 1")
+    kab = {r["k"]: norm.get(r["f"]) for r in cur.fetchall()}
+    cur.execute("SELECT kode_provinsi AS k, MAX(UPPER(kapasitas_fiskal)) AS f FROM usulan_inpres "
+                "WHERE kapasitas_fiskal IS NOT NULL AND kode_provinsi IS NOT NULL "
+                "AND nama_pengusul ILIKE 'Gubernur%%' GROUP BY 1")
+    prov = {r["k"]: norm.get(r["f"]) for r in cur.fetchall()}
+    return kab, prov
+
+
+def _program_geom(cur, level: str, kode_provinsi: Optional[int]):
+    """Poligon batas (map_layers BATAS PROVINSI / BATAS KABUPATEN) yg sudah
+    disederhanakan utk choropleth: pulau sangat kecil dibuang (poligon terbesar
+    tiap wilayah tetap dipertahankan supaya kab kepulauan kecil tidak hilang).
+    Aslinya ~940 ribu titik utk provinsi -> ~0,8 MB. Cache in-process (geometri
+    batas tidak berubah selama server jalan)."""
+    kunci = (level, kode_provinsi)
+    if kunci in _program_geom_cache:
+        return _program_geom_cache[kunci]
+    if level == "provinsi":
+        filt, params, tol, min_area = "l.provinsi = 'BATAS PROVINSI'", [], 0.01, 0.001
+        cur.execute("SELECT kode_provinsi AS k, nama_provinsi AS n FROM ref_wilayah_provinsi")
+        ref = {_program_nama_kunci(r["n"]): r["k"] for r in cur.fetchall()}
+    else:
+        filt, tol, min_area = ("l.provinsi = 'BATAS KABUPATEN' AND (l.attrs->>'KODE_KABUPATEN' IS NULL "
+                               "OR (l.attrs->>'KODE_KABUPATEN')::int / 100 = %s)"), 0.003, 0.0002
+        params = [kode_provinsi]
+        cur.execute("SELECT kode_kabupaten AS k, kode_provinsi AS p, jenis_kabupaten AS j, nama_kabupaten_kota AS n "
+                    "FROM ref_wilayah_kabupaten")
+        ref = {(r["p"], r["j"] == "KOTA", _program_nama_kunci(r["n"])): r["k"] for r in cur.fetchall()}
+        cur.execute("SELECT kode_provinsi AS k, nama_provinsi AS n FROM ref_wilayah_provinsi")
+        ref_prov = {_program_nama_kunci(r["n"]): r["k"] for r in cur.fetchall()}
+    cur.execute(f"""
+        WITH bagian AS (
+            SELECT l.id, l.attrs, (ST_Dump(l.geom)).geom AS g FROM map_layers l WHERE {filt}
+        ), urut AS (
+            SELECT id, attrs, g, ST_Area(g) AS a,
+                   row_number() OVER (PARTITION BY id ORDER BY ST_Area(g) DESC) AS rn FROM bagian
+        )
+        SELECT id, attrs, ST_AsGeoJSON(ST_SimplifyPreserveTopology(ST_Collect(g), %s), 4) AS gj
+        FROM urut WHERE rn = 1 OR a > %s GROUP BY id, attrs""", params + [tol, min_area])
+    fitur = []
+    for r in cur.fetchall():
+        a = r["attrs"] or {}
+        if level == "provinsi":
+            kode = a.get("KODE_PROVINSI") or ref.get(_program_nama_kunci(a.get("PROVINSI")))
+            nama = a.get("PROVINSI")
+        else:
+            kode = a.get("KODE_KABUPATEN")
+            nama = a.get("KABUPATEN_KOTA") or ""
+            if kode is None:
+                kp = ref_prov.get(_program_nama_kunci(a.get("PROVINSI")))
+                if kp != kode_provinsi:
+                    continue
+                kode = ref.get((kp, nama.upper().startswith("KOTA"), _program_nama_kunci(nama)))
+        if kode is None:
+            continue
+        fitur.append({"kode": int(kode), "nama": nama, "geometry": json.loads(r["gj"])})
+    _program_geom_cache[kunci] = fitur
+    return fitur
+
+
+@app.get("/api/program-ijd/peta")
+def program_ijd_peta(level: str = "provinsi", kode_provinsi: Optional[int] = None,
+                     tahun: str = "semua", kategori: str = "semua"):
+    """Choropleth 3 level (deck hal. 4): level=provinsi (Indonesia) atau
+    level=kabupaten&kode_provinsi=XX. Nilai per wilayah dari program_ijd_riwayat;
+    wilayah tanpa poligon batas tetap ada di 'wilayah' (tabel) dgn ada_poligon=false."""
+    if level not in ("provinsi", "kabupaten") or (level == "kabupaten" and not kode_provinsi):
+        raise HTTPException(400, "level=provinsi, atau level=kabupaten dengan kode_provinsi.")
+    where, params = _program_ijd_filter(tahun, kategori)
+    agg = ("COUNT(*) AS n_kegiatan, SUM(alokasi_rp) / 1e9 AS alokasi_m, SUM(panjang_jalan_km) AS panjang_km, "
+           "SUM(panjang_jembatan_m) AS jembatan_m, COUNT(DISTINCT tahun) AS n_tahun, "
+           "SUM(alokasi_rp) FILTER (WHERE panjang_jalan_km > 0) / 1e9 AS alokasi_jalan_m, "
+           "array_agg(DISTINCT tahun ORDER BY tahun) AS tahun_list")
+    with db_cursor() as cur:
+        _program_ijd_cek_tabel(cur)
+        geom = _program_geom(cur, level, kode_provinsi)
+        tingkat_prov = None
+        if level == "provinsi":
+            cur.execute("SELECT kode_provinsi AS kode, nama_provinsi AS nama FROM ref_wilayah_provinsi")
+            nama_ref = {r["kode"]: r["nama"].title().replace("Dki", "DKI").replace("Di ", "DI ") for r in cur.fetchall()}
+            cur.execute(f"SELECT kode_provinsi AS kode, COUNT(DISTINCT kode_kabupaten) AS n_kab, {agg} "
+                        f"FROM program_ijd_riwayat WHERE {where} AND kode_provinsi IS NOT NULL GROUP BY 1", params)
+        else:
+            cur.execute("SELECT kode_kabupaten AS kode, jenis_kabupaten AS j, nama_kabupaten_kota AS n "
+                        "FROM ref_wilayah_kabupaten WHERE kode_provinsi = %s", (kode_provinsi,))
+            nama_ref = {r["kode"]: f"{'Kota' if r['j'] == 'KOTA' else 'Kab.'} {r['n'].title()}" for r in cur.fetchall()}
+            cur.execute(f"SELECT {agg} FROM program_ijd_riwayat WHERE {where} AND kode_provinsi = %s "
+                        "AND kode_kabupaten IS NULL", params + [kode_provinsi])
+            tingkat_prov = cur.fetchone()
+            cur.execute(f"SELECT kode_kabupaten AS kode, {agg} FROM program_ijd_riwayat "
+                        f"WHERE {where} AND kode_provinsi = %s AND kode_kabupaten IS NOT NULL GROUP BY 1",
+                        params + [kode_provinsi])
+        nilai = {r["kode"]: r for r in cur.fetchall()}
+        fiskal_kab, fiskal_prov = _program_fiskal(cur)
+
+    def _baris(kode, nama):
+        v = nilai.get(kode) or {}
+        km = float(v.get("panjang_km") or 0)
+        alok = float(v.get("alokasi_m") or 0)
+        alok_jalan = float(v.get("alokasi_jalan_m") or 0)
+        return {
+            "kode": kode, "nama": nama,
+            "fiskal": (fiskal_prov if level == "provinsi" else fiskal_kab).get(kode),
+            "n_kegiatan": v.get("n_kegiatan") or 0, "n_kab": v.get("n_kab"),
+            "alokasi_m": round(alok, 2), "panjang_km": round(km, 2),
+            "jembatan_m": round(float(v.get("jembatan_m") or 0), 1),
+            "rp_per_km_semua": round(alok / km, 2) if km else None,
+            "rp_per_km_jalan": round(alok_jalan / km, 2) if km else None,
+            "tahun_list": v.get("tahun_list") or [],
+        }
+
+    poligon = {f["kode"] for f in geom}
+    semua_kode = set(nama_ref) | set(nilai)
+    wilayah = []
+    for kode in semua_kode:
+        b = _baris(kode, nama_ref.get(kode, str(kode)))
+        b["ada_poligon"] = kode in poligon
+        wilayah.append(b)
+    wilayah.sort(key=lambda b: -b["alokasi_m"])
+    per_kode = {b["kode"]: b for b in wilayah}
+    features = [{"type": "Feature", "geometry": f["geometry"],
+                 "properties": {**per_kode.get(f["kode"], _baris(f["kode"], f["nama"])), "nama_batas": f["nama"]}}
+                for f in geom]
+    total = {k: round(sum(b[k] for b in wilayah), 2) for k in ("alokasi_m", "panjang_km", "jembatan_m", "n_kegiatan")}
+    if tingkat_prov and tingkat_prov["n_kegiatan"]:
+        tp = {"n_kegiatan": tingkat_prov["n_kegiatan"],
+              "alokasi_m": round(float(tingkat_prov["alokasi_m"] or 0), 2),
+              "panjang_km": round(float(tingkat_prov["panjang_km"] or 0), 2)}
+        for k in ("alokasi_m", "panjang_km", "n_kegiatan"):
+            total[k] = round(total[k] + tp[k], 2)
+    else:
+        tp = None
+    return jsonable_encoder({
+        "level": level, "kode_provinsi": kode_provinsi, "tahun": tahun, "kategori": kategori,
+        "type": "FeatureCollection", "features": features, "wilayah": wilayah,
+        "tingkat_provinsi": tp, "total": total,
+        "tanpa_poligon": [b["nama"] for b in wilayah if not b["ada_poligon"] and b["n_kegiatan"]],
+        "catatan": ("Sumber: Riwayat Program IJD 2023-2026 (DPP final, Revisi R1). Nilai nominal. "
+                    "Rp/km (semua) = Σ alokasi ÷ Σ panjang jalan, termasuk alokasi jembatan (rumus deck hal. 26); "
+                    "Rp/km (jalan) = hanya kegiatan dengan panjang jalan > 0. Kegiatan usulan provinsi tidak "
+                    "punya kab/kota, ditampilkan terpisah di level kabupaten. Fiskal = kategori SITIA."),
+    })
+
+
+@app.on_event("startup")
+async def _warm_program_geom():
+    """Geometri choropleth provinsi (~11 dtk menyederhanakan ~940 ribu titik) di
+    thread terpisah, supaya klik pertama peta Riwayat Program IJD tidak menunggu."""
+    def _warm():
+        try:
+            with db_cursor() as cur:
+                _program_geom(cur, "provinsi", None)
+        except Exception as e:  # noqa: BLE001 -- bukan bagian kritis start-up
+            print(f"[warm program geom] dilewati: {e}")
+    asyncio.get_event_loop().run_in_executor(None, _warm)
+
+
+@app.get("/api/program-ijd/kegiatan")
+def program_ijd_kegiatan(kode_provinsi: int, kode_kabupaten: Optional[int] = None,
+                         tahun: str = "semua", kategori: str = "semua"):
+    """Daftar kegiatan satu kab/kota (atau kegiatan usulan provinsi bila
+    kode_kabupaten kosong) -- rincian Level 3 peta."""
+    where, params = _program_ijd_filter(tahun, kategori)
+    if kode_kabupaten:
+        where += " AND kode_kabupaten = %s"
+        params.append(kode_kabupaten)
+    else:
+        where += " AND kode_provinsi = %s AND kode_kabupaten IS NULL"
+        params.append(kode_provinsi)
+    with db_cursor() as cur:
+        _program_ijd_cek_tabel(cur)
+        cur.execute(f"SELECT tahun, tahap, nama_kegiatan, kategori, status_jalan, kab_kota, panjang_jalan_km, "
+                    f"panjang_jembatan_m, alokasi_rp / 1e9 AS alokasi_m, tematik, catatan_data "
+                    f"FROM program_ijd_riwayat WHERE {where} ORDER BY tahun, alokasi_rp DESC", params)
+        return jsonable_encoder({"kegiatan": cur.fetchall()})
+
+
+@app.get("/api/program-ijd/ringkasan")
+def program_ijd_ringkasan():
+    """Barat-Timur & pulau (deck hal. 15-16), ruas berulang x fiskal (hal. 17-18),
+    kab/kota tanpa IJD (hal. 19-20)."""
+    with db_cursor() as cur:
+        _program_ijd_cek_tabel(cur)
+        cur.execute("SELECT tahun, kode_provinsi, kode_kabupaten, provinsi, kab_kota, nama_kegiatan, kategori, "
+                    "panjang_jalan_km, alokasi_rp FROM program_ijd_riwayat ORDER BY tahun, id")
+        rows = cur.fetchall()
+        cur.execute("SELECT kode_kabupaten AS kode, kode_provinsi AS kp, nama_provinsi AS prov, "
+                    "jenis_kabupaten AS j, nama_kabupaten_kota AS n FROM ref_wilayah_kabupaten "
+                    "WHERE kode_provinsi <> 31")
+        ref_kab = cur.fetchall()
+        fiskal_kab, fiskal_prov = _program_fiskal(cur)
+    tahun_list = list(_BIAYA_TAHUN)
+
+    # 1. Barat-Timur & pulau
+    def _kosong():
+        return {t: {"alokasi_t": 0.0, "n_kegiatan": 0, "panjang_km": 0.0} for t in tahun_list}
+    wil, pulau = {"Barat": _kosong(), "Timur": _kosong()}, {p: _kosong() for p, _, _ in _PROGRAM_PULAU}
+    for r in rows:
+        p, w = _PROGRAM_PULAU_BY_PROV.get(r["kode_provinsi"], (None, None))
+        if not p:
+            continue
+        for d in (wil[w][r["tahun"]], pulau[p][r["tahun"]]):
+            d["alokasi_t"] += float(r["alokasi_rp"] or 0) / 1e12
+            d["n_kegiatan"] += 1
+            d["panjang_km"] += float(r["panjang_jalan_km"] or 0)
+    total_th = {t: wil["Barat"][t]["alokasi_t"] + wil["Timur"][t]["alokasi_t"] for t in tahun_list}
+
+    def _seri(d):
+        return [{"tahun": t, "alokasi_t": round(d[t]["alokasi_t"], 2), "n_kegiatan": d[t]["n_kegiatan"],
+                 "panjang_km": round(d[t]["panjang_km"], 1),
+                 "porsi_pct": round(d[t]["alokasi_t"] / total_th[t] * 100, 1) if total_th[t] else None}
+                for t in tahun_list]
+    kal = {t: pulau["Kalimantan"][t]["alokasi_t"] for t in tahun_list}
+    sensitivitas = [{"tahun": t, "barat_pct": round((wil["Barat"][t]["alokasi_t"] + kal[t]) / total_th[t] * 100, 1)}
+                    for t in tahun_list if total_th[t]]
+
+    # 2. Ruas berulang (kunci nama ruas persis setelah dinormalisasi, per kab/kota;
+    #    kegiatan usulan provinsi dikunci per provinsi)
+    grup = {}
+    for r in rows:
+        kn = _program_ijd_kunci(r["nama_kegiatan"])
+        if not kn:
+            continue
+        wk = ("K", r["kode_kabupaten"]) if r["kode_kabupaten"] else ("P", r["kode_provinsi"] or r["provinsi"])
+        grup.setdefault((wk, kn), []).append(r)
+    berulang = []
+    for (wk, _), rs in grup.items():
+        th = sorted({r["tahun"] for r in rs})
+        if len(th) < 2:
+            continue
+        akhir = rs[-1]
+        fiskal = fiskal_kab.get(wk[1]) if wk[0] == "K" else fiskal_prov.get(akhir["kode_provinsi"])
+        berulang.append({
+            "nama_kegiatan": akhir["nama_kegiatan"], "kab_kota": akhir["kab_kota"], "provinsi": akhir["provinsi"],
+            "tahun": th, "frekuensi": len(th), "berturut": th[-1] - th[0] + 1 == len(th),
+            "fiskal": fiskal or "Tidak ada data",
+            "total_alokasi_m": round(sum(float(r["alokasi_rp"] or 0) for r in rs) / 1e9, 1),
+            "kategori": sorted({r["kategori"] for r in rs if r["kategori"]}),
+        })
+    berulang.sort(key=lambda x: (-x["frekuensi"], -x["total_alokasi_m"]))
+    fiskal_kolom = list(_PROGRAM_FISKAL_URUT) + ["Tidak ada data"]
+    silang = {f: {n: 0 for n in (4, 3, 2)} for f in fiskal_kolom}
+    for b in berulang:
+        silang[b["fiskal"]][b["frekuensi"]] += 1
+    total_alok = sum(float(r["alokasi_rp"] or 0) for r in rows)
+    alok_berulang = sum(b["total_alokasi_m"] for b in berulang) * 1e9
+
+    # 3. Kab/kota tanpa IJD 2023-2026 (DKI di luar lingkup IJD)
+    ada = {r["kode_kabupaten"] for r in rows if r["kode_kabupaten"]}
+    nihil = [{"kode": k["kode"], "provinsi": k["prov"].title(),
+              "kab_kota": f"{'Kota' if k['j'] == 'KOTA' else 'Kab.'} {k['n'].title()}",
+              "fiskal": fiskal_kab.get(k["kode"]) or "Tidak ada data"}
+             for k in ref_kab if k["kode"] not in ada]
+    per_fiskal = {f: {"n_kab": 0, "n_nihil": 0} for f in fiskal_kolom}
+    for k in ref_kab:
+        f = fiskal_kab.get(k["kode"]) or "Tidak ada data"
+        per_fiskal[f]["n_kab"] += 1
+        per_fiskal[f]["n_nihil"] += k["kode"] not in ada
+    nihil.sort(key=lambda x: (fiskal_kolom.index(x["fiskal"]), x["provinsi"], x["kab_kota"]))
+
+    return jsonable_encoder({
+        "wilayah": {w: _seri(d) for w, d in wil.items()},
+        "pulau": [{"pulau": p, "wilayah": w, "seri": _seri(pulau[p]),
+                   "total_t": round(sum(pulau[p][t]["alokasi_t"] for t in tahun_list), 2)}
+                  for p, w, _ in _PROGRAM_PULAU],
+        "sensitivitas_kalimantan_barat": sensitivitas,
+        "total_t": round(total_alok / 1e12, 2), "n_kegiatan": len(rows),
+        "ruas_berulang": {
+            "n": len(berulang), "per_frekuensi": {n: sum(1 for b in berulang if b["frekuensi"] == n) for n in (4, 3, 2)},
+            "berturut": {n: sum(1 for b in berulang if b["frekuensi"] == n and b["berturut"]) for n in (4, 3, 2)},
+            "alokasi_t": round(alok_berulang / 1e12, 2),
+            "porsi_pct": round(alok_berulang / total_alok * 100, 1) if total_alok else None,
+            "silang_fiskal": [{"fiskal": f, **{str(n): v for n, v in silang[f].items()}} for f in fiskal_kolom],
+            "daftar": berulang,
+        },
+        "tanpa_ijd": {"n_kab_lingkup": len(ref_kab), "daftar": nihil,
+                      "per_fiskal": [{"fiskal": f, **v} for f, v in per_fiskal.items()]},
+        "catatan": ("Sumber: Riwayat Program IJD 2023-2026 (DPP final, Revisi R1). Barat = Sumatera, Jawa, Bali; "
+                    "Timur = Nusa Tenggara, Kalimantan, Sulawesi, Maluku, Papua (pembagian deck Bappenas). "
+                    "Ruas berulang = nama kegiatan sama setelah dinormalisasi (kata kerja penanganan, isi kurung, "
+                    "segmen/STA dibuang) di kab/kota yang sama; deck memakai pencocokan toleran penulisan sehingga "
+                    "angkanya lebih besar (275 ruas). Tanpa IJD = kab/kota di ref_wilayah (DKI dikeluarkan) yang tidak "
+                    "punya satu pun kegiatan. Fiskal = kategori SITIA (deck: KFD PMK 97/2025)."),
+    })
+
+
+@app.get("/api/program-ijd/rekap")
+def program_ijd_rekap(tahun: int = 2026):
+    """Rekap satu tahun program (deck hal. 22-33 utk 2026): per provinsi, per
+    kategori, tematik, kab/kota terbanyak/tersedikit, anomali data."""
+    if tahun not in _BIAYA_TAHUN:
+        raise HTTPException(400, "tahun harus 2023-2026.")
+    with db_cursor() as cur:
+        _program_ijd_cek_tabel(cur)
+        cur.execute("SELECT * FROM program_ijd_riwayat WHERE tahun = %s ORDER BY id", (tahun,))
+        rows = cur.fetchall()
+    f = lambda v: float(v or 0)
+    per_prov, per_kab, per_kat, tem = {}, {}, {}, {}
+    for r in rows:
+        p = per_prov.setdefault(r["provinsi"], {"provinsi": r["provinsi"], "n_kegiatan": 0, "alokasi_m": 0.0,
+                                                "panjang_km": 0.0, "jembatan_m": 0.0, "alokasi_jalan_m": 0.0,
+                                                "kab": set()})
+        p["n_kegiatan"] += 1
+        p["alokasi_m"] += f(r["alokasi_rp"]) / 1e9
+        p["panjang_km"] += f(r["panjang_jalan_km"])
+        p["jembatan_m"] += f(r["panjang_jembatan_m"])
+        if f(r["panjang_jalan_km"]) > 0:
+            p["alokasi_jalan_m"] += f(r["alokasi_rp"]) / 1e9
+        if r["kode_kabupaten"]:
+            p["kab"].add(r["kode_kabupaten"])
+            k = per_kab.setdefault(r["kode_kabupaten"], {"kab_kota": r["kab_kota"], "provinsi": r["provinsi"],
+                                                         "n_kegiatan": 0, "alokasi_m": 0.0, "panjang_km": 0.0,
+                                                         "jembatan_m": 0.0})
+            k["n_kegiatan"] += 1
+            k["alokasi_m"] += f(r["alokasi_rp"]) / 1e9
+            k["panjang_km"] += f(r["panjang_jalan_km"])
+            k["jembatan_m"] += f(r["panjang_jembatan_m"])
+        kt = per_kat.setdefault(r["kategori"] or "lainnya", {"kategori": r["kategori"] or "lainnya", "n_kegiatan": 0,
+                                                             "alokasi_m": 0.0, "panjang_km": 0.0, "jembatan_m": 0.0})
+        kt["n_kegiatan"] += 1
+        kt["alokasi_m"] += f(r["alokasi_rp"]) / 1e9
+        kt["panjang_km"] += f(r["panjang_jalan_km"])
+        kt["jembatan_m"] += f(r["panjang_jembatan_m"])
+        kel = (r["tematik"] or "Tidak diisi").split(" - ")[0].strip()
+        t = tem.setdefault(kel, {"tematik": kel, "n_kegiatan": 0, "alokasi_m": 0.0, "detail": {}})
+        t["n_kegiatan"] += 1
+        t["alokasi_m"] += f(r["alokasi_rp"]) / 1e9
+        det = (r["tematik"] or "Tidak diisi").strip()
+        t["detail"][det] = t["detail"].get(det, 0) + 1
+    total_alok = sum(p["alokasi_m"] for p in per_prov.values())
+    provinsi = []
+    for p in per_prov.values():
+        km = p["panjang_km"]
+        provinsi.append({**{k: (round(v, 2) if isinstance(v, float) else v) for k, v in p.items() if k != "kab"},
+                         "n_kab": len(p["kab"]),
+                         "rp_per_km_semua": round(p["alokasi_m"] / km, 2) if km else None,
+                         "rp_per_km_jalan": round(p["alokasi_jalan_m"] / km, 2) if km else None})
+    provinsi.sort(key=lambda x: -x["alokasi_m"])
+    rnd = lambda d: {k: (round(v, 2) if isinstance(v, float) else v) for k, v in d.items()}
+    kab = sorted((rnd(k) for k in per_kab.values()), key=lambda x: (-x["n_kegiatan"], -x["alokasi_m"]))
+    tematik = sorted(({**rnd({k: v for k, v in t.items() if k != "detail"}),
+                       "porsi_alokasi_pct": round(t["alokasi_m"] / total_alok * 100, 1) if total_alok else None,
+                       "porsi_kegiatan_pct": round(t["n_kegiatan"] / len(rows) * 100, 1) if rows else None,
+                       "detail": sorted(t["detail"].items(), key=lambda x: -x[1])}
+                      for t in tem.values()), key=lambda x: -x["alokasi_m"])
+    anomali = [{"provinsi": r["provinsi"], "kab_kota": r["kab_kota"], "nama_kegiatan": r["nama_kegiatan"],
+                "alokasi_m": round(f(r["alokasi_rp"]) / 1e9, 2), "panjang_km": f(r["panjang_jalan_km"]),
+                "catatan": r["catatan_data"]} for r in rows if r.get("catatan_data")]
+    return jsonable_encoder({
+        "tahun": tahun,
+        "total": {"n_kegiatan": len(rows), "n_provinsi": len(per_prov), "n_kab": len(per_kab),
+                  "n_kegiatan_tingkat_provinsi": sum(1 for r in rows if not r["kode_kabupaten"]),
+                  "alokasi_t": round(total_alok / 1000, 2),
+                  "panjang_km": round(sum(f(r["panjang_jalan_km"]) for r in rows), 2),
+                  "jembatan_m": round(sum(f(r["panjang_jembatan_m"]) for r in rows), 1)},
+        "provinsi": provinsi, "kategori": [rnd(v) for v in per_kat.values()], "tematik": tematik,
+        "kab_terbanyak": kab[:20], "kab_tersedikit": sorted(kab, key=lambda x: (x["n_kegiatan"], x["alokasi_m"]))[:20],
+        "anomali": anomali,
+        "catatan": ("Sumber: Riwayat Program IJD 2023-2026 (DPP final, Revisi R1), nilai nominal. Jumlah kab/kota "
+                    "tidak menghitung kegiatan usulan provinsi (tanpa kab/kota). Rp/km (semua) = Σ alokasi ÷ Σ "
+                    "panjang jalan termasuk alokasi jembatan (rumus deck hal. 26, meski judulnya menyebut tanpa "
+                    "jembatan); Rp/km (jalan) = hanya kegiatan dengan panjang jalan > 0. Tematik dikelompokkan "
+                    "menurut teks sebelum ' - '; label tematik 2023-2024 berbeda skema dengan 2025-2026."),
     })
 
 

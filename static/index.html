@@ -525,6 +525,75 @@
       </div>
     </div>
 
+    <!-- Riwayat Program IJD 2023-2026 (program-ijd.js), sumber program_ijd_riwayat -->
+    <div class="datatable-overlay" id="programIjdOverlay" hidden>
+      <div class="datatable-modal">
+        <div class="datatable-head">
+          <div class="datatable-head-title">
+            <h3><i class="bi bi-map"></i> Riwayat Program IJD 2023–2026</h3>
+            <span class="datatable-meta" id="programIjdMeta">DPP final (Riwayat R1) · nilai nominal</span>
+          </div>
+          <div class="datatable-head-actions">
+            <button type="button" class="icon-btn" id="programIjdClose" aria-label="Tutup"><i
+                class="bi bi-x-lg"></i></button>
+          </div>
+        </div>
+        <div class="datatable-tabs biaya-tabs">
+          <button type="button" class="datatable-tab active" data-pijd-tab="peta"><i class="bi bi-map"></i> Peta
+            Provinsi → Kab/Kota</button>
+          <button type="button" class="datatable-tab" data-pijd-tab="wilayah"><i class="bi bi-compass"></i>
+            Barat–Timur &amp; Pulau</button>
+          <button type="button" class="datatable-tab" data-pijd-tab="berulang"><i class="bi bi-arrow-repeat"></i> Ruas
+            Berulang</button>
+          <button type="button" class="datatable-tab" data-pijd-tab="nihil"><i class="bi bi-slash-circle"></i>
+            Kab/Kota Tanpa IJD</button>
+          <button type="button" class="datatable-tab" data-pijd-tab="rekap"><i class="bi bi-clipboard-data"></i> Rekap
+            Tahunan</button>
+        </div>
+        <div class="biaya-filter-row" id="pijdPetaFilter">
+          <label>Tahun
+            <select id="pijdTahun">
+              <option value="semua">2023–2026 (gabungan)</option>
+              <option value="2023">2023</option>
+              <option value="2024">2024</option>
+              <option value="2025">2025</option>
+              <option value="2026">2026</option>
+            </select></label>
+          <label>Kategori
+            <select id="pijdKategori">
+              <option value="semua">Semua</option>
+              <option value="preservasi">Preservasi</option>
+              <option value="pembangunan">Pembangunan</option>
+            </select></label>
+          <label>Warna peta menurut
+            <select id="pijdMetrik">
+              <option value="alokasi_m">Total alokasi (Rp miliar)</option>
+              <option value="panjang_km">Panjang jalan (km)</option>
+              <option value="n_kegiatan">Jumlah kegiatan</option>
+            </select></label>
+        </div>
+        <div class="biaya-filter-row" id="pijdRekapFilter" hidden>
+          <label>Tahun program
+            <select id="pijdRekapTahun">
+              <option value="2026">2026</option>
+              <option value="2025">2025</option>
+              <option value="2024">2024</option>
+              <option value="2023">2023</option>
+            </select></label>
+        </div>
+        <div class="pijd-peta-view" id="pijdPetaView">
+          <div class="pijd-map" id="pijdMap" role="img" aria-label="Peta choropleth alokasi Program IJD"></div>
+          <aside class="pijd-side" id="pijdSide">
+            <div class="laporan-distribusi-empty">Memuat...</div>
+          </aside>
+        </div>
+        <div class="laporan-distribusi-view" id="pijdWilayahView" hidden></div>
+        <div class="laporan-distribusi-view" id="pijdBerulangView" hidden></div>
+        <div class="laporan-distribusi-view" id="pijdNihilView" hidden></div>
+        <div class="laporan-distribusi-view" id="pijdRekapView" hidden></div>
+      </div>
+    </div>
+
     <div class="datatable-overlay" id="usulanModaDashboardOverlay" hidden>
       <div class="datatable-modal">
         <div class="datatable-head">
@@ -903,6 +972,9 @@
               <button id="btnBiayaKonstruksi" class="btn btn-ghost btn-sm"
                 title="Tren biaya konstruksi jalan per provinsi (Rp miliar/km), usulan SITIA 2023-2026">
                 <i class="bi bi-cash-coin"></i> Tren Biaya Konstruksi</button>
+              <button id="btnProgramIjd" class="btn btn-ghost btn-sm"
+                title="Riwayat Program IJD 2023-2026 (DPP final): peta provinsi → kab/kota, Barat–Timur, ruas berulang, kab/kota tanpa IJD, rekap tahunan">
+                <i class="bi bi-map"></i> Riwayat Program IJD</button>
               <button id="btnUsulanModaExport" class="btn btn-ghost btn-sm" hidden><i class="bi bi-download"></i>
                 Export XLSX</button>
               <button id="btnUsulanRoadSafety" class="btn btn-ghost btn-sm" hidden
@@ -1068,6 +1140,7 @@
   <script src="/js/route-list.js"></script>
   <script src="/js/analysis.js"></script>
   <script src="/js/usulan-inpres.js"></script>
+  <script src="/js/program-ijd.js"></script>
   <script src="/js/pelabuhan-urgensi.js"></script>
   <!-- chat analitik: markdown (marked) + sanitasi HTML (DOMPurify) + grafik (Chart.js);
        chat.js tetap jalan tanpa ketiganya (markdown ringan, tanpa grafik) bila CDN gagal -->

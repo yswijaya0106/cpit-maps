@@ -991,6 +991,45 @@ scripts/tables/layers out to staging.
   Tengah/Pegunungan. It flags anomalies in `catatan_data` and does not drop
   them. It links 2026 rows to `usulan_inpres` (633/659) only when the
   Kompetensi alokasi matches exactly and the match is unique.
+  The IJD score export/preview also gets two trailing columns that are
+  information only and feed no score or ranking (`_program_ijd_info`):
+  "Diprogramkan 2026", from that link, and "Riwayat Program IJD 2023-2025",
+  matched by `_program_ijd_kunci` (normalized ruas name in the same kab, or
+  the same provinsi for provinsi-level kegiatan). Locally 269/3,072 usulan
+  match. Parameter E still uses `penuntasan_ijd_kompetensi` /
+  `lanjutan_ijd_2025`. Switching it to this history waits on the kaidah
+  owner.
+  **Same day, "Riwayat Program IJD" modal** (button `#btnProgramIjd`,
+  [static/js/program-ijd.js](static/js/program-ijd.js), loaded after
+  usulan-inpres.js because it reuses `laporanKpiTile`/`laporanHBar`/
+  `biayaFmt`). It implements the deck's pages 4 and 15–33 on
+  `program_ijd_riwayat`. It is information only and feeds no score.
+  Endpoints:
+  - `GET /api/program-ijd/peta?level=provinsi|kabupaten&kode_provinsi=&tahun=&kategori=`
+    returns a 3-level choropleth (Indonesia → provinsi → kab/kota) on its own
+    `google.maps.Map` inside the modal.
+  - `/kegiatan` lists the kegiatan for Level 3.
+  - `/ringkasan` covers Barat–Timur, per pulau (deck split: Bali on its own,
+    counted as Barat), ruas berulang × fiskal, and the 23 kab/kota without IJD.
+  - `/rekap?tahun=` is the yearly recap.
+
+  Gotchas:
+  - Geometry comes from `BATAS PROVINSI`/`BATAS KABUPATEN` in `map_layers`,
+    simplified in SQL. Tiny islands are dropped, but the largest part of each
+    region is always kept. This takes the provinsi layer from ~940k vertices
+    to ~0.8 MB. It is cached in-process (`_program_geom_cache`) and warmed on
+    startup, because the first build takes ~11 s.
+  - `KODE_*` is null in that gdb for DIY, DKI and Kep. Sitaro. These match
+    by name instead (`_program_nama_kunci`).
+  - Kab. Nunukan, Kapuas Hulu and Madiun have no polygon at all. They stay in
+    the table with a "tanpa peta" tag.
+  - Deck page 26's "Rp/km (tanpa jembatan)" is actually Σ all alokasi
+    (including bridge kegiatan) ÷ Σ km. Jawa Timur shows 11.62 there, but
+    roads alone are 6.56. Both are shown, labelled "semua" and "jalan".
+  - Ruas berulang uses exact normalized names (`_program_ijd_kunci`) and
+    gives 246 ruas / Rp14.5 T. The deck's fuzzy matching gives 275 / Rp16.5 T.
+  - Fiskal comes from SITIA `kapasitas_fiskal` (deck: KFD PMK 97/2025), so
+    the counts per class differ slightly from the deck.
   (5) `scripts/validasi_usulan_sitia.py [--xlsx out.xlsx]` is a read-only
   report of checks V1-V10: extreme cost/km, panjang > ruas, Kompetensi >
   1.5× Pemda, kondisi > ruas, kode/panjang drift across years, unmatched

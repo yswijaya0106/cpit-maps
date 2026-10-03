@@ -40,6 +40,10 @@ ALIAS_NAMA = {
     "PANGKAJENEKEPULAUAN": "PANGKAJENEDANKEPULAUAN",
     "KEPSIAUTAGULANDANGBIARO": "KEPULAUANSIAUTAGULANDANGBIARO",
     "SIAUTAGULANDANGBIARO": "KEPULAUANSIAUTAGULANDANGBIARO",
+    # BIG gdb "Administrasi Kepulauan Seribu", SIGAP/BPS "Adm. Kep. Seribu"
+    "ADMINISTRASIKEPULAUANSERIBU": "KEPULAUANSERIBU",
+    "ADMKEPSERIBU": "KEPULAUANSERIBU",
+    "PADANGSIDEMPUAN": "PADANGSIDIMPUAN",
 }
 
 ALIAS_PROVINSI = {
@@ -49,6 +53,7 @@ ALIAS_PROVINSI = {
     "YOGYAKARTA": "DIYOGYAKARTA",
     "DAERAHISTIMEWAYOGYAKARTA": "DIYOGYAKARTA",
     "JAKARTA": "DKIJAKARTA",
+    "DAERAHKHUSUSIBUKOTAJAKARTA": "DKIJAKARTA",
     "BANGKABELITUNG": "KEPULAUANBANGKABELITUNG",
     "BABEL": "KEPULAUANBANGKABELITUNG",
     "KEPRI": "KEPULAUANRIAU",
@@ -127,6 +132,13 @@ class PencocokKabupaten:
         return [m for m in daftar if not jenis or m["jenis"] == jenis]
 
     def _cari(self, provinsi, jenis, kn):
+        hasil = self._cari_kunci(provinsi, jenis, kn)
+        # singkatan "Kep. X" -> master "KEPULAUAN X" (mis. "Kep. Talaud"), hanya bila belum ketemu
+        if hasil is None and kn.startswith("KEP") and not kn.startswith("KEPULAUAN"):
+            hasil = self._cari_kunci(provinsi, jenis, "KEPULAUAN" + kn[3:])
+        return hasil
+
+    def _cari_kunci(self, provinsi, jenis, kn):
         kn = ALIAS_NAMA.get(kn, kn)
         if not kn:
             return None

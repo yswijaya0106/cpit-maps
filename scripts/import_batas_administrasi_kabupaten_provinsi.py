@@ -27,11 +27,13 @@ kecamatan:
     (flat nasional, sama pola dgn JALAN NASIONAL/JALAN TOL), layer="Provinsi"
     -- SATU layer nasional berisi 34 poligon provinsi hasil dissolve.
 
-KODE_KABUPATEN/KODE_PROVINSI dicocokkan best-effort ke penduduk_kecamatan
-(reuse matcher dari import_batas_administrasi_kecamatan) utk konsistensi/
-potensi join di masa depan -- TIDAK ada endpoint yg butuh ini sekarang
-(kecamatan_join_data di app.py cuma terima kode_kecamatan), jadi kegagalan
-match di sini tidak mempengaruhi fungsi apa pun saat ini.
+KODE_KABUPATEN dicocokkan ke penduduk_kecamatan lewat pencocok bersama
+(scripts/wilayah_cocok.py). Kode ini KINI DIPAKAI utk menurunkan kode
+kabupaten dari koordinat titik (import_bpsdm_perhubungan.py,
+import_bps_data_bandara.py, validasi_id_wilayah.py, dst.) -- poligon yg hilang
+atau tak berkode membuat titik di dalamnya tak terpetakan. Kolom KDPKAB di gdb
+sengaja TIDAK dipakai: urutannya Kemendagri (beda dgn BPS utk Papua Tengah/
+Pegunungan/Barat Daya).
 
 Usage (venv aktif):
     python scripts/import_batas_administrasi_kabupaten_provinsi.py
@@ -54,9 +56,8 @@ import shapely
 from psycopg.types.json import Json
 
 from db import db_cursor as pg_cursor  # noqa: E402
-from import_batas_administrasi_kecamatan import (  # noqa: E402 -- reuse, bukan tulis ulang
-    norm, norm_compact, build_master_index, match_kode_kabupaten, kabupaten_label,
-)
+from import_batas_administrasi_kecamatan import kabupaten_label  # noqa: E402 -- reuse
+from wilayah_cocok import PencocokKabupaten, kunci_provinsi  # noqa: E402
 
 GDB_PATH = Path(__file__).resolve().parent.parent / "Maps" / "BATAS_ADMINISTRASI.gdb"
 LAYER_NAME = "Area_Batas_Wilayah_Administrasi"
@@ -78,9 +79,19 @@ def _clean_geom(geom):
     8/38 provinsi tersenyapkan hilang total dari peta. buffer(0) adalah
     perbaikan standar shapely utk self-intersection minor; kalau itu pun
     masih invalid, pakai geometri UTUH (belum disederhanakan) drpd membuang
-    seluruh provinsi -- payload lebih besar tapi provinsinya tetap tampil."""
-    if geom is None or geom.is_empty or not geom.is_valid:
+    seluruh provinsi -- payload lebih besar tapi provinsinya tetap tampil.
+
+    Geometri yg sudah TIDAK valid di sumber diperbaiki (make_valid), bukan
+    dibuang: Kab. Madiun (ring self-intersection di gdb) dulu hilang total dari
+    BATAS KABUPATEN & dari poligon Jawa Timur karena cek ini (3 Okt 2026)."""
+    if geom is None or geom.is_empty:
         return None
+    if not geom.is_valid:
+        geom = shapely.make_valid(geom)
+        if geom.geom_type == "GeometryCollection":  # buang sisa garis/titik hasil perbaikan
+            geom = shapely.union_all([g for g in geom.geoms if g.geom_type in ("Polygon", "MultiPolygon")])
+        if geom.is_empty or not geom.is_valid:
+            return None
     if geom.has_z:
         geom = shapely.force_2d(geom)
     try:
@@ -96,14 +107,21 @@ def _clean_geom(geom):
 
 
 def build_provinsi_index(cur):
-    """provinsi_norm -> kode_provinsi, dari penduduk_kecamatan."""
+    """kunci_provinsi -> kode_provinsi, dari penduduk_kecamatan (kunci & alias dari
+    wilayah_cocok: "Daerah Istimewa Yogyakarta"/"Daerah Khusus Ibukota Jakarta"
+    dulu tidak cocok dgn nama master "DI YOGYAKARTA"/"DKI JAKARTA")."""
     cur.execute("SELECT DISTINCT kode_provinsi, provinsi FROM penduduk_kecamatan")
-    return {norm(r["provinsi"]): r["kode_provinsi"] for r in cur.fetchall()}
+    return {kunci_provinsi(r["provinsi"]): r["kode_provinsi"] for r in cur.fetchall()}
 
 
-def import_kabupaten(cur, gdf, kab_idx, kab_idx2):
-    sub = gdf[gdf["TIPADM"].isin([4, 5])].copy()
-    print(f"  {len(sub)} poligon kabupaten/kota definitif")
+def import_kabupaten(cur, gdf, pencocok):
+    # TIPADM 4/5 = kab/kota. Nunukan & Kapuas Hulu di gdb ini ber-TIPADM KOSONG
+    # (WADMKK tetap terisi) -- dulu tersaring diam-diam sehingga kedua kabupaten
+    # itu tidak punya poligon sama sekali (temuan kajian data Udara, 3 Okt 2026).
+    nama_kab = gdf["WADMKK"].astype(str).str.strip().replace({"None": "", "nan": ""})
+    sub = gdf[gdf["TIPADM"].isin([4, 5]) | (gdf["TIPADM"].isna() & (nama_kab != ""))].copy()
+    print(f"  {len(sub)} poligon kabupaten/kota definitif "
+          f"({int(sub['TIPADM'].isna().sum())} di antaranya TIPADM kosong)")
 
     cur.execute("DELETE FROM map_layers WHERE provinsi=%s", (BATAS_KAB_DIRNAME,))
     cur.execute("DELETE FROM map_layer_meta WHERE provinsi=%s", (BATAS_KAB_DIRNAME,))
@@ -119,9 +137,14 @@ def import_kabupaten(cur, gdf, kab_idx, kab_idx2):
         provinsi = str(r["WADMPR"]).strip()
         wadmkk = str(r["WADMKK"]).strip()
         kab_label = kabupaten_label(wadmkk)
-        kode_kab = match_kode_kabupaten(kab_idx, kab_idx2, provinsi, wadmkk)
+        # pencocok bersama (wilayah_cocok.py): matcher lama gagal utk seluruh DKI
+        # ("Kota Administrasi ..."), DIY ("Daerah Istimewa Yogyakarta") & Sitaro
+        # ("Kep. ...") -> 12 poligon tanpa KODE_KABUPATEN.
+        m = pencocok.cari(provinsi, wadmkk)
+        kode_kab = int(m["kode_kabupaten"]) if m else None
         if kode_kab is None:
             n_miss += 1
+            print(f"    ! tidak cocok master: {provinsi} | {wadmkk}")
         attrs = {
             "KABUPATEN_KOTA": kab_label,
             "PROVINSI": provinsi,
@@ -187,7 +210,7 @@ def import_provinsi(cur, gdf, prov_idx):
         if merged is None:
             n_bad += 1
             continue
-        kode_prov = prov_idx.get(norm(provinsi))
+        kode_prov = prov_idx.get(kunci_provinsi(provinsi))
         if kode_prov is None:
             n_miss += 1
         attrs = {"PROVINSI": provinsi, "KODE_PROVINSI": kode_prov}
@@ -226,11 +249,12 @@ def main():
     print(f"  {len(gdf)} poligon dibaca ({time.time() - t0:.1f}s)")
 
     with pg_cursor() as cur:
-        kab_idx, kab_idx2, _kec_by_kab = build_master_index(cur)
+        cur.execute("SELECT DISTINCT kode_provinsi, provinsi, kode_kabupaten, kabupaten_kota FROM penduduk_kecamatan")
+        pencocok = PencocokKabupaten(cur.fetchall())
         prov_idx = build_provinsi_index(cur)
 
         print("\nImpor BATAS KABUPATEN...")
-        import_kabupaten(cur, gdf, kab_idx, kab_idx2)
+        import_kabupaten(cur, gdf, pencocok)
 
         print("\nImpor BATAS PROVINSI (dissolve dari kabupaten)...")
         import_provinsi(cur, gdf, prov_idx)

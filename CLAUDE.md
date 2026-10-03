@@ -1275,6 +1275,20 @@ upsert, so they're safe to re-run:
   over every row (`TIPADM` 4=kabupaten/5=kota/6=unassigned island
   fragments) grouped by `WADMPR`; skipping `TIPADM=6` would drop small
   islands from the dissolved provinsi shape.
+  **Fixed 3 Oct 2026:** before this, Nunukan, Kapuas Hulu and Kab. Madiun had
+  no polygon and 12 polygons (all DKI, all DIY, Sitaro) had no
+  `KODE_KABUPATEN`. There were three importer bugs:
+  - Nunukan and Kapuas Hulu have a blank `TIPADM` in the gdb, so the 4/5
+    filter dropped them.
+  - Madiun is an invalid geometry in the source and was discarded; it's now
+    repaired with `make_valid`.
+  - The old matcher missed "Kota Administrasi …" and "Daerah Istimewa …";
+    matching now uses `wilayah_cocok.PencocokKabupaten`.
+
+  The layer now has 520 polygons, all coded, covering 514/514 master kab.
+  Other scripts derive kode kabupaten from coordinates through this layer
+  (BPSDM, bandara, validasi_id_wilayah). Don't use the gdb's `KDPKAB`: it
+  is in Kemendagri order, which differs from BPS for Papua.
 - `import_peta_koridor_to_postgis.py` — imports the "PETA KORIDOR" overlay
   layer (per-ruas geometry of Koridor IJD proposals, 11,612 features/506
   kabupaten/37 provinsi — all except DKI Jakarta) into `map_layers`/

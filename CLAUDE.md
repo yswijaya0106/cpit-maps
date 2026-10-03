@@ -1077,6 +1077,29 @@ scripts/tables/layers out to staging.
   `import_pelabuhan_daerah.py` (DELETE+INSERT) menghapusnya — jalankan ulang
   skrip spatial join setelah reimpor.
   DB baru wajib menjalankan skrip itu (SELECT app.py membaca kolom baru).
+- **PSC 119 lokasi** (3 Okt 2026): `scripts/import_psc119_lokasi_to_postgis.py`
+  loads `docs/Konektivitas/8. KESELAMATAN/Data Lokasi PSC 119.xlsx` (207 PSC)
+  as map layer `PSC 119` in a new flat bucket `KESELAMATAN`. The tree
+  category "Keselamatan & Layanan Darurat" in `MAP_LAYER_CATEGORIES`
+  holds it. PIC name, phone, and VDN/Station/Login ID are deliberately
+  NOT imported. About 9% of the source coordinates are broken:
+  - Thousand-separator and trailing-comma formats are fixed automatically.
+  - Points outside Indonesia, more than 3 km offshore, or in a different
+    kab than the name (checked against BATAS KABUPATEN polygons via
+    `wilayah_cocok.PencocokKabupaten`) are NOT drawn.
+  - Kab PSC offices inside a same-name Kota (Blitar, Madiun) are kept
+    with a `Catatan data` note.
+  Result: 194 drawn, 13 rejected and listed (`--laporan out.csv`). Points
+  whose kab has exactly one `psc119_layanan` survey row get that survey
+  summary in the popup (118). DELETE+reinsert; restart the server after a
+  rerun. The Road Safety profile (`road_safety.py`) uses this layer to
+  compute the straight-line distance from each LRK/Blackspot/SS KA point
+  to the nearest PSC, which may be in another kab. It adds a PSC point
+  count, mean/max distance per kab, and a "> 30 km" count (`PSC_JAUH_KM`,
+  a marker, not a standard). The point sheet gets the nearest PSC and its
+  distance. This is not travel time. The other xlsx in that folder are identical to the
+  `docs/New/8. KESELAMATAN` copies already imported. The LHR file there is
+  the pre-`lhr_spatial_join.py` original.
 - `scripts/lhr_spatial_join.py` — ad-hoc (not part of the rerun-safe
   pipeline) spatial join of each LHR ruas against BATAS KECAMATAN polygons,
   writing provinsi/kabupaten/kecamatan directly into the source LHR xlsx.

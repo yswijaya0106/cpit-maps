@@ -9,6 +9,7 @@ panel "Jelajahi Usulan Inpres") dan scripts/export_road_safety_kabupaten.py.
 Sel kosong = data tidak tersedia, bukan nol.
 """
 import io
+import math
 import re
 import time
 from collections import defaultdict
@@ -37,7 +38,11 @@ KETERANGAN = [
     "Kendaraan: tahun terbaru per kab (2023-2025); pertumbuhan = CAGR antara tahun pertama dan terakhir bila >= 2 tahun; cakupan kab tidak lengkap.",
     "LHR/VCR: hanya ruas jalan nasional (data tahun bervariasi 2010-2023); ruas lintas kab dihitung untuk tiap kab yang dilaluinya.",
     "Jalan Tidak Mantap (%) dari kemantapan_ijd_2026; panjang jalan dari bps_kabupaten_jalan 2025.",
-    "PSC 119: survei 187 PSC / 27 provinsi; kab/kota tanpa baris ditulis 'Tidak ada data' (bukan berarti tidak punya PSC). PSC tidak memiliki koordinat, jarak/waktu tempuh ke LRK/JPL belum dihitung. Waktu respons adalah teks bebas dari survei.",
+    "PSC 119: survei 187 PSC / 27 provinsi; kab/kota tanpa baris ditulis 'Tidak ada data' (bukan berarti tidak punya PSC). Waktu respons adalah teks bebas dari survei.",
+    "Jarak ke PSC 119: dari titik LRK/Blackspot/SS KA ke titik PSC terdekat (layer KESELAMATAN/PSC 119, "
+    "scripts/import_psc119_lokasi_to_postgis.py, 194 titik dari 207 di sumber), boleh lintas kab/kota. "
+    "Jarak garis lurus, BUKAN jarak/waktu tempuh jalan; ambang 30 km hanya penanda awal. "
+    "PSC yang koordinatnya salah di sumber (13) tidak ikut, sehingga jarak di kab itu bisa terlalu besar.",
     "Kapasitas Fiskal (IKFD): kategori dari kolom SITIA usulan bupati/walikota (Sangat Rendah s.d. Sangat Tinggi); "
     "konteks Skema Prioritas Pendampingan RAK LLAJ (slide 7), TIDAK diskor. Ambang IKFD di skema dari PMK 116/2021 "
     "-- kategori SITIA mungkin memakai PMK yang lebih baru.",
@@ -53,7 +58,8 @@ def _q(sql, args=None):
 
 def _norm_prov(s):
     s = re.sub(r"[^A-Z ]", " ", (s or "").upper())
-    s = re.sub(r"\b(DAERAH ISTIMEWA|D I|DI|DKI|PROVINSI|PROV)\b", " ", s)
+    # "Daerah Khusus Ibukota Jakarta" (poligon BATAS KECAMATAN) = "DKI JAKARTA" (master BPS)
+    s = re.sub(r"\b(DAERAH KHUSUS IBUKOTA|DAERAH KHUSUS|DAERAH ISTIMEWA|D I|DI|DKI|PROVINSI|PROV)\b", " ", s)
     return re.sub(r"\s+", " ", s).strip()
 
 
@@ -92,6 +98,24 @@ def load_wilayah():
     return master, kode_from_text
 
 
+_kec_idx_cache = {}
+
+
+def _kunci_kec(nama):
+    return re.sub(r"[^A-Z0-9]", "", (nama or "").upper())
+
+
+def kode_kec_dari_nama(kode_kab, nama_kec):
+    """Kode kecamatan BPS dari (kode kab, nama kecamatan) -- fallback utk poligon BATAS KECAMATAN yang
+    KODE_KECAMATAN-nya kosong (mis. seluruh 44 kecamatan DKI Jakarta: sumber memakai kode Kemendagri)."""
+    if not _kec_idx_cache:
+        for r in _q("select kode_kabupaten, kecamatan, kode_kecamatan from penduduk_kecamatan"):
+            _kec_idx_cache[(str(r["kode_kabupaten"]), _kunci_kec(r["kecamatan"]))] = str(r["kode_kecamatan"])
+    if not kode_kab or not nama_kec:
+        return None
+    return _kec_idx_cache.get((str(kode_kab), _kunci_kec(nama_kec)))
+
+
 def points_by_kab(kode_from_text, layer_provinsi, layer):
     """Titik layer map_layers -> kab/kota lewat spatial join ke poligon BATAS KECAMATAN."""
     rows = _q("""
@@ -110,9 +134,39 @@ def points_by_kab(kode_from_text, layer_provinsi, layer):
             kode = str(int(ka["KODE_KECAMATAN"]) // 1000)
         elif ka:
             kode = kode_from_text(ka.get("PROVINSI"), ka.get("KABUPATEN_KOTA"))
+        kode_kec = (str(int(ka["KODE_KECAMATAN"])) if ka.get("KODE_KECAMATAN")
+                    else kode_kec_dari_nama(kode, ka.get("KECAMATAN")))
         out.append({**r["pattrs"], "_kode_kab": kode, "_lat": r["lat"], "_lon": r["lon"],
-                    "_kab_poligon": ka.get("KABUPATEN_KOTA"), "_kec_poligon": ka.get("KECAMATAN")})
+                    "_kab_poligon": ka.get("KABUPATEN_KOTA"), "_kec_poligon": ka.get("KECAMATAN"),
+                    "_kode_kec": kode_kec})
     return out
+
+
+PSC_JAUH_KM = 30  # penanda titik rawan yang jauh dari PSC 119 (garis lurus), bukan standar resmi
+
+
+def _haversine_km(lat1, lon1, lat2, lon2):
+    p1, p2 = math.radians(lat1), math.radians(lat2)
+    a = (math.sin((p2 - p1) / 2) ** 2
+         + math.cos(p1) * math.cos(p2) * math.sin(math.radians(lon2 - lon1) / 2) ** 2)
+    return 2 * 6371.0 * math.asin(math.sqrt(a))
+
+
+def psc_points():
+    """Titik PSC 119 dari layer peta (kosong bila importer belum dijalankan)."""
+    return _q("""select attrs->>'Nama PSC' as nama, attrs->>'Kode Kab/Kota (BPS)' as kode_kab,
+                        ST_Y(geom) as lat, ST_X(geom) as lon
+                 from map_layers where provinsi='KESELAMATAN' and layer='PSC 119'""")
+
+
+def tandai_psc_terdekat(rows, pscs):
+    """Tambahkan _psc_nama dan _psc_km (garis lurus ke PSC terdekat) ke tiap titik."""
+    for r in rows:
+        r["_psc_nama"], r["_psc_km"] = None, None
+        if not pscs or r["_lat"] is None:
+            continue
+        d, i = min((_haversine_km(r["_lat"], r["_lon"], p["lat"], p["lon"]), i) for i, p in enumerate(pscs))
+        r["_psc_nama"], r["_psc_km"] = pscs[i]["nama"], round(d, 2)
 
 
 def _build():
@@ -123,6 +177,26 @@ def _build():
     blk = points_by_kab(kode_from_text, "JALAN NASIONAL", "BLACKSPOT KECELAKAAN")
     xrel = points_by_kab(kode_from_text, "TITIK POTONG JALAN-REL KA", "Titik Potong Jalan - Rel KA")
     ssk = points_by_kab(kode_from_text, "PERLINTASAN SEBIDANG KA", "Rencana Penanganan SS KA (Titik JPL)")
+    pscs = psc_points()
+    for rows_ in (lrk, blk, ssk):
+        tandai_psc_terdekat(rows_, pscs)
+    psc_titik_per_kab = defaultdict(int)
+    for p in pscs:
+        if p["kode_kab"]:
+            psc_titik_per_kab[p["kode_kab"]] += 1
+
+    def jarak_psc(rows_):
+        """kode_kab -> daftar jarak (km) titik-titik di kab itu ke PSC terdekat."""
+        out = defaultdict(list)
+        for r in rows_:
+            if r["_kode_kab"] and r["_psc_km"] is not None:
+                out[r["_kode_kab"]].append(r["_psc_km"])
+        return out
+
+    j_lrk, j_blk, j_ss = jarak_psc(lrk), jarak_psc(blk), jarak_psc(ssk)
+
+    def _rata(xs):
+        return round(sum(xs) / len(xs), 1) if xs else None
 
     def count_by(rows, pred=None):
         c = defaultdict(int)
@@ -241,6 +315,16 @@ def _build():
             "PSC - Operasional 24 Jam": ("Ya" if any((p["status_operasional_2026"] or "").lower().startswith("24") for p in psc) else "Tidak") if ada_psc else None,
             "PSC - Terintegrasi RS": ("Ya" if any(p["integrasi_rumah_sakit"] == "Ya" for p in psc) else "Tidak") if ada_psc else None,
             "PSC - Kasus Kecelakaan Ditangani": sum(p["kasus_kecelakaan_ditangani"] or 0 for p in psc) if ada_psc else None,
+            # jarak titik rawan -> PSC 119 terdekat (garis lurus, boleh lintas kab)
+            "Titik PSC 119 (lokasi)": psc_titik_per_kab.get(k, 0) if pscs else None,
+            "LRK: Rata-rata Jarak ke PSC (km)": _rata(j_lrk.get(k)),
+            "LRK: Jarak Maks ke PSC (km)": max(j_lrk[k]) if j_lrk.get(k) else None,
+            "Blackspot: Rata-rata Jarak ke PSC (km)": _rata(j_blk.get(k)),
+            "Blackspot: Jarak Maks ke PSC (km)": max(j_blk[k]) if j_blk.get(k) else None,
+            "SS KA: Rata-rata Jarak ke PSC (km)": _rata(j_ss.get(k)),
+            f"Titik Rawan > {PSC_JAUH_KM} km dari PSC": (
+                sum(1 for x in j_lrk.get(k, []) + j_blk.get(k, []) + j_ss.get(k, []) if x > PSC_JAUH_KM)
+                if (j_lrk.get(k) or j_blk.get(k) or j_ss.get(k)) else None),
         })
     utama = pd.DataFrame(rows)
 
@@ -266,14 +350,15 @@ def _build():
         return [{"Jenis": jenis, "Kode Kab/Kota (spasial)": r["_kode_kab"],
                  "Kab/Kota (poligon)": r["_kab_poligon"], "Kecamatan (poligon)": r["_kec_poligon"],
                  "Provinsi (sumber)": r.get("provinsi") or r.get("prov"),
-                 "Nama Ruas": r.get("nama_ruas"), "Latitude": r["_lat"], "Longitude": r["_lon"]}
+                 "Nama Ruas": r.get("nama_ruas"), "Latitude": r["_lat"], "Longitude": r["_lon"],
+                 "PSC 119 Terdekat": r["_psc_nama"], "Jarak ke PSC Terdekat (km)": r["_psc_km"]}
                 for r in rows_]
 
     return {
         "Profil Kab-Kota": utama,
         "PSC 119": sheet_psc,
         "JPL Prioritas": sheet_jpl,
-        "LRK & Blackspot": pd.DataFrame(titik(lrk, "LRK 2026") + titik(blk, "Blackspot")),
+        "LRK & Blackspot": pd.DataFrame(titik(lrk, "LRK 2026") + titik(blk, "Blackspot") + titik(ssk, "SS KA (rencana)")),
         "Keterangan": pd.DataFrame({"Keterangan": KETERANGAN}),
     }
 

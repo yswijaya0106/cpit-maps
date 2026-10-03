@@ -173,6 +173,11 @@ const MAP_LAYER_CATEGORIES = [
   // bucket flat, poligon diwarnai per klaster (properti _warna), legenda KLASTER_LEGEND.
   { id: "klaster", label: "Klaster & Subklaster (Merauke)", icon: "bi-grid-3x3-gap",
     match: (p) => p === "KLASTER SUBKLASTER" },
+  // Keselamatan: bucket nasional flat, sementara berisi layer "PSC 119" (titik
+  // Public Safety Center, scripts/import_psc119_lokasi_to_postgis.py). Blackspot &
+  // LRK tetap di bucket JALAN NASIONAL (sudah lebih dulu ada di sana).
+  { id: "keselamatan", label: "Keselamatan & Layanan Darurat", icon: "bi-heart-pulse",
+    match: (p) => p === "KESELAMATAN" },
   { id: "jalan", label: "Jalan", icon: "bi-signpost-2", match: () => true }, // catch-all, HARUS terakhir
 ];
 

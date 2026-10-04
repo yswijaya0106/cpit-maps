@@ -156,7 +156,10 @@ Deps: `requirements.txt`, venv at `.venv/` (already gitignored).
   select/measure tools + overlay legend) → `route-list.js` (result list +
   analysis panel) → `analysis.js` (admin region / road classification
   panels) → `usulan-inpres.js` (Inpres match + browse/detail) →
-  `dalam-angka.js` (topbar "Dalam Angka" BPS publication search/preview
+  `usulan-pilihan.js` (summary + numbered badges for the multi-selected
+  usulan, hooked from the end of `renderUsulanMultiBar()`; Rp/km uses
+  `panjang_penanganan_pemda`, and ruas length/kemantapan count each ruas
+  once across packages) → `dalam-angka.js` (topbar "Dalam Angka" BPS publication search/preview
   panel; independent of Google Maps, same pattern as data-viewer.js) →
   `program-ijd.js` → `logic-frame.js` (both after usulan-inpres.js, they reuse
   its helpers) → `chat.js` (chat panel, grounded in the currently viewed route) →

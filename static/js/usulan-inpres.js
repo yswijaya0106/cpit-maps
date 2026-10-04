@@ -726,6 +726,10 @@ async function loadUsulanBrowseList(reset) {
       card.addEventListener("click", () => {
         listEl.querySelectorAll(".usulan-browse-card.selected").forEach((el) => el.classList.remove("selected"));
         card.classList.add("selected");
+        // Kartu yang dibuka ikut tercentang (masuk multi-select, dapat nomor &
+        // warna sendiri) -- flyToUsulanGeometry tidak menggambar garis detail
+        // terpisah utk usulan yang sudah ada di pilihan, jadi tidak dobel.
+        if (u.has_geometry && !usulanMulti.has(u.id)) toggleUsulanMulti(u, true);
         loadUsulanDetail(u.id);
       });
       card._usulan = u;
@@ -777,6 +781,8 @@ function renderUsulanMultiBar() {
   document.getElementById("btnUsulanMultiZoom").hidden = !n;
   document.getElementById("btnUsulanMultiClear").hidden = !n;
   document.querySelectorAll("#usulanBrowseList .usulan-browse-card").forEach(syncUsulanMultiCard);
+  // ringkasan, badge nomor di peta, nomor di kartu & legenda (usulan-pilihan.js)
+  if (typeof usulanPilihanRender === "function") usulanPilihanRender();
 }
 
 async function toggleUsulanMulti(u, pilih) {
@@ -1299,7 +1305,12 @@ async function flyToUsulanGeometry(u) {
       content: `<div class="usulan-info-tooltip"><strong>${escapeHtml(u.nama_kegiatan || u.nama_ruas)}</strong><br/>ID: ${u.id}<br/>Panjang KML: ${kmlLengthKm.toFixed(2)} km</div>`,
     });
 
+    // Usulan yang juga ada di multi-select sudah tergambar dgn warna & nomornya
+    // sendiri -- jangan tumpuk garis detail di atasnya, cukup zoom ke sana.
+    const sudahDipilih = typeof usulanMulti !== "undefined" && usulanMulti.has(u.id);
     paths.forEach((path) => {
+      path.forEach((p) => bounds.extend(p));
+      if (sudahDipilih) return;
       const pl = new google.maps.Polyline({
         path,
         strokeColor: "#f59e0b",
@@ -1314,7 +1325,6 @@ async function flyToUsulanGeometry(u) {
         info.open(state.map);
       });
       state.browseUsulanPolylines.push(pl);
-      path.forEach((p) => bounds.extend(p));
     });
 
     fitBoundsCapped(bounds);

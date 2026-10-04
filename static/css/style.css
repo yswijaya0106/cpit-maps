@@ -1308,6 +1308,53 @@ td.checklist-cell .ijd-badge { margin-right: 4px; }
 }
 .usulan-multi-check:disabled { cursor: not-allowed; opacity: 0.35; }
 .usulan-browse-card.dipilih { border-left: 4px solid var(--warna-pilih, var(--primary)); padding-left: 7px; }
+/* Ringkasan & nomor usulan terpilih (usulan-pilihan.js) */
+.usulan-pilihan-no {
+  display: inline-flex; align-items: center; justify-content: center; flex: none;
+  min-width: 20px; height: 20px; padding: 0 5px; border-radius: 10px; border: 2px solid #fff;
+  color: #fff; font-size: 11px; font-weight: 700; line-height: 1; box-sizing: border-box;
+}
+.usulan-browse-card .usulan-pilihan-no { margin-right: 2px; }
+.usulan-browse-card.sorot { background: var(--panel-alt); box-shadow: inset 0 0 0 1px var(--warna-pilih, var(--primary)); }
+.usulan-pilihan-ringkas {
+  margin: 0 0 10px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 10px;
+  background: var(--panel-alt); font-size: 12px;
+}
+.usulan-pilihan-ringkas[hidden], .map-legend-pilihan[hidden] { display: none; }
+.usulan-pilihan-toggle {
+  background: none; border: 0; padding: 0; color: var(--text-dim); font: inherit; font-weight: 600; cursor: pointer;
+}
+.usulan-pilihan-stat { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px 10px; margin: 8px 0 6px; color: var(--text-dim); }
+.usulan-pilihan-stat b { color: var(--text); font-size: 13px; }
+.usulan-pilihan-chips { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 4px; }
+.usulan-pilihan-chip {
+  font-size: 11px; padding: 1px 7px; border-radius: 8px; background: rgba(148,163,196,.14); color: var(--text-dim);
+}
+.usulan-pilihan-chip b { color: var(--text); }
+.usulan-pilihan-peringatan {
+  margin: 6px 0; padding: 5px 8px; border-radius: 8px; font-size: 11.5px;
+  color: var(--warn); background: rgba(255,182,72,.10);
+}
+.usulan-pilihan-info {
+  margin: 6px 0; padding: 5px 8px; border-radius: 8px; font-size: 11.5px;
+  color: var(--text-dim); background: rgba(79,124,255,.10);
+}
+.usulan-pilihan-list { max-height: 220px; overflow-y: auto; margin-top: 6px; display: flex; flex-direction: column; gap: 2px; }
+.usulan-pilihan-row {
+  display: flex; align-items: flex-start; gap: 7px; padding: 4px 5px; border-radius: 7px; cursor: pointer;
+}
+.usulan-pilihan-row:hover, .usulan-pilihan-row.sorot { background: rgba(79,124,255,.12); }
+.usulan-pilihan-row-nama { flex: 1; min-width: 0; line-height: 1.25; color: var(--text); overflow-wrap: anywhere; }
+.usulan-pilihan-row-nama small { display: block; color: var(--text-dim); font-size: 11px; }
+.usulan-pilihan-lepas {
+  flex: none; background: none; border: 0; color: var(--text-dim); cursor: pointer; padding: 0 2px; font-size: 14px; line-height: 1;
+}
+.usulan-pilihan-lepas:hover { color: var(--danger); }
+.usulan-pilihan-catatan { margin: 6px 0 0; font-size: 10.5px; }
+.map-legend-pilihan { display: flex; flex-direction: column; gap: 5px; margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--border); }
+.map-legend-pilihan-judul { font-size: 11px; font-weight: 700; color: var(--text-dim); text-transform: uppercase; letter-spacing: .03em; }
+.map-legend-pilihan .map-legend-item { cursor: pointer; border-radius: 6px; padding: 1px 2px; }
+.map-legend-pilihan .map-legend-item.sorot, .map-legend-pilihan .map-legend-item:hover { background: rgba(79,124,255,.12); }
 .usulan-detail-card {
   margin-top: 12px; background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
   padding: 12px; font-size: 12.5px; display: flex; flex-direction: column; gap: 8px;

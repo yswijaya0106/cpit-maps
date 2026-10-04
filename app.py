@@ -660,7 +660,7 @@ def analyze_road_classification(payload: RoadClassRequest):
 
 USULAN_LIST_FIELDS = """
     id, provinsi, kabupaten_kota, nama_ruas, nama_kegiatan, kode_ruas,
-    jenis_penanganan, status_ruas, panjang_ruas_km, alokasi_usulan_pemda,
+    jenis_penanganan, status_ruas, panjang_ruas_km, panjang_penanganan_pemda, alokasi_usulan_pemda,
     prioritas, seleksi_sistem, verifikasi_balai, kapasitas_fiskal,
     tematik_kawasan_pemda, kondisi_baik_km, kondisi_sedang_km,
     kondisi_ringan_km, kondisi_berat_km, kondisi_jembatan,

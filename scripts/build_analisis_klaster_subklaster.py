@@ -73,6 +73,8 @@ from psycopg.types.json import Json  # noqa: E402
 from db import db_cursor  # noqa: E402
 
 BUCKET = "KLASTER SUBKLASTER"
+# Atribut tersembunyi yg hanya disimpan di layer SUBKLASTER, tidak di SUBKLASTER DETAIL - *
+KUNCI_BERAT_DETAIL = ("_bandara_rute", "_pelabuhan_rute", "_koridor_rute", "_semua_bandara", "_semua_pelabuhan")
 RADIUS_DERAJAT = 3.0  # ~330 km -- Merauke jauh dari jaringan jalan nasional/tol, radius longgar
 FUNGSI_NAS_SQL = (
     "CASE attrs->>'ROAD_FUNCT' WHEN 'A' THEN 'Arteri' WHEN 'K1' THEN 'Kolektor 1' "
@@ -419,11 +421,16 @@ CREATE TABLE IF NOT EXISTS subklaster_analisis_transportasi (
                 "WHERE provinsi=%s AND layer='SUBKLASTER' AND attrs->>'Klaster'=%s AND attrs->>'Subklaster'=%s",
                 (Json(at), BUCKET, r["klaster"], r["subklaster"]))
             n_ringkas += cur.rowcount
+            # Poligon DETAIL (10.328) TIDAK diberi array berat (rute OSRM + semua titik pulau,
+            # ~50 KB/poligon): disalin ke semua poligon detail, attrs layer TANAMAN PANGAN jadi
+            # ~91 MB dan membangun GeoJSON-nya membuat PostgreSQL staging kena OOM-kill
+            # (4 Okt 2026). Frontend mengambilnya dari poligon induk di layer SUBKLASTER.
+            at_detail = {k2: v for k2, v in at.items() if k2 not in KUNCI_BERAT_DETAIL}
             cur.execute(
-                "UPDATE map_layers SET attrs = attrs || %s::jsonb "
+                "UPDATE map_layers SET attrs = (attrs - %s::text[]) || %s::jsonb "
                 "WHERE provinsi=%s AND layer LIKE 'SUBKLASTER DETAIL - %%' "
                 "AND attrs->>'Klaster'=%s AND attrs->>'Subklaster'=%s",
-                (Json(at), BUCKET, r["klaster"], r["subklaster"]))
+                (list(KUNCI_BERAT_DETAIL), Json(at_detail), BUCKET, r["klaster"], r["subklaster"]))
             n_detail += cur.rowcount
         print(f"  atribut ditambahkan: {n_ringkas} poligon SUBKLASTER, {n_detail} poligon SUBKLASTER DETAIL")
 

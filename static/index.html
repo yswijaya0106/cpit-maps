@@ -1020,6 +1020,17 @@
                   autocomplete="off" />
               </div>
             </div>
+            <div id="usulanMultiBar" class="usulan-multi-bar">
+              <span id="usulanMultiInfo" class="usulan-multi-info">Centang beberapa usulan untuk ditampilkan bersamaan di peta</span>
+              <div class="usulan-multi-actions">
+                <button type="button" id="btnUsulanMultiAll" class="btn btn-ghost btn-xs" title="Centang semua usulan yang tampil di daftar (yang punya data KML)">
+                  <i class="bi bi-check2-all"></i> Semua</button>
+                <button type="button" id="btnUsulanMultiZoom" class="btn btn-ghost btn-xs" title="Zoom ke semua usulan terpilih" hidden>
+                  <i class="bi bi-zoom-in"></i> Zoom</button>
+                <button type="button" id="btnUsulanMultiClear" class="btn btn-ghost btn-xs" title="Hapus semua pilihan dari peta" hidden>
+                  <i class="bi bi-x-lg"></i> Hapus</button>
+              </div>
+            </div>
             <div id="usulanBrowseList" class="usulan-browse-list"></div>
             <div id="usulanBrowseMore" class="usulan-browse-more" hidden>
               <button id="btnUsulanLoadMore" class="btn btn-ghost btn-block btn-sm">Muat lebih banyak</button>

@@ -185,7 +185,7 @@ function printPolylinePath(pl) {
 // digabung per ID usulan (1 usulan bisa beberapa LineString).
 function printCollectUsulan(view) {
   const byId = new Map();
-  [...(state.usulanPolylines || []), ...(state.browseUsulanPolylines || [])].forEach((pl) => {
+  [...(state.usulanPolylines || []), ...(state.browseUsulanPolylines || []), ...usulanMultiPolylines()].forEach((pl) => {
     if (!pl.getMap()) return;
     const path = printPolylinePath(pl);
     if (path.length < 2) return;

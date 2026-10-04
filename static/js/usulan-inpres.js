@@ -627,6 +627,7 @@ function usulanModaChange(moda) {
   state.usulanBrowse.q = "";
   document.getElementById("usulanSearchInput").value = "";
   clearBrowseUsulanPolylines();
+  clearUsulanMulti();
   document.getElementById("usulanBrowseDetail").innerHTML = "";
   if (usulanModaMarker) {
     usulanModaMarker.setMap(null);
@@ -644,6 +645,7 @@ function usulanModaChange(moda) {
   document.getElementById("btnUsulanUrbanDarat").hidden = moda !== "Darat";
   document.getElementById("btnUsulanRakLlaj").hidden = moda !== "Darat";
   document.getElementById("usulanKabupatenField").hidden = !isIjd;
+  document.getElementById("usulanMultiBar").hidden = !isIjd;
   document.getElementById("usulanSearchInput").placeholder = USULAN_MODA_SEARCH_PLACEHOLDER[moda] || "Cari...";
 
   if (isIjd) loadUsulanBrowseList(true);
@@ -689,24 +691,186 @@ async function loadUsulanBrowseList(reset) {
       const statusClass = u.seleksi_sistem === "LULUS" ? "usulan-badge-ok" : "usulan-badge-warn";
       card.innerHTML = `
         <div class="adv-usulan-head">
+          <input type="checkbox" class="usulan-multi-check" ${u.has_geometry ? "" : "disabled"}
+            title="${u.has_geometry ? "Tampilkan bersamaan di peta (multi-select)" : "Tidak ada data KML, tidak bisa ditampilkan di peta"}">
           <span class="usulan-badge ${statusClass}">${escapeHtml(u.seleksi_sistem || "-")}</span>
           <span class="adv-usulan-title">${escapeHtml(u.nama_kegiatan || u.nama_ruas)}</span>
         </div>
         <div class="adv-region-meta">${escapeHtml(u.kabupaten_kota || "")}, ${escapeHtml(u.provinsi || "")} · ${escapeHtml(u.jenis_penanganan || "-")} · Prioritas #${u.prioritas ?? "-"}</div>
         <div class="adv-region-meta">${u.panjang_ruas_km ?? "-"} km · ${formatRupiah(u.alokasi_usulan_pemda)}${u.has_geometry ? "" : " · tanpa data KML"}</div>
       `;
+      const check = card.querySelector(".usulan-multi-check");
+      check.addEventListener("click", (e) => e.stopPropagation()); // centang != buka detail
+      check.addEventListener("change", () => toggleUsulanMulti(u, check.checked));
       card.addEventListener("click", () => {
         listEl.querySelectorAll(".usulan-browse-card.selected").forEach((el) => el.classList.remove("selected"));
         card.classList.add("selected");
         loadUsulanDetail(u.id);
       });
+      card._usulan = u;
       listEl.appendChild(card);
+      syncUsulanMultiCard(card);
     });
   }
 
   const loaded = b.offset + data.usulan.length;
   moreWrap.hidden = loaded >= b.total;
   b.offset = loaded;
+}
+
+/* ---------- Multi-select usulan IJD ----------
+   Usulan yang dicentang di daftar "Jelajahi" tergambar BERSAMAAN di peta,
+   masing-masing dgn warna sendiri, terpisah dari geometri usulan yang sedang
+   dibuka di panel detail (browseUsulanPolylines, dibersihkan tiap ganti detail).
+   Pilihan bertahan saat filter/pencarian diganti; dibersihkan saat ganti moda. */
+const USULAN_MULTI_WARNA = [
+  "#f59e0b", "#ec4899", "#8b5cf6", "#06b6d4", "#84cc16", "#f97316", "#ef4444", "#14b8a6",
+  "#a855f7", "#eab308", "#3b82f6", "#22c55e",
+];
+const USULAN_MULTI_MAKS = 300;
+const usulanMulti = new Map(); // id -> { u, warna, polylines: [], bounds, memuat }
+let usulanMultiUrut = 0;
+
+function usulanMultiPolylines() {
+  const out = [];
+  usulanMulti.forEach((e) => out.push(...e.polylines));
+  return out;
+}
+
+function syncUsulanMultiCard(card) {
+  const entri = usulanMulti.get(card._usulan?.id);
+  const check = card.querySelector(".usulan-multi-check");
+  if (check) check.checked = !!entri;
+  card.classList.toggle("dipilih", !!entri);
+  card.style.setProperty("--warna-pilih", entri ? entri.warna : "");
+}
+
+function renderUsulanMultiBar() {
+  const n = usulanMulti.size;
+  const info = document.getElementById("usulanMultiInfo");
+  const memuat = [...usulanMulti.values()].filter((e) => e.memuat).length;
+  info.textContent = n
+    ? `${n} usulan dipilih${memuat ? ` (memuat ${memuat}...)` : ""}`
+    : "Centang beberapa usulan untuk ditampilkan bersamaan di peta";
+  info.classList.toggle("aktif", n > 0);
+  document.getElementById("btnUsulanMultiZoom").hidden = !n;
+  document.getElementById("btnUsulanMultiClear").hidden = !n;
+  document.querySelectorAll("#usulanBrowseList .usulan-browse-card").forEach(syncUsulanMultiCard);
+}
+
+async function toggleUsulanMulti(u, pilih) {
+  if (!pilih) {
+    hapusUsulanMulti(u.id);
+    return;
+  }
+  if (usulanMulti.has(u.id)) return;
+  if (usulanMulti.size >= USULAN_MULTI_MAKS) {
+    toast(`Maksimal ${USULAN_MULTI_MAKS} usulan dipilih sekaligus`, true);
+    renderUsulanMultiBar();
+    return;
+  }
+  const entri = {
+    u, warna: USULAN_MULTI_WARNA[usulanMultiUrut++ % USULAN_MULTI_WARNA.length],
+    polylines: [], bounds: null, memuat: true,
+  };
+  usulanMulti.set(u.id, entri);
+  renderUsulanMultiBar();
+  try {
+    const res = await fetch(`/api/usulan-inpres/${u.id}/geometry`);
+    if (!res.ok) throw new Error(await res.text());
+    const geojson = await res.json();
+    if (usulanMulti.get(u.id) !== entri) return; // sudah di-uncentang selama memuat
+    gambarUsulanMulti(entri, geojson);
+  } catch (err) {
+    console.error(err);
+    usulanMulti.delete(u.id);
+    toast(`Gagal memuat geometri: ${u.nama_ruas || u.nama_kegiatan || u.id}`, true);
+  } finally {
+    entri.memuat = false;
+    renderUsulanMultiBar();
+  }
+}
+
+function gambarUsulanMulti(entri, geojson) {
+  const { u, warna } = entri;
+  const lineStrings = geojson.type === "MultiLineString" ? geojson.coordinates : [geojson.coordinates];
+  const paths = lineStrings.map((coords) => coords.map(([lng, lat]) => ({ lat, lng })));
+  const kmlLengthKm = sumPathLengthKm(paths);
+  entri.bounds = new google.maps.LatLngBounds();
+
+  const isi = document.createElement("div");
+  isi.className = "usulan-info-tooltip";
+  isi.innerHTML = `<strong>${escapeHtml(u.nama_kegiatan || u.nama_ruas)}</strong><br/>`
+    + `${escapeHtml(u.kabupaten_kota || "")}, ${escapeHtml(u.provinsi || "")}<br/>`
+    + `${escapeHtml(u.jenis_penanganan || "")} · ${formatRupiah(u.alokasi_usulan_pemda)}<br/>`
+    + `Panjang KML: ${kmlLengthKm.toFixed(2)} km<br/>`
+    + `<a href="#" class="usulan-multi-detail">Lihat detail</a>`;
+  isi.querySelector(".usulan-multi-detail").addEventListener("click", (e) => {
+    e.preventDefault();
+    loadUsulanDetail(u.id);
+  });
+  const info = new google.maps.InfoWindow({ content: isi });
+
+  paths.forEach((path) => {
+    const pl = new google.maps.Polyline({
+      path, strokeColor: warna, strokeOpacity: 0.95, strokeWeight: 5, map: state.map, zIndex: 22,
+    });
+    pl.set("printInfo", usulanPrintInfo(u, kmlLengthKm)); // ikut tercetak (print-map.js)
+    pl.addListener("click", (e) => {
+      info.setPosition(e.latLng);
+      info.open(state.map);
+    });
+    entri.polylines.push(pl);
+    path.forEach((p) => entri.bounds.extend(p));
+  });
+  if (typeof updateKecamatanLintasan === "function") updateKecamatanLintasan();
+}
+
+function hapusUsulanMulti(id) {
+  const entri = usulanMulti.get(id);
+  if (!entri) return;
+  entri.polylines.forEach((pl) => pl.setMap(null));
+  usulanMulti.delete(id);
+  if (typeof updateKecamatanLintasan === "function") updateKecamatanLintasan();
+  renderUsulanMultiBar();
+}
+
+function clearUsulanMulti() {
+  [...usulanMulti.keys()].forEach((id) => {
+    usulanMulti.get(id).polylines.forEach((pl) => pl.setMap(null));
+    usulanMulti.delete(id);
+  });
+  usulanMultiUrut = 0;
+  if (typeof updateKecamatanLintasan === "function") updateKecamatanLintasan();
+  renderUsulanMultiBar();
+}
+
+function zoomUsulanMulti() {
+  const bounds = new google.maps.LatLngBounds();
+  usulanMulti.forEach((e) => { if (e.bounds) bounds.union(e.bounds); });
+  if (!bounds.isEmpty()) fitBoundsCapped(bounds);
+}
+
+// Centang semua kartu yang tampil di daftar (yang punya KML), lalu zoom setelah
+// geometrinya termuat. Diambil 6 sekaligus supaya tidak membanjiri server.
+async function pilihSemuaUsulanTampil() {
+  const kartu = [...document.querySelectorAll("#usulanBrowseList .usulan-browse-card")]
+    .map((c) => c._usulan)
+    .filter((u) => u && u.has_geometry && !usulanMulti.has(u.id));
+  if (!kartu.length) return;
+  const antrean = kartu.slice(0, Math.max(0, USULAN_MULTI_MAKS - usulanMulti.size));
+  if (antrean.length < kartu.length) toast(`Hanya ${antrean.length} yang dipilih (maksimal ${USULAN_MULTI_MAKS})`, true);
+  const pekerja = Array.from({ length: 6 }, async () => {
+    while (antrean.length) await toggleUsulanMulti(antrean.shift(), true);
+  });
+  await Promise.all(pekerja);
+  zoomUsulanMulti();
+}
+
+function bindUsulanMultiBar() {
+  document.getElementById("btnUsulanMultiAll").addEventListener("click", pilihSemuaUsulanTampil);
+  document.getElementById("btnUsulanMultiZoom").addEventListener("click", zoomUsulanMulti);
+  document.getElementById("btnUsulanMultiClear").addEventListener("click", clearUsulanMulti);
 }
 
 async function loadUsulanDetail(id) {
@@ -3078,6 +3242,7 @@ function bindUsulanBrowse() {
   loadUsulanKabupatenOptions("");
   loadUsulanBrowseList(true);
   bindUsulanProvinsiCombo();
+  bindUsulanMultiBar();
   bindUsulanImportExport();
 
   let searchTimer = null;

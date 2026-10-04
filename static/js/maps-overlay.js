@@ -695,7 +695,8 @@ const KEC_LINTAS_COLOR = "#e11d74";
 
 function _routeSamplePoints(maxPts = 80) {
   const pts = [];
-  (state.browseUsulanPolylines || []).forEach((pl) => {
+  // + usulan yang dicentang (multi-select di panel Jelajahi, usulan-inpres.js)
+  [...(state.browseUsulanPolylines || []), ...usulanMultiPolylines()].forEach((pl) => {
     const path = pl.getPath();
     for (let i = 0; i < path.getLength(); i++) pts.push(path.getAt(i));
   });

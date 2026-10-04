@@ -4,7 +4,8 @@
    Mengikuti arahan deck Bappenas "20261002 Preparation, Implementation and
    Validation of IJD": peta 3 level Indonesia -> provinsi -> kab/kota (hal. 4),
    Barat-Timur & pulau (hal. 15-16), ruas berulang (hal. 17-18), kab/kota tanpa
-   IJD (hal. 19-20), rekap tahunan (hal. 22-33). Memakai helper dari
+   IJD (hal. 19-20), rekap tahunan (hal. 22-33), histori kemantapan jalan
+   (hal. 2 Tahap 3; sumber usulan SITIA, /api/usulan-riwayat/kemantapan). Memakai helper dari
    usulan-inpres.js (laporanKpiTile, laporanHBar, biayaFmt) dan utils.js
    (escapeHtml) -- file ini harus dimuat sesudahnya. */
 
@@ -434,8 +435,16 @@ async function pijdRenderRekap() {
   const view = document.getElementById("pijdRekapView");
   pijdLoading(view);
   const tahun = document.getElementById("pijdRekapTahun").value;
+  const selProv = document.getElementById("pijdRekapProv");
+  const params = new URLSearchParams({ tahun });
+  if (selProv.value) params.set("kode_provinsi", selProv.value);
   try {
-    const d = await pijdFetch(`/api/program-ijd/rekap?tahun=${tahun}`);
+    const d = await pijdFetch(`/api/program-ijd/rekap?${params}`);
+    const dipilih = selProv.value;
+    selProv.innerHTML = `<option value="">— pilih provinsi —</option>` + [...d.provinsi]
+      .sort((a, b) => (a.kode_provinsi || 0) - (b.kode_provinsi || 0))
+      .map((p) => `<option value="${p.kode_provinsi}">${escapeHtml(p.provinsi)}</option>`).join("");
+    selProv.value = d.provinsi.some((p) => String(p.kode_provinsi) === dipilih) ? dipilih : "";
     const t = d.total;
     const kpis = `<div class="laporan-kpi-row">
       ${laporanKpiTile("Provinsi", t.n_provinsi, `program ${tahun}`)}
@@ -477,13 +486,150 @@ async function pijdRenderRekap() {
       ${d.anomali.map((a) => `<tr><td>${escapeHtml(a.nama_kegiatan || "")}</td><td>${escapeHtml(a.kab_kota || "")}<div class="hint">${escapeHtml(a.provinsi || "")}</div></td>
         <td class="num">${biayaFmt(a.alokasi_m)}</td><td class="num">${biayaFmt(a.panjang_km)}</td><td>${escapeHtml(a.catatan || "")}</td></tr>`).join("")}
       </tbody></table></div></div>` : "";
-    view.innerHTML = kpis + katHtml + temHtml + provHtml
+    view.innerHTML = (d.rincian ? pijdRincianProvinsi(d.rincian, tahun) : "") + kpis + katHtml + temHtml + provHtml
       + kabTabel('<i class="bi bi-sort-down"></i> 20 Kab/Kota dengan Kegiatan Terbanyak', d.kab_terbanyak)
       + kabTabel('<i class="bi bi-sort-up"></i> 20 Kab/Kota dengan Kegiatan Paling Sedikit', d.kab_tersedikit)
       + anom + `<p class="hint">${escapeHtml(d.catatan)}</p>`;
   } catch (err) {
     view.innerHTML = `<div class="laporan-distribusi-empty">${escapeHtml(err.message)}</div>`;
   }
+}
+
+// Rincian kab/kota satu provinsi (deck hal. 33): alokasi, kegiatan & alokasi
+// jalan vs jembatan, rata-rata per kegiatan, komposisi tematik.
+function pijdRincianProvinsi(r, tahun) {
+  const kab = r.kab;
+  const nKeg = kab.reduce((s, k) => s + k.n_kegiatan, 0);
+  const alok = kab.reduce((s, k) => s + k.alokasi_m, 0);
+  const nJbt = kab.reduce((s, k) => s + k.n_jembatan, 0);
+  const kpis = `<div class="laporan-kpi-row">
+    ${laporanKpiTile(`Alokasi ${escapeHtml(r.provinsi || "")} ${tahun}`, pijdRp(alok), `${kab.filter((k) => k.kab_kota !== "Kegiatan usulan provinsi").length} kab/kota`)}
+    ${laporanKpiTile("Kegiatan", nKeg, `jalan ${nKeg - nJbt} · jembatan ${nJbt}`)}
+    ${laporanKpiTile("Rata-rata per kegiatan", pijdRp(nKeg ? alok / nKeg : null), "")}
+  </div>`;
+  const alokBar = laporanHBar(kab.map((k) => ({ ...k, nama: k.kab_kota })), {
+    valueKey: "alokasi_m",
+    maxLabelFn: (k) => `${k.kab_kota}: jalan ${pijdRp(k.alokasi_jalan_m)}, jembatan ${pijdRp(k.alokasi_jembatan_m)}`,
+    barLabelFn: (k) => `${pijdRp(k.alokasi_m)}${k.alokasi_jembatan_m ? ` (jbt ${pijdRp(k.alokasi_jembatan_m)})` : ""}`,
+  });
+  const rataBar = laporanHBar([...kab].sort((a, b) => b.rata_per_kegiatan_m - a.rata_per_kegiatan_m).map((k) => ({ ...k, nama: k.kab_kota })), {
+    valueKey: "rata_per_kegiatan_m",
+    maxLabelFn: (k) => `${k.kab_kota}: ${pijdRp(k.alokasi_m)} ÷ ${k.n_kegiatan} kegiatan`,
+    barLabelFn: (k) => `${pijdRp(k.rata_per_kegiatan_m)} · ${k.n_kegiatan} keg.`,
+  });
+  const temBar = laporanHBar(r.tematik.map((x) => ({ ...x, nama: x.tematik })), {
+    valueKey: "n_kegiatan",
+    maxLabelFn: (x) => `${x.tematik}: ${x.n_kegiatan} kegiatan`,
+    barLabelFn: (x) => `${x.n_kegiatan} keg. (${pijdPct(nKeg ? Math.round((x.n_kegiatan / nKeg) * 1000) / 10 : 0)})`,
+  });
+  const rows = kab.map((k) => `<tr><td>${escapeHtml(k.kab_kota)}</td>
+    <td class="num">${k.n_jalan}</td><td class="num">${k.n_jembatan}</td>
+    <td class="num">${biayaFmt(k.alokasi_jalan_m)}</td><td class="num">${biayaFmt(k.alokasi_jembatan_m)}</td>
+    <td class="num">${biayaFmt(k.rata_per_kegiatan_m)}</td>
+    <td>${k.tematik.map(([t, n]) => `<span class="pijd-pill">${escapeHtml(t)} ${n}</span>`).join("")}</td></tr>`).join("");
+  const blok = (ikon, judul, isi, sub = "") => `<div class="laporan-chart-block"><div class="laporan-chart-title"><i class="bi ${ikon}"></i> ${judul}</div>
+    ${sub ? `<div class="laporan-chart-sub">${sub}</div>` : ""}${isi}</div>`;
+  return `<div class="pijd-rincian">
+    <div class="laporan-chart-title" style="font-size:14px;margin-bottom:8px"><i class="bi bi-geo-alt"></i> Rincian Kabupaten/Kota — ${escapeHtml(r.provinsi || "")} ${tahun}</div>
+    ${kpis}
+    ${blok("bi-bar-chart", "Total Alokasi per Kabupaten/Kota", alokBar, "Label = total; bagian jembatan dalam kurung")}
+    ${blok("bi-calculator", "Rata-rata Alokasi per Kegiatan", rataBar)}
+    ${blok("bi-pie-chart", "Komposisi Tematik (Jumlah Kegiatan)", temBar)}
+    ${blok("bi-table", "Kegiatan dan Alokasi: Jalan vs Jembatan", `<div class="biaya-tabel-wrap"><table class="biaya-usulan-table"><thead><tr>
+      <th>Kab/Kota</th><th class="num">Keg. jalan</th><th class="num">Keg. jembatan</th><th class="num">Alokasi jalan (Rp M)</th>
+      <th class="num">Alokasi jembatan (Rp M)</th><th class="num">Rata-rata/keg. (Rp M)</th><th>Tematik</th></tr></thead><tbody>${rows}</tbody></table></div>`,
+      "Kegiatan jembatan = kegiatan dengan panjang jembatan &gt; 0 (di sumber tidak pernah bersamaan dengan panjang jalan)")}
+    </div><hr class="pijd-sep">`;
+}
+
+/* ---------------- Tab Histori Kemantapan (deck hal. 2, Tahap 3) ---------------- */
+
+// Badge Δ poin % mantap: naik = membaik (hijau), turun = memburuk (merah) --
+// kebalikan biayaPctBadge, di mana naik = biaya lebih mahal.
+function pijdDeltaBadge(d) {
+  if (d == null) return "–";
+  const cls = d >= pijd.kemantapan.ambang_poin ? "naik" : d <= -pijd.kemantapan.ambang_poin ? "turun" : "tetap";
+  return `<span class="pijd-delta ${cls}">${d > 0 ? "+" : ""}${d.toLocaleString("id-ID")} poin</span>`;
+}
+
+function pijdArahStack(g) {
+  if (!g.n) return '<div class="hint">Tidak ada ruas.</div>';
+  const seg = (n, cls, label) => n ? `<span class="pijd-arah-${cls}" style="flex:${n}" title="${label}: ${n} ruas">${label} ${n}</span>` : "";
+  return `<div class="pijd-stack">${seg(g.naik, "naik", "Membaik")}${seg(g.tetap, "tetap", "Tetap")}${seg(g.turun, "turun", "Memburuk")}</div>`;
+}
+
+async function pijdRenderKemantapan() {
+  const view = document.getElementById("pijdKemantapanView");
+  pijdLoading(view);
+  try {
+    const d = pijd.kemantapan || (pijd.kemantapan = await pijdFetch("/api/usulan-riwayat/kemantapan"));
+    const nas = d.nasional;
+    const kpis = `<div class="laporan-kpi-row">
+      ${nas.map((t) => laporanKpiTile(`% Mantap ${t.tahun}`, pijdPct(t.pct_mantap),
+        `${t.n_ruas.toLocaleString("id-ID")} ruas usulan · ${biayaFmt(t.panjang_km)} km`)).join("")}
+      ${laporanKpiTile("Ruas teramati ≥ 2 tahun", d.daftar.length.toLocaleString("id-ID"), "dasar perbandingan perubahan")}
+    </div>`;
+    const kel = (judul, g) => `<div class="pijd-stack-row pijd-arah-row"><span>${judul}<div class="hint">${g.n} ruas · median ${pijdDeltaBadge(g.median_delta)}</div></span>
+      ${pijdArahStack(g)}</div>`;
+    const p = d.perubahan;
+    const arahHtml = `<div class="laporan-chart-block">
+      <div class="laporan-chart-title"><i class="bi bi-arrow-down-up"></i> Perubahan % Mantap Ruas yang Sama: Didanai IJD vs Tidak</div>
+      <div class="laporan-chart-sub">Selisih % mantap tahun pengamatan terakhir − pertama. Membaik/memburuk = berubah ≥ ${d.ambang_poin} poin.
+        "Didanai" = dapat IJD pada tahun pertama s.d. sebelum tahun terakhir pengamatan.</div>
+      <div style="margin-bottom:8px"><span class="pijd-key"><span class="pijd-swatch pijd-arah-naik"></span>Membaik</span>
+        <span class="pijd-key"><span class="pijd-swatch pijd-arah-tetap"></span>Tetap</span>
+        <span class="pijd-key"><span class="pijd-swatch pijd-arah-turun"></span>Memburuk</span></div>
+      ${kel("Didanai IJD", p.didanai)}${kel("Tidak didanai", p.tidak_didanai)}</div>`;
+    const th = d.tahun;
+    const provRows = d.provinsi.map((pr) => {
+      const s = pr.seri;
+      return `<tr><td>${escapeHtml(pr.provinsi)}</td>${s.map((t) => `<td class="num">${pijdPct(t.pct_mantap)}<div class="hint">${t.n_ruas} ruas</div></td>`).join("")}</tr>`;
+    }).join("");
+    const nasRow = `<tr><td><b>Nasional</b></td>${nas.map((t) => `<td class="num"><b>${pijdPct(t.pct_mantap)}</b><div class="hint">${t.n_ruas} ruas</div></td>`).join("")}</tr>`;
+    const provHtml = `<div class="laporan-chart-block">
+      <div class="laporan-chart-title"><i class="bi bi-table"></i> % Mantap Ruas Usulan per Provinsi</div>
+      <div class="laporan-chart-sub">Σ (baik + sedang) ÷ Σ panjang ruas, atas ruas yang diusulkan pada tahun itu. Himpunan ruas berbeda tiap tahun,
+        jadi baris ini menggambarkan kondisi ruas yang diusulkan, bukan perubahan ruas yang sama.</div>
+      <div class="biaya-tabel-wrap"><table class="biaya-usulan-table"><thead><tr><th>Provinsi</th>
+        ${th.map((t) => `<th class="num">${t}</th>`).join("")}</tr></thead><tbody>${nasRow}${provRows}</tbody></table></div></div>`;
+    const daftarHtml = `<div class="laporan-chart-block">
+      <div class="laporan-chart-title"><i class="bi bi-list-ol"></i> Daftar Ruas Teramati ≥ 2 Tahun</div>
+      <div class="biaya-filter-row" style="padding:0 0 8px;border:0">
+        <label>Pendanaan <select id="pijdKmtDana"><option value="ya">Didanai IJD</option><option value="tidak">Tidak didanai</option>
+          <option value="semua">Semua</option></select></label>
+        <label>Arah <select id="pijdKmtArah"><option value="semua">Semua</option><option value="turun">Memburuk</option>
+          <option value="tetap">Tetap</option><option value="naik">Membaik</option></select></label>
+        <label>Provinsi <select id="pijdKmtProv"><option value="">Semua</option>
+          ${d.provinsi.map((pr) => `<option>${escapeHtml(pr.provinsi)}</option>`).join("")}</select></label>
+      </div>
+      <div id="pijdKmtTabel"></div></div>`;
+    view.innerHTML = kpis + arahHtml + provHtml + daftarHtml + `<p class="hint">${escapeHtml(d.catatan)}</p>`;
+    ["pijdKmtDana", "pijdKmtArah", "pijdKmtProv"].forEach((id) =>
+      document.getElementById(id).addEventListener("change", pijdRenderKemantapanTabel));
+    pijdRenderKemantapanTabel();
+  } catch (err) {
+    view.innerHTML = `<div class="laporan-distribusi-empty">${escapeHtml(err.message)}</div>`;
+  }
+}
+
+function pijdRenderKemantapanTabel() {
+  const d = pijd.kemantapan;
+  const dana = document.getElementById("pijdKmtDana").value;
+  const arah = document.getElementById("pijdKmtArah").value;
+  const prov = document.getElementById("pijdKmtProv").value;
+  const xs = d.daftar.filter((x) => (dana === "semua" || x.didanai_di_antara === (dana === "ya"))
+    && (arah === "semua" || x.arah === arah) && (!prov || x.provinsi === prov));
+  const BATAS = 300;
+  const rows = xs.slice(0, BATAS).map((x) => `<tr><td>${escapeHtml(x.nama_ruas || "")}<div class="hint">${escapeHtml(x.status_ruas || "")} · ${biayaFmt(x.panjang_ruas_km)} km</div></td>
+    <td>${escapeHtml(x.kabupaten_kota || "")}<div class="hint">${escapeHtml(x.provinsi || "")}</div></td>
+    ${d.tahun.map((t) => `<td class="num">${x.pct_mantap[t] != null ? pijdPct(x.pct_mantap[t]) : "–"}</td>`).join("")}
+    <td class="num">${pijdDeltaBadge(x.delta_poin)}</td>
+    <td>${x.tahun_didanai.length ? x.tahun_didanai.map((t) => `<span class="pijd-pill">${t}</span>`).join("") : "–"}</td></tr>`).join("");
+  document.getElementById("pijdKmtTabel").innerHTML = `<div class="biaya-tabel-wrap"><table class="biaya-usulan-table">
+    <thead><tr><th>Ruas</th><th>Kab/Kota</th>${d.tahun.map((t) => `<th class="num">${t}</th>`).join("")}<th class="num">Δ</th><th>Tahun didanai</th></tr></thead>
+    <tbody>${rows || `<tr><td colspan="${d.tahun.length + 4}">Tidak ada.</td></tr>`}</tbody></table></div>
+    <p class="hint">${xs.length.toLocaleString("id-ID")} ruas${xs.length > BATAS ? `, ditampilkan ${BATAS} pertama (urut Δ terendah)` : ""}.
+      Ruas yang didanai tetapi memburuk perlu ditelaah: penanganan belum bertahan, segmen lain dari ruas yang sama, atau isian kondisi tidak konsisten.</p>`;
 }
 
 /* ---------------- Tab & binding ---------------- */
@@ -493,7 +639,8 @@ function pijdSetTab(tab) {
   document.getElementById("pijdPetaFilter").hidden = tab !== "peta";
   document.getElementById("pijdPetaView").hidden = tab !== "peta";
   document.getElementById("pijdRekapFilter").hidden = tab !== "rekap";
-  const views = { wilayah: pijdRenderWilayah, berulang: pijdRenderBerulang, nihil: pijdRenderNihil, rekap: pijdRenderRekap };
+  const views = { wilayah: pijdRenderWilayah, berulang: pijdRenderBerulang, nihil: pijdRenderNihil, rekap: pijdRenderRekap,
+    kemantapan: pijdRenderKemantapan };
   for (const t of Object.keys(views)) {
     document.getElementById(`pijd${t[0].toUpperCase()}${t.slice(1)}View`).hidden = tab !== t;
   }
@@ -516,6 +663,7 @@ function bindProgramIjd() {
   document.getElementById("pijdKategori").addEventListener("change", pijdLoadPeta);
   document.getElementById("pijdMetrik").addEventListener("change", () => pijdGambarPeta(false));
   document.getElementById("pijdRekapTahun").addEventListener("change", pijdRenderRekap);
+  document.getElementById("pijdRekapProv").addEventListener("change", pijdRenderRekap);
   document.getElementById("programIjdClose").addEventListener("click", tutup);
   overlay.addEventListener("click", (e) => { if (e.target === overlay) tutup(); });
   document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !overlay.hidden) tutup(); });

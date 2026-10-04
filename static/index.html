@@ -19,7 +19,7 @@
       <button id="btnSidebarToggle" class="icon-btn" aria-label="Toggle menu"><i class="bi bi-list"></i></button>
       <div class="brand">
         <span class="brand-logo"><i class="bi bi-geo-alt-fill"></i></span>
-        <span class="brand-name">The Next - <strong>SiJalan</strong></span>
+        <span class="brand-name">The Next - <strong id="brandMode">SiJalan</strong></span>
       </div>
       <div class="topbar-search">
         <i class="bi bi-search"></i>
@@ -82,6 +82,8 @@
           <span>Lokasi Prioritas</span>
         </button>
       </div>
+      <button type="button" class="mode-switch" id="btnModeSwitch" title="Ganti aplikasi: SiJalan (penilaian IJD) / Sikon (semua sektor)" hidden>
+        <i class="bi bi-arrow-left-right"></i><span>Ganti aplikasi</span></button>
       <div class="topbar-user" id="topbarUser" hidden>
         <i class="bi bi-person-circle"></i>
         <span id="topbarUsername"></span>
@@ -90,13 +92,14 @@
       <div class="topbar-status" id="topbarStatus">Siap</div>
     </header>
 
-    <div class="login-overlay" id="loginOverlay" hidden>
+    <div class="login-overlay auth-bg" id="loginOverlay" hidden>
       <form class="login-card" id="loginForm">
         <div class="brand login-brand">
           <span class="brand-logo"><i class="bi bi-geo-alt-fill"></i></span>
-          <span class="brand-name">The Next - <strong>SiJalan</strong></span>
+          <span class="brand-name">The Next - <strong id="loginBrandMode">SiJalan</strong></span>
         </div>
         <h2>Masuk</h2>
+        <p class="login-mode" id="loginModeLabel" hidden></p>
         <label class="login-field">
           <span>Username</span>
           <input type="text" id="loginUsername" name="username" autocomplete="username" required autofocus />
@@ -107,7 +110,45 @@
         </label>
         <div class="login-error" id="loginError" hidden></div>
         <button type="submit" class="btn btn-primary btn-block" id="btnLoginSubmit">Masuk</button>
+        <button type="button" class="login-back" id="btnLoginKembali"><i class="bi bi-arrow-left"></i> Pilih aplikasi lain</button>
       </form>
+    </div>
+
+    <!-- Halaman pembuka: pilih SiJalan (penilaian IJD) atau Sikon (semua sektor,
+         informasi umum) -- deck "20261002 Preparation, Implementation and
+         Validation of IJD" hal. 5. Logika di state.js (setAppMode). -->
+    <div class="login-overlay mode-overlay auth-bg" id="modeOverlay" hidden>
+      <div class="mode-wrap">
+        <span class="mode-logo"><i class="bi bi-geo-alt-fill"></i></span>
+        <h1 class="mode-title">KONEKTIVITAS</h1>
+        <div class="mode-title-sub">DAN INFRASTRUKTUR LOGISTIK</div>
+        <span class="mode-rule" aria-hidden="true"></span>
+        <p class="mode-tagline">Akses data dan informasi untuk mendukung pengelolaan konektivitas dan infrastruktur
+          transportasi nasional</p>
+        <div class="mode-cards">
+          <div class="mode-card mode-card-sijalan">
+            <div class="mode-card-head">
+              <span class="mode-card-icon"><i class="bi bi-signpost-split"></i></span>
+              <span><span class="mode-card-title">SIJALAN</span><span class="mode-card-sub">Dashboard IJD</span></span>
+            </div>
+            <p>Akses data dan informasi program IJD untuk mendukung pengelolaan infrastruktur jalan.</p>
+            <span class="mode-card-lock" id="modeSijalanLock" hidden><i class="bi bi-lock-fill"></i> Akun Anda (umum) tidak
+              memiliki akses penilaian IJD</span>
+            <button type="button" class="mode-card-btn" data-app-mode="sijalan" id="modeCardSijalan">
+              <span class="mode-btn-label">Login</span> <i class="bi bi-arrow-right"></i></button>
+          </div>
+          <div class="mode-card mode-card-sikon">
+            <div class="mode-card-head">
+              <span class="mode-card-icon"><i class="bi bi-diagram-3"></i></span>
+              <span><span class="mode-card-title">SIKON</span><span class="mode-card-sub">Dashboard Konektivitas</span></span>
+            </div>
+            <p>Akses data dan informasi konektivitas infrastruktur dan multimoda transportasi.</p>
+            <button type="button" class="mode-card-btn" data-app-mode="sikon">
+              <span class="mode-btn-label">Login</span> <i class="bi bi-arrow-right"></i></button>
+          </div>
+        </div>
+        <div class="mode-foot">Direktorat Konektivitas dan Infrastruktur Logistik · Kementerian PPN/Bappenas</div>
+      </div>
     </div>
 
     <!-- Cetak peta (static/js/print-map.js, POST /api/peta/cetak -> map_print.py) -->
@@ -549,6 +590,8 @@
             Kab/Kota Tanpa IJD</button>
           <button type="button" class="datatable-tab" data-pijd-tab="rekap"><i class="bi bi-clipboard-data"></i> Rekap
             Tahunan</button>
+          <button type="button" class="datatable-tab" data-pijd-tab="kemantapan"><i class="bi bi-activity"></i> Histori
+            Kemantapan</button>
         </div>
         <div class="biaya-filter-row" id="pijdPetaFilter">
           <label>Tahun
@@ -580,6 +623,10 @@
               <option value="2024">2024</option>
               <option value="2023">2023</option>
             </select></label>
+          <label>Rincian kab/kota provinsi
+            <select id="pijdRekapProv">
+              <option value="">— pilih provinsi —</option>
+            </select></label>
         </div>
         <div class="pijd-peta-view" id="pijdPetaView">
           <div class="pijd-map" id="pijdMap" role="img" aria-label="Peta choropleth alokasi Program IJD"></div>
@@ -591,6 +638,34 @@
         <div class="laporan-distribusi-view" id="pijdBerulangView" hidden></div>
         <div class="laporan-distribusi-view" id="pijdNihilView" hidden></div>
         <div class="laporan-distribusi-view" id="pijdRekapView" hidden></div>
+        <div class="laporan-distribusi-view" id="pijdKemantapanView" hidden></div>
+      </div>
+    </div>
+
+    <!-- Logic Frame IJD + Pagu Provinsi (static/js/logic-frame.js, GET /api/logic-frame,
+         /api/pagu-provinsi) -- deck "20261002 Preparation, Implementation and Validation of IJD" hal. 2 & 4 -->
+    <div class="datatable-overlay" id="logicFrameOverlay" hidden>
+      <div class="datatable-modal">
+        <div class="datatable-head">
+          <div class="datatable-head-title">
+            <h3><i class="bi bi-diagram-3"></i> Logic Frame IJD</h3>
+            <span class="datatable-meta" id="logicFrameMeta">Input data → proses analisis → output</span>
+          </div>
+          <div class="datatable-head-actions">
+            <button type="button" class="icon-btn" id="logicFrameClose" aria-label="Tutup"><i class="bi bi-x-lg"></i></button>
+          </div>
+        </div>
+        <div class="datatable-tabs biaya-tabs">
+          <button type="button" class="datatable-tab active" data-lf-tab="frame"><i class="bi bi-diagram-3"></i> Logic Frame</button>
+          <button type="button" class="datatable-tab" data-lf-tab="pagu" id="lfTabPagu"><i class="bi bi-pie-chart"></i> Pagu Provinsi</button>
+        </div>
+        <div class="biaya-filter-row" id="lfPaguFilter" hidden>
+          <label>Alokasi nasional (Rp triliun)
+            <input type="text" inputmode="decimal" id="lfPaguAlokasi" placeholder="mis. 14,63" /></label>
+          <button type="button" class="btn btn-ghost btn-sm" id="lfPaguHitung"><i class="bi bi-calculator"></i> Hitung pagu</button>
+        </div>
+        <div class="laporan-distribusi-view" id="lfFrameView"></div>
+        <div class="laporan-distribusi-view" id="lfPaguView" hidden></div>
       </div>
     </div>
 
@@ -975,6 +1050,9 @@
               <button id="btnProgramIjd" class="btn btn-ghost btn-sm"
                 title="Riwayat Program IJD 2023-2026 (DPP final): peta provinsi → kab/kota, Barat–Timur, ruas berulang, kab/kota tanpa IJD, rekap tahunan">
                 <i class="bi bi-map"></i> Riwayat Program IJD</button>
+              <button id="btnLogicFrame" class="btn btn-ghost btn-sm"
+                title="Logic Frame: hubungan input data, proses analisis, dan output penilaian IJD (+ Pagu Provinsi)"><i
+                  class="bi bi-diagram-3"></i> Logic Frame</button>
               <button id="btnUsulanModaExport" class="btn btn-ghost btn-sm" hidden><i class="bi bi-download"></i>
                 Export XLSX</button>
               <button id="btnUsulanRoadSafety" class="btn btn-ghost btn-sm" hidden
@@ -1152,6 +1230,7 @@
   <script src="/js/analysis.js"></script>
   <script src="/js/usulan-inpres.js"></script>
   <script src="/js/program-ijd.js"></script>
+  <script src="/js/logic-frame.js"></script>
   <script src="/js/pelabuhan-urgensi.js"></script>
   <!-- chat analitik: markdown (marked) + sanitasi HTML (DOMPurify) + grafik (Chart.js);
        chat.js tetap jalan tanpa ketiganya (markdown ringan, tanpa grafik) bila CDN gagal -->

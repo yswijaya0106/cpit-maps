@@ -48,7 +48,32 @@ Requires `.env` (copy from `.env.example`):
   config" default as before. Role `user` is view-only: `_require_admin()`
   gates `POST /api/usulan-inpres/import` (403 for non-admin); the frontend
   hides the "Import XLSX" button for that role too (`state.auth` populated
-  from `GET /api/auth/me`, `applyAuthRestrictions()` in state.js). **Same
+  from `GET /api/auth/me`, `applyAuthRestrictions()` in state.js).
+  **4 Oct 2026: third role `umum`** (deck "20261002 Preparation,
+  Implementation and Validation of IJD" p. 5). It can see data, including IJD
+  usulan, Riwayat Program and Tren Biaya, but not penilaian results:
+  - `auth_middleware` returns 403 for `_PATH_PENILAIAN` (IJD score, NPR,
+    prioritas nasional, pagu/alokasi, laporan-daerah-prioritas,
+    penilaian-bappenas, biaya acuan, `data/penilaian_bappenas_ai`). Add new
+    penilaian routes to that regex.
+  - Chat refuses `hitung_skor_ijd_usulan` and SQL on `penilaian_bappenas_ai`
+    via the `_PERAN` ContextVar in chat_providers.py.
+  - Existing `user` accounts are deliberately unchanged; assign `umum` with
+    `manage_users.py role <u> umum`. No CHECK constraint, so no migration.
+
+  **Same day, landing page SiJalan vs Sikon** (`#modeOverlay`, state.js
+  `bukaPilihanMode`/`pilihMode`/`setAppMode`), following the deck p. 5 mockup:
+  - It shows BEFORE login. Each card's "Login" button opens the login form for
+    that app; the mode is kept in `sessionStorage` across the post-login
+    reload.
+  - Background is `static/img/login-bg.jpg`, a compressed copy of root
+    `bg.png`. The login form uses a light card on the same background.
+  - SiJalan is IJD penilaian, with the moda select locked to IJD. Sikon covers
+    all sectors and hides penilaian UI client-side (`aksesPenilaian()`).
+  - Role `umum` can only pick Sikon.
+  - `usulanToolbarSync()` sets toolbar visibility per moda, then
+    `applyAuthRestrictions()` only hides.
+  **Same
   day: HTTP Basic Auth's native browser popup replaced with a custom login
   form** (`#loginOverlay` in index.html) — `auth_middleware` in app.py
   (renamed from `basic_auth_middleware`) now gates only `/api/*` (static
@@ -133,7 +158,8 @@ Deps: `requirements.txt`, venv at `.venv/` (already gitignored).
   panels) → `usulan-inpres.js` (Inpres match + browse/detail) →
   `dalam-angka.js` (topbar "Dalam Angka" BPS publication search/preview
   panel; independent of Google Maps, same pattern as data-viewer.js) →
-  `chat.js` (chat panel, grounded in the currently viewed route) →
+  `program-ijd.js` → `logic-frame.js` (both after usulan-inpres.js, they reuse
+  its helpers) → `chat.js` (chat panel, grounded in the currently viewed route) →
   `export.js` → `print-map.js` (toolbar "Cetak peta" dialog, see
   `POST /api/peta/cetak`) → `main.js` (reset, top-level event binding, and the
   mobile "..." topbar dropdown — `.topbar-more`, `display:contents` on
@@ -472,6 +498,20 @@ Deps: `requirements.txt`, venv at `.venv/` (already gitignored).
   only A5 Indeks Kemahalan Konstruksi still missing, no source found yet)
   and the two-layer allocation simulation on top of the national ranking.
   Both label themselves "perkiraan/parsial" — keep that.
+- `GET /api/logic-frame?tahun=` — the "Logic Frame IJD" modal (button
+  `#btnLogicFrame`, [static/js/logic-frame.js](static/js/logic-frame.js);
+  deck "20261002 ..." p. 2 & 4). It shows Input → Proses → Output.
+  - Inputs are `_LF_INPUT` (table + optional `usulan_inpres` filter). Each
+    input's status (tersedia/parsial/kosong/belum) is counted live from the
+    DB, never hardcoded.
+  - Proses are `_LF_PROSES`. A–E labels and weights come from
+    `ijd_scoring_rules`. Cakupan per parameter is parsed from the
+    "Kelengkapan Data" column of the cached national bulk score.
+  - Outputs are `_LF_OUTPUT` and open the existing views.
+  - Add an entry there when a new data source or score is added.
+  - Its second tab is the first UI for `/api/pagu-provinsi` (Pagu Provinsi,
+    optional alokasi nasional in Rp T). That tab is hidden without penilaian
+    access.
 - `GET /api/usulan-inpres/{id}/npr` / `GET /api/usulan-inpres/npr/preview` /
   `GET /api/usulan-inpres/npr/export/xlsx` —
   NPR (Nilai Prioritas Ruas), an **alternative/experimental** scoring model
@@ -1063,7 +1103,22 @@ scripts/tables/layers out to staging.
   - `/kegiatan` lists the kegiatan for Level 3.
   - `/ringkasan` covers Barat–Timur, per pulau (deck split: Bali on its own,
     counted as Barat), ruas berulang × fiskal, and the 23 kab/kota without IJD.
-  - `/rekap?tahun=` is the yearly recap.
+  - `/rekap?tahun=` is the yearly recap. `&kode_provinsi=` adds `rincian`, the
+    per-kab/kota breakdown from deck p. 33 (jalan vs jembatan count and
+    alokasi, rata-rata per kegiatan, tematik). A kegiatan is jembatan when
+    `panjang_jembatan_m > 0`; in the source it never coexists with
+    `panjang_jalan_km`.
+  - Tab "Histori Kemantapan" is `GET /api/usulan-riwayat/kemantapan`
+    (deck p. 2, Tahap 3). It covers 2024-2026 only, because the SITIA 2023
+    export has no kondisi columns. % mantap = (baik + sedang) ÷
+    `panjang_ruas_km`, capped at 100%, the same as parameter B v2. It uses
+    Pemda's self-reported kondisi, not IRI. Ruas entities come from
+    `_ruas_entitas()`, shared with lolos-kompetensi. Each ruas observed ≥2
+    years gets Δ poin, split by whether it was funded between the first and
+    last observation; funding comes from SITIA DPP/Diprogramkan or a
+    name-match in `program_ijd_riwayat`. Selection bias: a ruas is only
+    observed again if it is re-proposed. The usulan detail "Riwayat
+    Pengusulan Ruas" table also shows % Mantap per year.
 
   Gotchas:
   - Geometry comes from `BATAS PROVINSI`/`BATAS KABUPATEN` in `map_layers`,

@@ -2,10 +2,13 @@
 """Kelola akun login (tabel users) -- add/passwd/role/list/remove.
 Lihat scripts/schema_users.sql, auth.py.
 
+Role: admin (semua + import), user (lihat semua, tanpa import), umum (lihat
+data/Sikon saja -- hasil penilaian IJD ditutup, lihat _PATH_PENILAIAN di app.py).
+
 Usage (venv aktif):
-    python scripts/manage_users.py add <username> <password> <admin|user>
+    python scripts/manage_users.py add <username> <password> <admin|user|umum>
     python scripts/manage_users.py passwd <username> <password baru>
-    python scripts/manage_users.py role <username> <admin|user>
+    python scripts/manage_users.py role <username> <admin|user|umum>
     python scripts/manage_users.py list
     python scripts/manage_users.py remove <username>
 """
@@ -18,6 +21,13 @@ from auth import hash_password  # noqa: E402
 from db import db_cursor as pg_cursor  # noqa: E402
 
 SCHEMA_PATH = Path(__file__).resolve().parent / "schema_users.sql"
+ROLES = ("admin", "user", "umum")
+
+
+def _cek_role(role):
+    if role not in ROLES:
+        print(f"GAGAL: role harus salah satu dari {', '.join(ROLES)}")
+        sys.exit(1)
 
 
 def _ensure_schema():
@@ -26,9 +36,7 @@ def _ensure_schema():
 
 
 def cmd_add(username, password, role):
-    if role not in ("admin", "user"):
-        print("GAGAL: role harus 'admin' atau 'user'")
-        sys.exit(1)
+    _cek_role(role)
     _ensure_schema()
     with pg_cursor() as cur:
         cur.execute(
@@ -53,9 +61,7 @@ def cmd_passwd(username, password):
 
 
 def cmd_role(username, role):
-    if role not in ("admin", "user"):
-        print("GAGAL: role harus 'admin' atau 'user'")
-        sys.exit(1)
+    _cek_role(role)
     _ensure_schema()
     with pg_cursor() as cur:
         cur.execute("UPDATE users SET role=%s WHERE username=%s", (role, username))

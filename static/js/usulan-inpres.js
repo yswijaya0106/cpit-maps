@@ -611,7 +611,7 @@ async function loadUsulanModaList(reset) {
 
 const USULAN_IJD_ONLY_BUTTONS = [
   "btnUsulanImport", "btnUsulanExport", "btnUsulanExportIjdScore", "btnIjdDashboard", "btnUsulanExportNpr",
-  "btnBiayaKonstruksi", "btnProgramIjd",
+  "btnBiayaKonstruksi", "btnProgramIjd", "btnLogicFrame",
 ];
 
 const USULAN_MODA_SEARCH_PLACEHOLDER = {
@@ -635,9 +635,19 @@ function usulanModaChange(moda) {
   }
   clearUsulanModaShpHighlight();
 
+  usulanToolbarSync();
+  document.getElementById("usulanSearchInput").placeholder = USULAN_MODA_SEARCH_PLACEHOLDER[moda] || "Cari...";
+
+  if (moda === "IJD") loadUsulanBrowseList(true);
+  else loadUsulanModaList(true);
+}
+
+// Tampil/sembunyi tombol toolbar & filter sesuai moda aktif, lalu pembatasan
+// role/mode (applyAuthRestrictions menyembunyikan Import & tombol penilaian).
+function usulanToolbarSync() {
+  const moda = state.usulanBrowse.moda;
   const isIjd = moda === "IJD";
   USULAN_IJD_ONLY_BUTTONS.forEach((id) => { document.getElementById(id).hidden = !isIjd; });
-  applyAuthRestrictions(); // di atas baris sebelumnya: role non-admin tetap tidak lihat tombol Import
   document.getElementById("btnUsulanModaExport").hidden = isIjd;
   document.getElementById("btnUsulanModaDashboard").hidden = isIjd;
   document.getElementById("btnUrgensiPelabuhan").hidden = moda !== "Laut";
@@ -646,10 +656,21 @@ function usulanModaChange(moda) {
   document.getElementById("btnUsulanRakLlaj").hidden = moda !== "Darat";
   document.getElementById("usulanKabupatenField").hidden = !isIjd;
   document.getElementById("usulanMultiBar").hidden = !isIjd;
-  document.getElementById("usulanSearchInput").placeholder = USULAN_MODA_SEARCH_PLACEHOLDER[moda] || "Cari...";
+  applyAuthRestrictions();
+}
 
-  if (isIjd) loadUsulanBrowseList(true);
-  else loadUsulanModaList(true);
+// Dipanggil setAppMode (state.js): SiJalan hanya moda IJD, Sikon semua moda.
+function usulanAppModeChanged() {
+  const sel = document.getElementById("usulanModa");
+  const hanyaIjd = state.appMode === "sijalan";
+  [...sel.options].forEach((o) => { o.hidden = hanyaIjd && o.value !== "IJD"; });
+  sel.disabled = hanyaIjd;
+  if (hanyaIjd && state.usulanBrowse.moda !== "IJD") {
+    sel.value = "IJD";
+    usulanModaChange("IJD");
+  } else {
+    usulanToolbarSync();
+  }
 }
 
 async function loadUsulanBrowseList(reset) {
@@ -953,13 +974,20 @@ async function loadUsulanDetail(id) {
     });
     html += `</div>`;
   }
+  // Blok penilaian (skor IJD, prioritas nasional, NPR, acuan biaya, penilaian
+  // Bappenas) hanya di SiJalan & role berakses -- lihat aksesPenilaian() di state.js.
+  const penilaian = aksesPenilaian();
   html += `<div class="usulan-dalam-angka" id="usulanDalamAngka"></div>`;
-  html += `<div class="usulan-ijd-score" id="usulanIjdScore"><div class="adv-loading">Menghitung skor prioritisasi IJD...</div></div>`;
-  html += `<div class="usulan-ijd-score" id="usulanSkorNasional"></div>`;
-  html += `<div class="usulan-ijd-score" id="usulanNpr"></div>`;
+  if (penilaian) {
+    html += `<div class="usulan-ijd-score" id="usulanIjdScore"><div class="adv-loading">Menghitung skor prioritisasi IJD...</div></div>`;
+    html += `<div class="usulan-ijd-score" id="usulanSkorNasional"></div>`;
+    html += `<div class="usulan-ijd-score" id="usulanNpr"></div>`;
+  }
   html += `<div class="usulan-ijd-score" id="usulanRiwayatRuas"></div>`;
-  html += `<div class="usulan-ijd-score" id="usulanBiayaAcuan"></div>`;
-  html += `<div class="usulan-ijd-score" id="usulanPenilaianBappenas"></div>`;
+  if (penilaian) {
+    html += `<div class="usulan-ijd-score" id="usulanBiayaAcuan"></div>`;
+    html += `<div class="usulan-ijd-score" id="usulanPenilaianBappenas"></div>`;
+  }
   html += `<div class="adv-loading" id="usulanGeomStatus">Memuat lokasi di peta...</div></div>`;
   detailEl.innerHTML = html;
 
@@ -972,12 +1000,14 @@ async function loadUsulanDetail(id) {
   });
 
   loadDalamAngka(u.id);
-  loadIjdScore(u.id);
-  loadSkorNasional(u.id);
-  loadNpr(u.id);
   loadRiwayatRuas(u.id);
-  loadBiayaAcuan(u.id);
-  loadPenilaianBappenas(u.id);
+  if (penilaian) {
+    loadIjdScore(u.id);
+    loadSkorNasional(u.id);
+    loadNpr(u.id);
+    loadBiayaAcuan(u.id);
+    loadPenilaianBappenas(u.id);
+  }
   await flyToUsulanGeometry(u);
 }
 
@@ -1172,13 +1202,14 @@ async function loadRiwayatRuas(id) {
       <td class="num">${rp(x.alokasi_usulan_pemda)}</td>
       <td>${badge(x.seleksi_sistem)}</td><td>${badge(x.verifikasi_balai)}</td>
       <td>${badge(x.verifikasi_kompetensi)}</td><td>${badge(x.verifikasi_pfid)}</td>
-      <td class="num">${x.nilai_dpp ? rp(x.nilai_dpp) : "—"}</td></tr>`).join("");
+      <td class="num">${x.nilai_dpp ? rp(x.nilai_dpp) : "—"}</td>
+      <td class="num" title="(baik + sedang) ÷ panjang ruas, isian Pemda saat mengusulkan">${x.pct_mantap != null ? `${x.pct_mantap.toLocaleString("id-ID")}%` : "—"}</td></tr>`).join("");
     el.innerHTML = `<div class="ijd-score-head">
         <span class="ijd-score-title"><i class="bi bi-clock-history"></i> Riwayat Pengusulan Ruas ${escapeHtml(data.kode_ruas || "")}</span>
         <span class="ijd-score-total">Pernah diusulkan: ${r.tahun_diusulkan_sebelumnya.length ? r.tahun_diusulkan_sebelumnya.join(", ") : "tidak ada di 2023–2025"}${r.pernah_ber_dpp ? " · pernah masuk DPP" : ""}${r.tahun_lolos_kompetensi.length ? ` · lolos Alokasi Kompetensi ${r.tahun_lolos_kompetensi.join(", ")}` : ""}</span>
       </div>
       <div class="usulan-riwayat-scroll"><table class="usulan-riwayat-table"><thead><tr>
-        <th>Tahun</th><th>Kegiatan</th><th>Alokasi Pemda</th><th>Sistem</th><th>Balai</th><th>Kompetensi</th><th>PFID</th><th>DPP</th>
+        <th>Tahun</th><th>Kegiatan</th><th>Alokasi Pemda</th><th>Sistem</th><th>Balai</th><th>Kompetensi</th><th>PFID</th><th>DPP</th><th>% Mantap</th>
       </tr></thead><tbody>${rows}</tbody></table></div>
       <p class="hint ijd-score-note">${escapeHtml(data.catatan)}</p>`;
   } catch (err) {

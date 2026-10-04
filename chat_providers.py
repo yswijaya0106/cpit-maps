@@ -467,6 +467,15 @@ _PENGGUNA = contextvars.ContextVar("chat_pengguna", default=None)
 # Teks hasil semua tool dlm satu request /api/chat -> dicocokkan dgn isi tabel
 # di jawaban akhir (_periksa_tabel_karangan). ContextVar: per request/thread.
 _HASIL_TOOL = contextvars.ContextVar("chat_hasil_tool", default=None)
+# Role pengguna (app.py ROLE_TANPA_PENILAIAN): akun 'umum' tidak boleh melihat
+# hasil penilaian IJD lewat chat -- tool skor ditolak, tabel penilaian diblokir.
+_PERAN = contextvars.ContextVar("chat_peran", default=None)
+_TOOLS_PENILAIAN = {"hitung_skor_ijd_usulan"}
+_TABEL_PENILAIAN = re.compile(r"\bpenilaian_bappenas_ai\b", re.IGNORECASE)
+
+
+def _tanpa_penilaian() -> bool:
+    return _PERAN.get() == "umum"
 
 _USULAN_TOOL_FIELDS = (
     "id", "nama_kegiatan", "nama_ruas", "kabupaten_kota", "provinsi", "jenis_penanganan",
@@ -769,6 +778,8 @@ def _tool_jalankan_query_sql(sql=None, judul=None, actions=None) -> dict:
         return {"error": error}
     if _SQL_TABEL_TERLARANG.search(sql):
         return {"error": "Tabel akun pengguna / data pribadi layanan PSC119 tidak boleh diakses lewat chat."}
+    if _tanpa_penilaian() and _TABEL_PENILAIAN.search(sql):
+        return {"error": "Akun umum tidak memiliki akses ke hasil penilaian IJD (tabel penilaian_bappenas_ai)."}
     inti = sql.strip().rstrip(";")
     try:
         with db_cursor() as cur:
@@ -939,6 +950,10 @@ CHAT_TOOL_DISPATCH = {
 
 def _chat_system_text(context: Optional[dict], has_search: bool = False) -> str:
     system_text = CHAT_SYSTEM_PROMPT + (CHAT_SEARCH_AVAILABLE_NOTE if has_search else CHAT_SEARCH_UNAVAILABLE_NOTE)
+    if _tanpa_penilaian():
+        system_text += ("\n\nPENGGUNA INI AKUN UMUM (Sikon): jangan menghitung, menyebut, atau menebak skor/"
+                        "penilaian/peringkat IJD (skor teknokratis A-E, NPR, prioritas nasional, penilaian "
+                        "Bappenas). Data usulan dan data sektor lain tetap boleh dijawab.")
     if context:
         system_text += "\n\nData rute saat ini (JSON):\n" + json.dumps(context, ensure_ascii=False)
     return system_text
@@ -965,6 +980,9 @@ def _jalankan_tool(name: str, args: dict, actions: list) -> dict:
     fn = CHAT_TOOL_DISPATCH.get(name)
     if fn is None:
         return {"error": "fungsi tidak dikenal"}
+    if name in _TOOLS_PENILAIAN and _tanpa_penilaian():
+        return {"error": "Akun umum tidak memiliki akses ke skor/penilaian IJD. Sampaikan ke pengguna bahwa "
+                         "informasi ini hanya tersedia di SiJalan untuk akun yang berwenang."}
     try:
         if name in _TOOLS_NEED_ACTIONS_PARAM:
             return fn(actions=actions, **args)
@@ -1302,10 +1320,12 @@ def _rapikan_jawaban(teks: str, actions: list) -> str:
     return teks
 
 
-def _call_chat(messages: List, context: Optional[dict], pengguna: Optional[str] = None) -> tuple:
+def _call_chat(messages: List, context: Optional[dict], pengguna: Optional[str] = None,
+               peran: Optional[str] = None) -> tuple:
     """Return (teks, actions) -- actions = daftar CLIENT_ACTION_TOOLS yang
     dipanggil model, diteruskan app.py ke frontend utk dieksekusi di UI."""
     _PENGGUNA.set(pengguna)
+    _PERAN.set(peran)
     providers = _chat_providers()
     if not providers:
         raise HTTPException(

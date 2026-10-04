@@ -1529,6 +1529,25 @@ upsert, so they're safe to re-run:
   does DELETE+INSERT per sheet. The old `ON CONFLICT` upsert duplicated rows
   whose `kecamatan_asli` is NULL on every rerun, because NULLs never
   conflict.
+- `build_kawasan_tematik_layer.py` (4 Oct 2026) — draws `kawasan_tematik`,
+  which has no geometry, on the map. Output is bucket `KAWASAN TEMATIK
+  BAPPENAS`, one layer per kategori (~2,040 polygons). The overlay category
+  is "Kawasan Tematik (Bappenas)", with fixed colours in
+  `KAWASAN_TEMATIK_WARNA` (maps-overlay.js).
+  - Geometry is copied from BATAS KECAMATAN polygons. Rows with only a
+    kab/kota, or whose kecamatan names all fail to match, use the BATAS
+    KABUPATEN polygon instead, labelled "sumber tidak merinci kecamatan".
+  - Text kecamatan lists are split, abbreviations expanded (Gn/Tj/STM…),
+    and names matched within the same kab against `ref_wilayah`.
+  - Polygons are found by code, else by a spelling-tolerant name match
+    (BPS vs the gdb: Keramat/Keuramat).
+  - Kept as unmatched-name attributes, not guessed: names that are desa,
+    not kecamatan (Rimo, Sungai Liput), and ~8 pemekaran kecamatan with no
+    polygon.
+  - `wilayah_provinsi` is set from the source polygon, so the per-provinsi
+    split works without `build_map_layer_wilayah.py`.
+  - DB-only and DELETE+INSERT. Rerun after `import_kawasan_tematik.py` or a
+    boundary reimport.
 - `scripts/wilayah_cocok.py` (`PencocokKabupaten`) — shared source-name →
   BPS kabupaten matcher used by both lokus importers (29 Sep 2026, from the
   tester bug "Fakfak tidak terbaca"). Names are compared on letters/digits

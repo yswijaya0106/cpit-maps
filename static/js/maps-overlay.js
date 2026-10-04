@@ -18,7 +18,18 @@ const MAP_LAYER_PALETTE = [
 // aktif yang index-nya bentrok modulo panjang palet jadi keliatan sama warnanya
 // walau beda layer (bug yang dilaporkan user). Preview swatch di daftar pilihan
 // (belum aktif) pakai mapLayerPreviewColor di bawah, TIDAK memesan slot palet.
+// Warna tetap utk layer kawasan tematik Bappenas (bukan palet bergilir), supaya
+// arti warnanya konsisten di peta, legenda, dan cetak.
+const KAWASAN_TEMATIK_WARNA = {
+  "Kawasan Perkebunan": "#2e7d32",
+  "Kawasan Kelautan & Perikanan": "#0277bd",
+  "Kawasan Transmigrasi": "#ef6c00",
+  "Kawasan Industri Prioritas": "#6a1b9a",
+  "Lokus PKPN 3T": "#c62828",
+};
+
 function mapLayerColor(layerName) {
+  if (KAWASAN_TEMATIK_WARNA[layerName]) return KAWASAN_TEMATIK_WARNA[layerName];
   if (!state.mapLayers.colors[layerName]) {
     const idx = Object.keys(state.mapLayers.colors).length % MAP_LAYER_PALETTE.length;
     state.mapLayers.colors[layerName] = MAP_LAYER_PALETTE[idx];
@@ -30,6 +41,7 @@ function mapLayerColor(layerName) {
 // menyentuh state.mapLayers.colors (jadi tidak mengurangi slot palet buat
 // layer yang benar-benar aktif). Dipakai di daftar checkbox pilihan layer.
 function mapLayerPreviewColor(layerName) {
+  if (KAWASAN_TEMATIK_WARNA[layerName]) return KAWASAN_TEMATIK_WARNA[layerName];
   let hash = 0;
   for (let i = 0; i < layerName.length; i++) hash = (hash * 31 + layerName.charCodeAt(i)) >>> 0;
   return MAP_LAYER_PALETTE[hash % MAP_LAYER_PALETTE.length];
@@ -182,6 +194,11 @@ const MAP_LAYER_CATEGORIES = [
   // LRK tetap di bucket JALAN NASIONAL (sudah lebih dulu ada di sana).
   { id: "keselamatan", label: "Keselamatan & Layanan Darurat", icon: "bi-heart-pulse",
     match: (p) => p === "KESELAMATAN" },
+  // Kawasan tematik Bappenas (tabel kawasan_tematik, aslinya tanpa geometri) yang
+  // dipetakan ke poligon kecamatan/kab-kota oleh scripts/build_kawasan_tematik_layer.py.
+  // Warna tetap per kategori: KAWASAN_TEMATIK_WARNA di bawah.
+  { id: "kawasan-bappenas", label: "Kawasan Tematik (Bappenas)", icon: "bi-pin-map",
+    match: (p) => p === "KAWASAN TEMATIK BAPPENAS" },
   { id: "jalan", label: "Jalan", icon: "bi-signpost-2", match: () => true }, // catch-all, HARUS terakhir
 ];
 

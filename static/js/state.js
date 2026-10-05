@@ -221,7 +221,26 @@ async function handleLogout() {
   location.reload();
 }
 
+/* Tema aplikasi: "light" (default, mengikuti bg.png) / "dark" (tema lama).
+   Atribut data-theme di <html> sudah dipasang skrip kecil di <head> sebelum
+   render; fungsi ini untuk toggle + sinkron ikon tombol. Tema peta Google
+   (state.mapTheme) tetap terpisah, punya tombol sendiri. */
+function applyAppTheme(theme) {
+  const dark = theme === "dark";
+  if (dark) document.documentElement.dataset.theme = "dark";
+  else delete document.documentElement.dataset.theme;
+  try { localStorage.setItem("appTheme", dark ? "dark" : "light"); } catch (e) { /* abaikan */ }
+  const btn = document.getElementById("btnAppTheme");
+  if (btn) {
+    btn.innerHTML = dark ? '<i class="bi bi-sun"></i>' : '<i class="bi bi-moon-stars"></i>';
+    btn.title = dark ? "Ganti ke tema terang" : "Ganti ke tema gelap";
+  }
+}
+
 document.addEventListener("DOMContentLoaded", () => {
+  applyAppTheme(document.documentElement.dataset.theme === "dark" ? "dark" : "light");
+  document.getElementById("btnAppTheme")?.addEventListener("click", () =>
+    applyAppTheme(document.documentElement.dataset.theme === "dark" ? "light" : "dark"));
   initAuth();
   document.getElementById("loginForm")?.addEventListener("submit", handleLoginSubmit);
   document.getElementById("btnLogout")?.addEventListener("click", handleLogout);

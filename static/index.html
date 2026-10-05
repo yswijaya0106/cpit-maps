@@ -10,6 +10,11 @@
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
   <link rel="stylesheet" href="/css/style.css" />
+  <!-- Tema aplikasi terang/gelap dipasang sebelum render supaya tidak berkedip
+       (toggle #btnAppTheme, lihat applyAppTheme di state.js). -->
+  <script>
+    try { if (localStorage.getItem("appTheme") === "dark") document.documentElement.dataset.theme = "dark"; } catch (e) {}
+  </script>
 </head>
 
 <body>
@@ -82,6 +87,10 @@
           <span>Lokasi Prioritas</span>
         </button>
       </div>
+      <button type="button" class="topbar-basemap app-theme-toggle" id="btnAppTheme"
+        title="Ganti tema aplikasi terang / gelap" aria-label="Ganti tema aplikasi">
+        <i class="bi bi-moon-stars"></i>
+      </button>
       <button type="button" class="mode-switch" id="btnModeSwitch" title="Ganti aplikasi: SiJalan (penilaian IJD) / Sikon (semua sektor)" hidden>
         <i class="bi bi-arrow-left-right"></i><span>Ganti aplikasi</span></button>
       <div class="topbar-user" id="topbarUser" hidden>

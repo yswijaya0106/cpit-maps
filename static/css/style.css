@@ -1,4 +1,36 @@
 :root {
+  /* Tema terang mengikuti bg.png (putih -> biru langit, aksen hijau). */
+  --bg: #eaf2fb;
+  --panel: #ffffff;
+  --panel-alt: #f2f7fd;
+  --border: #d3e0ef;
+  --text: #14233f;
+  --text-dim: #5a6a86;
+  --primary: #1f6fd1;
+  --primary-dark: #1d4fb8;
+  --accent: #129a74;
+  --danger: #d93a5a;
+  --warn: #d4862b;
+  --radius: 14px;
+  --shadow: 0 10px 30px rgba(20,35,63,.12);
+  --tint: 20,35,63;                 /* rgb utk hover/latar tipis: rgba(var(--tint),.05) */
+  --panel-raised: #ffffff;
+  --panel-raised2: #ffffff;
+  --topbar-bg: linear-gradient(90deg, #ffffff 0%, #f3f8fe 55%, #dcebfa 100%);
+  --body-grad: linear-gradient(160deg, #f7fbff 0%, #e4effb 60%, #d6e8f8 100%);
+  --nav-bg: #e2eefc; --nav-bg-hover: #cfe2fa;
+  --nav-border: #bcd5f3; --nav-border-hover: #9fc2ee;
+  --nav-text: #17417f; --nav-icon: var(--primary);
+  --backdrop: rgba(20,35,63,.35); --backdrop-strong: rgba(20,35,63,.55); --backdrop-pdf: rgba(20,35,63,.45);
+  --chip-bg: rgba(255,255,255,.85);
+  --code-bg: rgba(20,35,63,.06);
+  --danger-text: #c42848; --danger-bg: #fde8ec;
+  --kml-link: #b86e12;
+  color-scheme: light;
+}
+/* Tema gelap (sebelum 6 Okt 2026). Dipilih lewat tombol #btnAppTheme
+   (state.js applyAppTheme), disimpan di localStorage "appTheme". */
+:root[data-theme="dark"] {
   --bg: #0f1420;
   --panel: #161d2e;
   --panel-alt: #1d2740;
@@ -10,9 +42,23 @@
   --accent: #22d3a5;
   --danger: #ff5c7c;
   --warn: #ffb648;
-  --radius: 14px;
   --shadow: 0 10px 30px rgba(0,0,0,.35);
+  --tint: 255,255,255;
+  --panel-raised: #1b2440;
+  --panel-raised2: #232d52;
+  --topbar-bg: linear-gradient(90deg, #131a2c, #17203a);
+  --body-grad: none;
+  --nav-bg: rgba(255,255,255,.05); --nav-bg-hover: rgba(255,255,255,.09);
+  --nav-border: var(--border); --nav-border-hover: var(--border);
+  --nav-text: var(--text); --nav-icon: var(--text-dim);
+  --backdrop: rgba(8,11,18,.65); --backdrop-strong: rgba(8,11,18,.92); --backdrop-pdf: rgba(6,9,16,.72);
+  --chip-bg: rgba(15,20,32,.75);
+  --code-bg: rgba(0,0,0,.25);
+  --danger-text: #ff6b7d; --danger-bg: #3a2430;
+  --kml-link: #f59e0b;
+  color-scheme: dark;
 }
+.app-theme-toggle { padding: 7px 10px; }
 
 * { box-sizing: border-box; }
 
@@ -25,7 +71,7 @@ select option, select optgroup { background: var(--panel-alt); color: var(--text
 html, body {
   margin: 0; padding: 0; height: 100%;
   font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  background: var(--bg);
+  background: var(--bg) var(--body-grad) fixed;
   color: var(--text);
 }
 
@@ -39,7 +85,7 @@ html, body {
   align-items: center;
   gap: 10px;
   padding: 0 18px;
-  background: linear-gradient(90deg, #131a2c, #17203a);
+  background: var(--topbar-bg);
   border-bottom: 1px solid var(--border);
   z-index: 20;
 }
@@ -54,7 +100,7 @@ html, body {
   font-size: 12.5px;
   white-space: nowrap;
   color: var(--text-dim);
-  background: rgba(255,255,255,.04);
+  background: rgba(var(--tint),.04);
   border: 1px solid var(--border);
   padding: 5px 12px;
   border-radius: 999px;
@@ -70,7 +116,7 @@ html, body {
   display: flex;
   align-items: center;
   gap: 8px;
-  background: rgba(255,255,255,.05);
+  background: rgba(var(--tint),.05);
   border: 1px solid var(--border);
   border-radius: 999px;
   padding: 7px 14px;
@@ -87,13 +133,13 @@ html, body {
 
 .topbar-basemap {
   display: flex; align-items: center; gap: 8px;
-  background: rgba(255,255,255,.05); border: 1px solid var(--border);
+  background: var(--nav-bg); border: 1px solid var(--nav-border);
   border-radius: 999px; padding: 7px 14px; flex: 0 0 auto;
-  color: var(--text); font-size: 12.5px; font-family: inherit; cursor: pointer;
+  color: var(--nav-text); font-size: 12.5px; font-family: inherit; cursor: pointer;
   white-space: nowrap;
 }
-.topbar-basemap:hover { background: rgba(255,255,255,.09); }
-.topbar-basemap i { font-size: 13px; color: var(--text-dim); }
+.topbar-basemap:hover { background: var(--nav-bg-hover); border-color: var(--nav-border-hover); }
+.topbar-basemap i { font-size: 13px; color: var(--nav-icon); }
 
 /* Penampil data tabel database (topbar "Data") */
 .topbar-datatable { position: relative; flex: 0 0 auto; }
@@ -112,7 +158,7 @@ html, body {
 .datatable-menu-search {
   display: flex; align-items: center; gap: 8px; flex: 0 0 auto;
   padding: 7px 10px; margin-bottom: 6px;
-  background: rgba(255,255,255,.05); border: 1px solid var(--border); border-radius: 8px;
+  background: rgba(var(--tint),.05); border: 1px solid var(--border); border-radius: 8px;
 }
 .datatable-menu-search i { color: var(--text-dim); font-size: 13px; }
 .datatable-menu-search input {
@@ -130,15 +176,15 @@ html, body {
   background: transparent; color: var(--text); font-family: inherit;
   font-size: 13px; text-align: left; cursor: pointer;
 }
-.datatable-menu-item:hover { background: rgba(255,255,255,.07); }
+.datatable-menu-item:hover { background: rgba(var(--tint),.07); }
 .datatable-menu-count {
   font-size: 11.5px; color: var(--text-dim);
-  background: rgba(255,255,255,.05); border: 1px solid var(--border);
+  background: rgba(var(--tint),.05); border: 1px solid var(--border);
   border-radius: 999px; padding: 2px 9px;
 }
 .datatable-overlay {
   position: fixed; inset: 0; z-index: 90;
-  background: rgba(8,11,18,.65); backdrop-filter: blur(2px);
+  background: var(--backdrop); backdrop-filter: blur(2px);
   display: flex; align-items: center; justify-content: center; padding: 24px;
 }
 /* display:flex di atas menimpa [hidden] bawaan browser — tanpa aturan ini
@@ -147,7 +193,7 @@ html, body {
 
 .login-overlay {
   position: fixed; inset: 0; z-index: 200;
-  background: rgba(8,11,18,.92);
+  background: var(--backdrop-strong);
   display: flex; align-items: center; justify-content: center; padding: 24px;
 }
 .login-overlay[hidden] { display: none; }
@@ -165,13 +211,13 @@ html, body {
 }
 .login-field input:focus { outline: none; border-color: var(--primary); }
 .login-error {
-  font-size: 12.5px; color: #ff6b7d; background: rgba(255,92,124,.1);
+  font-size: 12.5px; color: var(--danger-text); background: rgba(255,92,124,.1);
   border: 1px solid rgba(255,92,124,.3); border-radius: 8px; padding: 8px 10px;
 }
 
 /* Halaman pembuka SiJalan / Sikon (state.js bukaPilihanMode/pilihMode).
    Sengaja terang mengikuti mockup deck "20261002 ..." hal. 5 (biru = SiJalan,
-   jingga = Sikon), beda dari tema gelap aplikasi di belakangnya. */
+   jingga = Sikon); palet aplikasi (:root) kini ikut terang dari bg.png yang sama. */
 /* Latar halaman pembuka + form login: static/img/login-bg.jpg (dari bg.png,
    area terang di kiri, foto multimoda di kanan) -- konten diletakkan di kolom kiri. */
 .auth-bg {
@@ -245,10 +291,10 @@ html, body {
 .login-back:hover { color: var(--text); }
 .mode-switch {
   display: inline-flex; align-items: center; gap: 5px; flex: 0 0 auto; white-space: nowrap; padding: 3px 9px; height: 26px;
-  font-size: 11.5px; color: var(--text-dim); background: transparent; border: 1px solid var(--border);
+  font-size: 11.5px; color: var(--nav-text); background: var(--nav-bg); border: 1px solid var(--nav-border);
   border-radius: 999px; cursor: pointer;
 }
-.mode-switch:hover { color: var(--text); border-color: var(--primary); }
+.mode-switch:hover { background: var(--nav-bg-hover); border-color: var(--primary); }
 .mode-switch[hidden] { display: none; }
 @media (max-width: 1500px) { .mode-switch span { display: none; } }
 
@@ -291,7 +337,7 @@ html, body {
 }
 .datatable-search {
   width: clamp(130px, 20vw, 200px); padding: 6px 10px; font-size: 12.5px; font-family: inherit;
-  background: rgba(255,255,255,.05); border: 1px solid var(--border); border-radius: 8px;
+  background: rgba(var(--tint),.05); border: 1px solid var(--border); border-radius: 8px;
   color: var(--text); outline: none;
 }
 .datatable-search:focus { border-color: var(--primary, #4f7cff); }
@@ -307,7 +353,7 @@ html, body {
 .datatable-filters .maplayer-combo-toggle span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .datatable-filters .maplayer-combo-toggle:disabled { opacity: .5; cursor: not-allowed; }
 .laporan-moda-select {
-  background: rgba(255,255,255,.05); color: var(--text); border: 1px solid var(--border);
+  background: rgba(var(--tint),.05); color: var(--text); border: 1px solid var(--border);
   border-radius: 8px; padding: 8px 10px; font-family: inherit; font-size: 12.5px;
   cursor: pointer; flex: 0 0 auto;
 }
@@ -345,7 +391,7 @@ html, body {
   scrollbar-width: thin; scrollbar-color: var(--primary) transparent; /* Firefox */
 }
 .datatable-scroll::-webkit-scrollbar { width: 10px; height: 10px; }
-.datatable-scroll::-webkit-scrollbar-track { background: rgba(255,255,255,.03); border-radius: 10px; margin: 2px; }
+.datatable-scroll::-webkit-scrollbar-track { background: rgba(var(--tint),.03); border-radius: 10px; margin: 2px; }
 .datatable-scroll::-webkit-scrollbar-thumb {
   background: linear-gradient(90deg, var(--primary), var(--accent));
   border-radius: 10px; border: 2px solid var(--bg); background-clip: padding-box;
@@ -383,7 +429,7 @@ table.datatable thead th {
   position: sticky; top: 0; z-index: 2; background: var(--panel-alt);
   color: var(--text); text-align: left; font-weight: 600;
 }
-table.datatable tbody tr:hover { background: rgba(255,255,255,.04); }
+table.datatable tbody tr:hover { background: rgba(var(--tint),.04); }
 table.datatable td.num { text-align: right; font-variant-numeric: tabular-nums; }
 table.datatable td.null { color: var(--text-dim); text-align: center; }
 table.datatable .rownum { color: var(--text-dim); font-size: 11.5px; }
@@ -428,7 +474,7 @@ table.laporan-prioritas-table th.laporan-group-a {
   background: #24304d; color: var(--text); font-weight: 700;
 }
 table.laporan-prioritas-table th.laporan-group-b {
-  background: #3a2430; color: #ff8080; font-weight: 700;
+  background: var(--danger-bg); color: var(--danger-text); font-weight: 700;
 }
 
 /* Tab bar di dialog Laporan Prioritas (Checklist / Distribusi Skor) */
@@ -502,7 +548,7 @@ table.bps-subjek-table th { color: var(--text-dim); font-weight: 600; }
   scrollbar-width: thin; scrollbar-color: var(--primary) transparent; /* Firefox */
 }
 .laporan-distribusi-view::-webkit-scrollbar { width: 10px; height: 10px; }
-.laporan-distribusi-view::-webkit-scrollbar-track { background: rgba(255,255,255,.03); border-radius: 10px; margin: 2px; }
+.laporan-distribusi-view::-webkit-scrollbar-track { background: rgba(var(--tint),.03); border-radius: 10px; margin: 2px; }
 .laporan-distribusi-view::-webkit-scrollbar-thumb {
   background: linear-gradient(90deg, var(--primary), var(--accent));
   border-radius: 10px; border: 2px solid var(--bg); background-clip: padding-box;
@@ -576,7 +622,7 @@ table.bps-subjek-table th { color: var(--text-dim); font-weight: 600; }
   flex: 0 0 clamp(120px, 22vw, 230px); font-size: 12px; color: var(--text);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-.laporan-hbar-track { flex: 1; min-width: 0; height: 14px; background: rgba(255,255,255,.05); border-radius: 7px; overflow: hidden; }
+.laporan-hbar-track { flex: 1; min-width: 0; height: 14px; background: rgba(var(--tint),.05); border-radius: 7px; overflow: hidden; }
 .laporan-hbar-fill {
   height: 100%; background: linear-gradient(90deg, var(--primary), var(--accent));
   border-radius: 7px; transition: width .25s ease;
@@ -623,7 +669,7 @@ td.checklist-cell .ijd-badge { margin-right: 4px; }
 
 .osm-attribution {
   position: absolute; left: 8px; bottom: 8px; z-index: 20;
-  background: rgba(15,20,32,.75); color: var(--text-dim);
+  background: var(--chip-bg); color: var(--text-dim);
   font-size: 10.5px; padding: 3px 8px; border-radius: 6px;
 }
 .osm-attribution a { color: var(--text-dim); }
@@ -631,7 +677,7 @@ td.checklist-cell .ijd-badge { margin-right: 4px; }
 .topbar-maplayer {
   position: relative;
   display: flex; align-items: center; gap: 8px;
-  background: rgba(255,255,255,.05); border: 1px solid var(--border);
+  background: rgba(var(--tint),.05); border: 1px solid var(--border);
   border-radius: 999px; padding: 7px 14px; flex: 0 0 auto;
 }
 .topbar-maplayer[hidden] { display: none; }
@@ -646,7 +692,7 @@ td.checklist-cell .ijd-badge { margin-right: 4px; }
 .maplayer-panel {
   position: absolute; top: calc(100% + 8px); right: 0; width: 300px;
   max-height: 380px; display: flex; flex-direction: column; gap: 8px;
-  background: #1b2440; border: 1px solid var(--border); border-radius: 10px;
+  background: var(--panel-raised); border: 1px solid var(--border); border-radius: 10px;
   box-shadow: var(--shadow); z-index: 40; padding: 10px;
 }
 /* [hidden] hilang dari cascade begitu ada rule display: pada selector class
@@ -662,11 +708,11 @@ td.checklist-cell .ijd-badge { margin-right: 4px; }
   background: none; border: none; outline: none; color: var(--text-dim);
   font-size: 13px; cursor: pointer; padding: 4px; line-height: 1; border-radius: 6px;
 }
-.maplayer-close:hover { color: var(--text); background: rgba(255,255,255,.08); }
+.maplayer-close:hover { color: var(--text); background: rgba(var(--tint),.08); }
 .maplayer-combo { position: relative; }
 .maplayer-combo-toggle {
   width: 100%; display: flex; align-items: center; justify-content: space-between; gap: 8px;
-  background: rgba(255,255,255,.05); border: 1px solid var(--border); border-radius: 8px;
+  background: rgba(var(--tint),.05); border: 1px solid var(--border); border-radius: 8px;
   color: var(--text); font-size: 12.5px; font-family: inherit;
   padding: 8px 10px; cursor: pointer; text-align: left;
 }
@@ -675,15 +721,15 @@ td.checklist-cell .ijd-badge { margin-right: 4px; }
 .maplayer-combo-panel {
   position: absolute; top: calc(100% + 6px); left: 0; right: 0;
   max-height: 240px; overflow-y: auto;
-  background: #232d52; border: 1px solid var(--border); border-radius: 10px;
+  background: var(--panel-raised2); border: 1px solid var(--border); border-radius: 10px;
   box-shadow: var(--shadow); z-index: 50; padding: 5px;
   scrollbar-width: thin; scrollbar-color: var(--primary) transparent; /* Firefox */
 }
 .maplayer-combo-panel::-webkit-scrollbar { width: 8px; }
-.maplayer-combo-panel::-webkit-scrollbar-track { background: rgba(255,255,255,.03); border-radius: 10px; margin: 2px; }
+.maplayer-combo-panel::-webkit-scrollbar-track { background: rgba(var(--tint),.03); border-radius: 10px; margin: 2px; }
 .maplayer-combo-panel::-webkit-scrollbar-thumb {
   background: linear-gradient(180deg, var(--primary), var(--accent));
-  border-radius: 10px; border: 2px solid #232d52; background-clip: padding-box;
+  border-radius: 10px; border: 2px solid var(--panel-raised2); background-clip: padding-box;
 }
 .maplayer-combo-panel::-webkit-scrollbar-thumb:hover {
   background: linear-gradient(180deg, var(--primary-dark), var(--accent));
@@ -712,7 +758,7 @@ td.checklist-cell .ijd-badge { margin-right: 4px; }
 .ijd-provinsi-panel[hidden] { display: none; }
 .ijd-provinsi-search {
   display: flex; align-items: center; gap: 6px;
-  background: rgba(255,255,255,.05); border: 1px solid var(--border); border-radius: 8px;
+  background: rgba(var(--tint),.05); border: 1px solid var(--border); border-radius: 8px;
   padding: 6px 9px; flex: 0 0 auto;
 }
 .ijd-provinsi-search i { font-size: 11px; color: var(--text-dim); }
@@ -743,10 +789,10 @@ td.checklist-cell .ijd-badge { margin-right: 4px; }
   scrollbar-width: thin; scrollbar-color: var(--primary) transparent; /* Firefox */
 }
 .maplayer-list::-webkit-scrollbar { width: 8px; }
-.maplayer-list::-webkit-scrollbar-track { background: rgba(255,255,255,.03); border-radius: 10px; margin: 2px; }
+.maplayer-list::-webkit-scrollbar-track { background: rgba(var(--tint),.03); border-radius: 10px; margin: 2px; }
 .maplayer-list::-webkit-scrollbar-thumb {
   background: linear-gradient(180deg, var(--primary), var(--accent));
-  border-radius: 10px; border: 2px solid #232d52; background-clip: padding-box;
+  border-radius: 10px; border: 2px solid var(--panel-raised2); background-clip: padding-box;
 }
 .maplayer-list::-webkit-scrollbar-thumb:hover {
   background: linear-gradient(180deg, var(--primary-dark), var(--accent));
@@ -779,10 +825,10 @@ td.checklist-cell .ijd-badge { margin-right: 4px; }
   scrollbar-width: thin; scrollbar-color: var(--primary) transparent; /* Firefox */
 }
 .maplayer-tree::-webkit-scrollbar { width: 8px; }
-.maplayer-tree::-webkit-scrollbar-track { background: rgba(255,255,255,.03); border-radius: 10px; margin: 2px; }
+.maplayer-tree::-webkit-scrollbar-track { background: rgba(var(--tint),.03); border-radius: 10px; margin: 2px; }
 .maplayer-tree::-webkit-scrollbar-thumb {
   background: linear-gradient(180deg, var(--primary), var(--accent));
-  border-radius: 10px; border: 2px solid #232d52; background-clip: padding-box;
+  border-radius: 10px; border: 2px solid var(--panel-raised2); background-clip: padding-box;
 }
 .maplayer-tree::-webkit-scrollbar-thumb:hover {
   background: linear-gradient(180deg, var(--primary-dark), var(--accent));
@@ -803,7 +849,7 @@ td.checklist-cell .ijd-badge { margin-right: 4px; }
 .maplayer-tree-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .maplayer-tree-count {
   flex: 0 0 auto; font-size: 10.5px; color: var(--text-dim);
-  background: rgba(255,255,255,.06); border-radius: 999px; padding: 1px 7px;
+  background: rgba(var(--tint),.06); border-radius: 999px; padding: 1px 7px;
 }
 /* Indentasi bertingkat: tiap .maplayer-tree-children bersarang menambah
    padding-left sendiri, jadi kedalaman otomatis mengikuti nesting DOM tanpa
@@ -826,7 +872,7 @@ td.checklist-cell .ijd-badge { margin-right: 4px; }
   display: flex; align-items: center; justify-content: center;
   box-shadow: var(--shadow); transition: background .15s ease;
 }
-.map-theme-toggle:hover { background: rgba(255,255,255,.06); }
+.map-theme-toggle:hover { background: rgba(var(--tint),.06); }
 .map-theme-toggle[hidden] { display: none; }
 
 /* Map tools (ArcGIS-style toolbar: identify, select, measure, legend) */
@@ -841,7 +887,7 @@ td.checklist-cell .ijd-badge { margin-right: 4px; }
   background: transparent; color: var(--text); font-size: 16px; cursor: pointer;
   display: flex; align-items: center; justify-content: center; transition: background .15s ease;
 }
-.maptool-btn:hover { background: rgba(255,255,255,.06); }
+.maptool-btn:hover { background: rgba(var(--tint),.06); }
 .maptool-btn.active { background: var(--primary); color: #fff; }
 .maptool-sep { height: 1px; background: var(--border); margin: 2px 4px; }
 
@@ -854,7 +900,7 @@ td.checklist-cell .ijd-badge { margin-right: 4px; }
 .map-legend {
   position: absolute; top: 14px; right: 62px; z-index: 6; width: 300px;
   max-height: 70vh; display: flex; flex-direction: column; gap: 8px;
-  background: #1b2440; border: 1px solid var(--border); border-radius: 10px;
+  background: var(--panel-raised); border: 1px solid var(--border); border-radius: 10px;
   box-shadow: var(--shadow); padding: 10px;
 }
 .map-legend[hidden] { display: none; }
@@ -889,14 +935,14 @@ td.checklist-cell .ijd-badge { margin-right: 4px; }
 .map-selection-panel {
   position: absolute; bottom: 20px; left: 14px; z-index: 6; width: 260px;
   max-height: 260px; display: flex; flex-direction: column; gap: 8px;
-  background: #1b2440; border: 1px solid var(--border); border-radius: 10px;
+  background: var(--panel-raised); border: 1px solid var(--border); border-radius: 10px;
   box-shadow: var(--shadow); padding: 10px;
 }
 .map-selection-panel[hidden] { display: none; }
 .map-selection-list { display: flex; flex-direction: column; gap: 4px; overflow-y: auto; max-height: 200px; }
 .map-selection-item {
   display: flex; align-items: center; gap: 8px; padding: 5px 6px; border-radius: 7px;
-  font-size: 12px; color: var(--text); background: rgba(255,255,255,.04);
+  font-size: 12px; color: var(--text); background: rgba(var(--tint),.04);
 }
 .map-selection-item-label { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .map-selection-item-layer { flex: 0 0 auto; color: var(--text-dim); font-size: 10.5px; }
@@ -960,7 +1006,7 @@ td.checklist-cell .ijd-badge { margin-right: 4px; }
   justify-content: center;
   transition: background .15s ease;
 }
-.icon-btn:hover { background: rgba(255,255,255,.06); }
+.icon-btn:hover { background: rgba(var(--tint),.06); }
 .icon-btn.small { width: 32px; height: 32px; font-size: 14px; }
 
 /* Layout */
@@ -1048,7 +1094,7 @@ td.checklist-cell .ijd-badge { margin-right: 4px; }
   background: transparent; border: none; color: var(--text-dim);
   cursor: pointer; font-size: 14px; padding: 2px 4px; border-radius: 6px;
 }
-.wp-actions button:hover { background: rgba(255,255,255,.08); color: var(--text); }
+.wp-actions button:hover { background: rgba(var(--tint),.08); color: var(--text); }
 
 .manual-coord { margin-top: 4px; font-size: 13px; color: var(--text-dim); }
 .manual-coord summary { cursor: pointer; padding: 4px 0; }
@@ -1284,7 +1330,7 @@ td.checklist-cell .ijd-badge { margin-right: 4px; }
 .usulan-combo-panel {
   position: absolute; top: calc(100% + 6px); left: 0; right: 0;
   max-height: 280px; overflow-y: auto;
-  background: #1b2440; border: 1px solid var(--border); border-radius: 10px;
+  background: var(--panel-raised); border: 1px solid var(--border); border-radius: 10px;
   box-shadow: var(--shadow); z-index: 40; padding: 5px;
 }
 .usulan-combo-option {
@@ -1387,7 +1433,7 @@ td.checklist-cell .ijd-badge { margin-right: 4px; }
    spy konsisten sbg "kartu" baik di panel gelap maupun popup putih --
    tanpa override ini teksnya ikut warisan #223 gelap di atas kotak gelap
    = tak kelihatan (temuan user 21 Agu 2026). */
-.usulan-kemenhub-list li { padding: 4px 6px; border-radius: 4px; background: var(--panel-alt, rgba(255,255,255,.03)); color: var(--text, #e8ecf7); }
+.usulan-kemenhub-list li { padding: 4px 6px; border-radius: 4px; background: var(--panel-alt, rgba(var(--tint),.03)); color: var(--text, #14233f); }
 .usulan-kemenhub-galeri {
   display: grid; grid-template-columns: repeat(auto-fill, minmax(80px, 1fr)); gap: 6px; margin-top: 4px;
 }
@@ -1402,7 +1448,7 @@ td.checklist-cell .ijd-badge { margin-right: 4px; }
   position: sticky; top: 0; background: var(--panel); color: var(--text-dim);
   font-weight: 600; border-bottom: 1px solid var(--border); z-index: 1;
 }
-.lalu-lintas-table tbody tr:nth-child(even) { background: rgba(255,255,255,.02); }
+.lalu-lintas-table tbody tr:nth-child(even) { background: rgba(var(--tint),.02); }
 .lalu-lintas-table tbody tr:hover { background: rgba(79,124,255,.08); }
 .lalu-lintas-table td:first-child, .lalu-lintas-table th:first-child { font-weight: 600; }
 
@@ -1443,7 +1489,7 @@ td.checklist-cell .ijd-badge { margin-right: 4px; }
   border-radius: 999px; padding: 3px 9px;
 }
 .usulan-doc-links a:hover { border-color: var(--primary); text-decoration: underline; }
-.usulan-kml-links a { color: #f59e0b; border-color: rgba(245, 158, 11, 0.4); }
+.usulan-kml-links a { color: var(--kml-link); border-color: rgba(245, 158, 11, 0.4); }
 .usulan-kml-links a:hover { border-color: #f59e0b; }
 
 /* Export */
@@ -1485,7 +1531,7 @@ td.checklist-cell .ijd-badge { margin-right: 4px; }
 .chat-msg-assistant li { margin-bottom: 2px; }
 .chat-msg-assistant strong { color: var(--accent); font-weight: 700; }
 .chat-msg-assistant code {
-  background: rgba(255,255,255,.08); padding: 1px 5px; border-radius: 4px;
+  background: rgba(var(--tint),.08); padding: 1px 5px; border-radius: 4px;
   font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 11.5px;
 }
 .chat-msg-loading { color: var(--text-dim); font-style: italic; }
@@ -1503,7 +1549,7 @@ td.checklist-cell .ijd-badge { margin-right: 4px; }
   background: #16223d; color: var(--text); padding: 10px 18px; border-radius: 10px;
   border: 1px solid var(--border); box-shadow: var(--shadow); font-size: 13.5px; z-index: 30;
 }
-.toast.error { border-color: var(--danger); color: #ffd9e0; }
+.toast.error { border-color: var(--danger); color: var(--danger-text); }
 
 /* Scrollbars */
 html, body, .sidebar, .sidebar-scroll, .segment-scroll, .usulan-browse-list, .usulan-combo-panel, .chat-messages {
@@ -1571,7 +1617,7 @@ html::-webkit-scrollbar, body::-webkit-scrollbar, .sidebar::-webkit-scrollbar, .
 /* Modal generik (dipakai pratinjau PDF Dalam Angka, dkk.) */
 .pdf-modal-overlay {
   position: fixed; inset: 0; z-index: 200;
-  background: rgba(6,9,16,.72);
+  background: var(--backdrop-pdf);
   display: flex; align-items: center; justify-content: center;
   padding: 24px;
 }
@@ -1604,7 +1650,7 @@ html::-webkit-scrollbar, body::-webkit-scrollbar, .sidebar::-webkit-scrollbar, .
   border-radius: 5px; padding: 1px 7px; font-weight: 600; font-size: 12px;
 }
 .usulan-dalam-angka-item button {
-  background: rgba(255,255,255,.05); border: 1px solid var(--border);
+  background: rgba(var(--tint),.05); border: 1px solid var(--border);
   color: var(--text-dim); border-radius: 6px; padding: 3px 9px;
   font-size: 12px; cursor: pointer; display: inline-flex; align-items: center; gap: 4px;
 }
@@ -1665,7 +1711,7 @@ html::-webkit-scrollbar, body::-webkit-scrollbar, .sidebar::-webkit-scrollbar, .
 .print-span2 { grid-column: span 2; }
 .print-field { display: flex; flex-direction: column; gap: 5px; font-size: 12px; color: var(--text-dim); }
 .print-field input[type="text"], .print-field textarea, .print-field select, .print-checks input[type="number"] {
-  background: rgba(255,255,255,.05); color: var(--text); border: 1px solid var(--border);
+  background: rgba(var(--tint),.05); color: var(--text); border: 1px solid var(--border);
   border-radius: 8px; padding: 7px 10px; font-family: inherit; font-size: 13px; outline: none;
 }
 .print-field textarea { resize: vertical; }
@@ -1697,7 +1743,7 @@ html::-webkit-scrollbar, body::-webkit-scrollbar, .sidebar::-webkit-scrollbar, .
 .print-layer-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .print-layer-count { color: var(--text-dim); font-size: 11.5px; white-space: nowrap; }
 .print-layer-row select {
-  background: rgba(255,255,255,.05); color: var(--text); border: 1px solid var(--border);
+  background: rgba(var(--tint),.05); color: var(--text); border: 1px solid var(--border);
   border-radius: 6px; padding: 4px 6px; font-family: inherit; font-size: 12px; min-width: 0;
 }
 .print-layer-table { display: flex; align-items: center; gap: 4px; color: var(--text-dim); cursor: pointer; white-space: nowrap; }
@@ -1739,7 +1785,7 @@ html::-webkit-scrollbar, body::-webkit-scrollbar, .sidebar::-webkit-scrollbar, .
 .chat-md strong { color: var(--accent); }
 .chat-md a { color: var(--primary); }
 .chat-md blockquote { margin: 6px 0; padding: 4px 10px; border-left: 3px solid var(--warn); color: var(--text-dim); }
-.chat-md pre { background: rgba(0,0,0,.25); padding: 8px; border-radius: 6px; overflow-x: auto; font-size: 11.5px; }
+.chat-md pre { background: var(--code-bg); padding: 8px; border-radius: 6px; overflow-x: auto; font-size: 11.5px; }
 .chat-md pre code { background: none; padding: 0; }
 .chat-md hr { border: none; border-top: 1px solid var(--border); margin: 8px 0; }
 .chat-md table, .chat-table { border-collapse: collapse; font-size: 11.5px; margin: 4px 0 8px; width: 100%; }
@@ -1749,7 +1795,7 @@ html::-webkit-scrollbar, body::-webkit-scrollbar, .sidebar::-webkit-scrollbar, .
 }
 .chat-md th, .chat-table th { background: rgba(79,124,255,.18); color: var(--text); font-weight: 700; white-space: nowrap; }
 .chat-table td.num { text-align: right; font-variant-numeric: tabular-nums; }
-.chat-table tbody tr:nth-child(even) td { background: rgba(255,255,255,.03); }
+.chat-table tbody tr:nth-child(even) td { background: rgba(var(--tint),.03); }
 
 .chat-card { margin-top: 8px; border: 1px solid var(--border); border-radius: 8px; background: var(--panel); overflow: hidden; }
 .chat-card-head { display: flex; align-items: center; gap: 6px; padding: 6px 9px; font-weight: 700; font-size: 12px; border-bottom: 1px solid var(--border); }
@@ -1770,7 +1816,7 @@ html::-webkit-scrollbar, body::-webkit-scrollbar, .sidebar::-webkit-scrollbar, .
 .chat-card-inline > span { flex: 1 1 160px; min-width: 0; }
 .chat-dl {
   display: inline-flex; align-items: center; gap: 4px; padding: 3px 8px; border-radius: 6px; font-size: 11.5px;
-  border: 1px solid var(--border); background: rgba(255,255,255,.04); color: var(--text); text-decoration: none; cursor: pointer; font-family: inherit;
+  border: 1px solid var(--border); background: rgba(var(--tint),.04); color: var(--text); text-decoration: none; cursor: pointer; font-family: inherit;
 }
 .chat-dl:hover { border-color: var(--primary); }
 .chat-dl-primary { background: var(--primary); border-color: var(--primary); color: #fff; }
@@ -1861,7 +1907,7 @@ html::-webkit-scrollbar, body::-webkit-scrollbar, .sidebar::-webkit-scrollbar, .
 .pijd-crumb b { color: var(--text); }
 .pijd-legend { display: flex; flex-direction: column; gap: 4px; font-size: 11.5px; color: var(--text-dim); margin: 4px 0 12px; }
 .pijd-legend-row { display: flex; align-items: center; gap: 8px; }
-.pijd-swatch { width: 18px; height: 12px; border-radius: 3px; flex: 0 0 auto; border: 1px solid rgba(255,255,255,.15); }
+.pijd-swatch { width: 18px; height: 12px; border-radius: 3px; flex: 0 0 auto; border: 1px solid rgba(var(--tint),.15); }
 .pijd-table { border-collapse: collapse; font-size: 12px; width: 100%; }
 .pijd-table th, .pijd-table td { padding: 5px 6px; border-bottom: 1px solid var(--border); text-align: left; vertical-align: top; }
 .pijd-table th { color: var(--text-dim); font-weight: 600; white-space: nowrap; position: sticky; top: 0; background: var(--bg); }

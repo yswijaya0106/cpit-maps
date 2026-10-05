@@ -37,33 +37,36 @@ html, body {
   flex: 0 0 auto;
   display: flex;
   align-items: center;
-  gap: 14px;
+  gap: 10px;
   padding: 0 18px;
   background: linear-gradient(90deg, #131a2c, #17203a);
   border-bottom: 1px solid var(--border);
   z-index: 20;
 }
-.brand { display: flex; align-items: center; gap: 8px; font-size: 18px; }
+/* nowrap + tidak menyusut: tanpa ini nama aplikasi terlipat 3 baris saat
+   topbar penuh tombol. */
+.brand { display: flex; align-items: center; gap: 8px; font-size: 17px; flex: 0 0 auto; white-space: nowrap; }
 .brand-logo { font-size: 22px; }
 .brand-name strong { color: var(--primary); font-weight: 800; }
+/* Desktop: tombol nav + akun dirapatkan ke kanan, brand + pencarian di kiri. */
+@media (min-width: 901px) { #btnBasemapToggle { margin-left: auto; } }
 .topbar-status {
-  margin-left: auto;
   font-size: 12.5px;
+  white-space: nowrap;
   color: var(--text-dim);
   background: rgba(255,255,255,.04);
   border: 1px solid var(--border);
   padding: 5px 12px;
   border-radius: 999px;
 }
-/* Status kosong (kondisi idle) tidak ditampilkan; visibility, bukan display,
-   agar margin-left:auto tetap menjaga tata letak topbar. */
-.topbar-status:empty { visibility: hidden; }
+/* Status kosong (kondisi idle) tidak ditampilkan. */
+.topbar-status:empty { display: none; }
 
 .topbar-search {
-  flex: 0 1 420px;
-  min-width: 0; /* tanpa ini flex item tidak bisa menyusut di bawah lebar
-                   intrinsik input di dalamnya -- penyebab search bar
-                   meluap/kepotong di topbar sempit (mobile) */
+  flex: 0 1 380px;
+  min-width: 140px; /* tanpa batas bawah eksplisit flex item tidak bisa
+                   menyusut di bawah lebar intrinsik input di dalamnya --
+                   penyebab search bar meluap menimpa tombol di sebelahnya */
   display: flex;
   align-items: center;
   gap: 8px;
@@ -920,6 +923,9 @@ td.checklist-cell .ijd-badge { margin-right: 4px; }
 .identify-info { max-width: 360px; }
 .topbar-search input {
   flex: 1;
+  min-width: 0;
+  width: 100%;
+  text-overflow: ellipsis;
   background: none;
   border: none;
   outline: none;
@@ -1529,6 +1535,7 @@ html::-webkit-scrollbar, body::-webkit-scrollbar, .sidebar::-webkit-scrollbar, .
   /* Badge status ("Siap") -- rendah prioritas, dibuang duluan di layar
      sempit spy tombol "..." & search bar dapat ruang. */
   .topbar-status { display: none; }
+  .topbar-search { flex: 1 1 auto; min-width: 0; }
 
   /* Tombol nav sekunder pindah dari flex-item .topbar langsung (desktop)
      jadi dropdown yg di-toggle tombol "..." -- tanpa ini semuanya

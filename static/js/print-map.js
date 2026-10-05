@@ -447,7 +447,7 @@ async function submitPrintMap(payload = buildPrintPayload()) {
     }
     downloadBlob(file.blob, file.filename);
     toast(`Peta tersimpan: ${file.filename}`);
-    setStatus("Peta siap");
+    setStatus("");
     closePrintPreview();
     closePrintMapDialog();
   } catch (err) {
@@ -470,7 +470,7 @@ async function previewPrintMap() {
       const file = await requestPrintFile({ ...payload, format: "pdf" });
       if (printPreviewCache) URL.revokeObjectURL(printPreviewCache.url);
       printPreviewCache = { key, ...file, url: URL.createObjectURL(file.blob) };
-      setStatus("Peta siap");
+      setStatus("");
     } catch (err) {
       console.error(err);
       document.getElementById("printStatus").textContent = `Gagal pratinjau: ${String(err.message || err).slice(0, 200)}`;

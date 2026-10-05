@@ -55,6 +55,9 @@ html, body {
   padding: 5px 12px;
   border-radius: 999px;
 }
+/* Status kosong (kondisi idle) tidak ditampilkan; visibility, bukan display,
+   agar margin-left:auto tetap menjaga tata letak topbar. */
+.topbar-status:empty { visibility: hidden; }
 
 .topbar-search {
   flex: 0 1 420px;

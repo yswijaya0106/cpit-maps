@@ -53,7 +53,7 @@ function setMapTool(tool) {
     "measure-distance": "Klik titik-titik di peta untuk mengukur jarak, lalu klik \"Selesai\"",
     "measure-area": "Klik titik-titik di peta untuk mengukur luas area, lalu klik \"Selesai\"",
   };
-  setStatus(tool ? (hints[tool] || "") : "Peta siap");
+  setStatus(tool ? (hints[tool] || "") : "");
 }
 
 /* ---------- Identify (klik fitur layer overlay -> tampilkan atribut) ---------- */

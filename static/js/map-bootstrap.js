@@ -43,7 +43,7 @@ function initApp() {
   bindUI();
   initMapLayersControl();
   bindMapToolsToolbar();
-  setStatus("Peta siap");
+  setStatus("");
 }
 window.initApp = initApp;
 

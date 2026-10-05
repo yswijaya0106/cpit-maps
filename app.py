@@ -8108,35 +8108,78 @@ def _map_layer_payload(provinsi: str, kabupaten: str, layer: str, lod: int = 2):
             # on-screen display. Koordinat dibulatkan 5 desimal (~1 m): ~30% lebih kecil.
             simplify = (meta.get("feature_count_sumber") or meta["feature_count"] or 0) > 3000
             geom_expr, presisi = ("ST_SimplifyPreserveTopology(geom, 0.00015)" if simplify else "geom"), 5
-        cur.execute(
-            f"""SELECT jsonb_build_object(
-                    'type', 'FeatureCollection',
-                    'features', COALESCE(jsonb_agg(jsonb_build_object(
-                        'type', 'Feature',
-                        'geometry', ST_AsGeoJSON({geom_expr}, {presisi})::jsonb,
-                        'properties', attrs
-                    )), '[]'::jsonb)
-                ) AS fc
-                FROM map_layers WHERE {where_sql}""",
-            where_params,
-        )
-        geojson = cur.fetchone()["fc"]
 
-    geojson["label"] = meta["label"] or _map_layer_label(layer)
-    geojson["lod"] = lod
-    geojson["lod_tersedia"] = lod_tersedia
-    gz = gzip.compress(json.dumps(geojson, ensure_ascii=False, separators=(",", ":")).encode("utf-8"), 6)
-    try:
+        # Satu pembangunan per layer pada satu waktu, lintas worker: request lain
+        # utk layer yg sama menunggu berkas hasilnya alih-alih ikut membangun
+        # (4 Okt 2026: 4 layer berat dibangun bersamaan -> PostgreSQL kena OOM-kill).
         _MAP_LAYER_CACHE_DIR.mkdir(parents=True, exist_ok=True)
-        tmp = berkas.with_name(berkas.name + f".{os.getpid()}.tmp")
-        tmp.write_bytes(gz)
-        os.replace(tmp, berkas)
-        for lama in _MAP_LAYER_CACHE_DIR.glob(f"{awalan}-*.json.gz"):  # buang versi lama layer yg sama
-            if lama != berkas:
-                lama.unlink(missing_ok=True)
-    except OSError as e:  # cache disk hanya optimasi; gagal tulis tak boleh menggagalkan request
-        print(f"  [map-layer-cache] gagal menyimpan {berkas.name}: {e}")
-    return etag, gz
+        kunci_bangun = berkas.with_suffix(".lock")
+        mulai = time.time()
+        while not _ambil_kunci_berkas(kunci_bangun):
+            if berkas.exists():
+                return etag, berkas.read_bytes()
+            if time.time() - mulai > _MAP_LAYER_TUNGGU_BANGUN_DETIK:
+                break  # pemegang kunci terlalu lama -- bangun sendiri
+            time.sleep(0.5)
+        try:
+            if berkas.exists():  # selesai dibangun proses lain tepat sebelum kunci didapat
+                return etag, berkas.read_bytes()
+            kepala = {"type": "FeatureCollection", "label": meta["label"] or _map_layer_label(layer),
+                      "lod": lod, "lod_tersedia": lod_tersedia}
+            tmp = berkas.with_name(berkas.name + f".{os.getpid()}.tmp")
+            try:
+                with open(tmp, "wb") as f:
+                    _map_layer_tulis_geojson(cur, where_sql, where_params, geom_expr, presisi, kepala, f)
+                os.replace(tmp, berkas)
+                for lama in _MAP_LAYER_CACHE_DIR.glob(f"{awalan}-*.json.gz"):  # buang versi lama layer yg sama
+                    if lama != berkas:
+                        lama.unlink(missing_ok=True)
+                return etag, berkas.read_bytes()
+            except OSError as e:  # cache disk hanya optimasi; gagal tulis tak boleh menggagalkan request
+                print(f"  [map-layer-cache] gagal menyimpan {berkas.name}: {e}")
+                tmp.unlink(missing_ok=True)
+                buf = io.BytesIO()
+                _map_layer_tulis_geojson(cur, where_sql, where_params, geom_expr, presisi, kepala, buf)
+                return etag, buf.getvalue()
+        finally:
+            kunci_bangun.unlink(missing_ok=True)
+
+
+_MAP_LAYER_TUNGGU_BANGUN_DETIK = 300
+_MAP_LAYER_BATCH_BARIS = 500
+
+
+def _ambil_kunci_berkas(path: Path) -> bool:
+    """Kunci lintas proses (O_EXCL). Kunci yg lebih tua dari 15 menit dianggap
+    sisa proses yang mati. Sama dgn shared_cache._ambil_kunci."""
+    from shared_cache import _ambil_kunci
+    return _ambil_kunci(path)
+
+
+def _map_layer_tulis_geojson(cur, where_sql, where_params, geom_expr, presisi, kepala: dict, fileobj):
+    """Tulis FeatureCollection ber-gzip ke fileobj BARIS PER BARIS lewat cursor sisi
+    server. Dulu seluruh koleksi dirakit sbg satu jsonb (jsonb_agg) di PostgreSQL lalu
+    di-parse utuh di Python -- layer dgn atribut ratusan MB (SUBKLASTER DETAIL di
+    staging, 4 Okt 2026) menghabiskan beberapa GB per request. Kini memori ~1 batch
+    baris: geometri (ST_AsGeoJSON) & atribut (attrs::text) disisipkan apa adanya
+    sbg teks JSON, tanpa parse ulang."""
+    import gzip
+    awal = json.dumps(kepala, ensure_ascii=False, separators=(",", ":"))[:-1] + ',"features":['
+    with gzip.GzipFile(fileobj=fileobj, mode="wb", compresslevel=6) as gz:
+        gz.write(awal.encode("utf-8"))
+        pertama = True
+        with cur.connection.cursor(name=f"maplayer_{os.getpid()}_{int(time.time() * 1000)}") as sc:
+            sc.itersize = _MAP_LAYER_BATCH_BARIS
+            sc.execute(f"SELECT ST_AsGeoJSON({geom_expr}, {presisi}) AS g, attrs::text AS a "
+                       f"FROM map_layers WHERE {where_sql}", where_params)
+            for baris in sc:
+                g, a = (baris["g"], baris["a"]) if isinstance(baris, dict) else baris
+                if g is None:
+                    continue
+                gz.write(((b"" if pertama else b",") + b'{"type":"Feature","geometry":' + g.encode("utf-8")
+                          + b',"properties":' + (a or "{}").encode("utf-8") + b"}"))
+                pertama = False
+        gz.write(b"]}")
 
 
 def _warm_map_layer_cache():

@@ -143,7 +143,9 @@ function applyAuthRestrictions() {
   const usernameEl = document.getElementById("topbarUsername");
   if (userBadge) {
     userBadge.hidden = !state.auth.username;
-    if (usernameEl) usernameEl.textContent = state.auth.username ? `${state.auth.username} (${state.auth.role})` : "";
+    const label = state.auth.username ? `${state.auth.username} (${state.auth.role})` : "";
+    if (usernameEl) usernameEl.textContent = label;
+    userBadge.title = label; // nama disembunyikan CSS di topbar sempit
   }
 
   const overlay = document.getElementById("loginOverlay");

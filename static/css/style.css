@@ -307,10 +307,11 @@ html, body {
   margin-left: 2px; color: var(--danger); border-color: var(--danger-bg); background: var(--danger-bg);
 }
 .topbar-user .icon-btn:hover { background: var(--danger); border-color: var(--danger); color: #fff; }
-/* Topbar sempit (desktop kecil): nama user & label tombol nav disembunyikan
-   (ikon + title tetap) supaya akun/logout tidak terdorong keluar layar. */
-@media (max-width: 1400px) { #topbarUsername { display: none; } }
-@media (min-width: 901px) and (max-width: 1250px) { .topbar-more .topbar-basemap > span { display: none; } }
+/* Topbar meluap: diringkas bertahap oleh fitTopbar() (state.js), ikon + title tetap. */
+.topbar.tb-c1 #topbarUsername, .topbar.tb-c1 .mode-switch span { display: none; }
+.topbar.tb-c2 .topbar-more .topbar-basemap > span, .topbar.tb-c2 #mapLayerLabel { display: none; }
+.topbar.tb-c2 .topbar-basemap { padding: 7px 11px; }
+.topbar.tb-c2 .topbar-search { flex-basis: 220px; }
 .datatable-modal {
   display: flex; flex-direction: column; width: min(1280px, 96vw);
   height: min(82vh, 900px); background: var(--bg);

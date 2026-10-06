@@ -239,7 +239,38 @@ function applyAppTheme(theme) {
   }
 }
 
+/* Topbar meluap (tombol logout terdorong keluar layar, terjadi bahkan di
+   layar 1920px saat semua tombol nav tampil): ringkas bertahap HANYA bila
+   benar-benar meluap -- tb-c1 sembunyikan nama user & label "Ganti aplikasi",
+   tb-c2 juga label tombol nav (ikon + title tetap). Diukur, bukan breakpoint,
+   karena jumlah tombol berubah per role/moda. Mobile (<=900px) punya menu "..." sendiri. */
+function fitTopbar() {
+  const tb = document.querySelector(".topbar");
+  if (!tb) return;
+  tb.classList.remove("tb-c1", "tb-c2");
+  if (window.innerWidth <= 900) return;
+  for (const c of ["tb-c1", "tb-c2"]) {
+    if (tb.scrollWidth <= tb.clientWidth + 1) break;
+    tb.classList.add(c);
+  }
+}
+let _fitTopbarRaf = 0;
+function scheduleFitTopbar() {
+  cancelAnimationFrame(_fitTopbarRaf);
+  _fitTopbarRaf = requestAnimationFrame(fitTopbar);
+}
+
 document.addEventListener("DOMContentLoaded", () => {
+  const tb = document.querySelector(".topbar");
+  if (tb) {
+    // attributeFilter tanpa "class": fitTopbar sendiri mengubah class topbar.
+    new MutationObserver(scheduleFitTopbar).observe(tb, {
+      subtree: true, childList: true, characterData: true, attributes: true, attributeFilter: ["hidden"],
+    });
+    window.addEventListener("resize", scheduleFitTopbar);
+    document.fonts?.ready.then(scheduleFitTopbar);
+    scheduleFitTopbar();
+  }
   applyAppTheme(document.documentElement.dataset.theme === "dark" ? "dark" : "light");
   document.getElementById("btnAppTheme")?.addEventListener("click", () =>
     applyAppTheme(document.documentElement.dataset.theme === "dark" ? "light" : "dark"));

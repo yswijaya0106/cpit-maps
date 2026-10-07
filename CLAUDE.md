@@ -165,7 +165,8 @@ Deps: `requirements.txt`, venv at `.venv/` (already gitignored).
   `program-ijd.js` → `logic-frame.js` (both after usulan-inpres.js, they reuse
   its helpers) → `chat.js` (chat panel, grounded in the currently viewed route) →
   `export.js` → `print-map.js` (toolbar "Cetak peta" dialog, see
-  `POST /api/peta/cetak`) → `main.js` (reset, top-level event binding, and the
+  `POST /api/peta/cetak`) → `layer-label.js` (right-click layer menu: labels,
+  label/icon size) → `main.js` (reset, top-level event binding, and the
   mobile "..." topbar dropdown — `.topbar-more`, `display:contents` on
   desktop so it's visually a no-op there, collapses secondary nav buttons
   into a dropdown under 900px). All files share the same global

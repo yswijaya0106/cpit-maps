@@ -1529,6 +1529,10 @@ def status_provider(paksa: bool = False) -> dict:
 
 
 _SEL_ANGKA = re.compile(r"^[\s\d.,%:+\-/()kmhaRp$]*$", re.IGNORECASE)
+# Sel angka bersatuan ("Rp 14,65 triliun", "38,1 %", "2.548.784 jiwa") = angka, bukan teks.
+_SEL_SATUAN = re.compile(r"\b(rp|triliun|miliar|milyar|juta|ribu|jt|rb|persen|km|m2|km2|km²|ha|ton|jiwa|unit|ruas|"
+                         r"usulan|kegiatan|koridor|kecamatan|kab/kota|menit|jam|hari|tahun|kali|orang)\b\.?", re.IGNORECASE)
+_SEL_UMUM = {"total", "jumlah", "rata-rata", "rerata", "subtotal", "lainnya", "nasional", "keterangan", "ya", "tidak"}
 
 
 def _periksa_tabel_karangan(teks: str, actions: list) -> str:
@@ -1561,9 +1565,19 @@ def _periksa_tabel_karangan(teks: str, actions: list) -> str:
         if dalam:
             isi = [r for r in tabel[2:] if not re.match(r"^\|?\s*:?-{2,}", r)]  # buang header & pemisah
             sel = [c.strip().strip("*").strip() for r in isi for c in r.strip("|").split("|")]
-            sel = [c for c in sel if len(c) >= 4 and not _SEL_ANGKA.match(c)]
+            sel = [c for c in sel if len(c) >= 4 and not _SEL_ANGKA.match(c)
+                   and not _SEL_ANGKA.match(_SEL_SATUAN.sub(" ", c)) and c.strip().lower() not in _SEL_UMUM]
+
+            def _cocok(c):
+                if _norm(c) in korpus:
+                    return True
+                # label parafrase ("A. Tematik & Data Dukung"): >=2 kata bermakna & SEMUA ada di data.
+                # Label 1 kata ("Pelabuhan 1") tetap harus cocok utuh -> tabel karangan tetap tertangkap.
+                kata = [w for w in re.findall(r"[a-z]{4,}", _norm(c))]
+                return len(kata) >= 2 and all(w in korpus for w in kata)
+
             if len(isi) >= 2 and len(sel) >= 2:
-                cocok = sum(1 for c in sel if _norm(c) in korpus)
+                cocok = sum(1 for c in sel if _cocok(c))
                 if cocok / len(sel) < 0.3:
                     curiga = True
             tabel, dalam = [], False
@@ -1598,7 +1612,7 @@ def _rapikan_jawaban(teks: str, actions: list) -> str:
 
 
 def _call_chat(messages: List, context: Optional[dict], pengguna: Optional[str] = None,
-               peran: Optional[str] = None) -> tuple:
+               peran: Optional[str] = None, hanya_provider: Optional[str] = None) -> tuple:
     """Return (teks, actions, meta) -- actions = daftar CLIENT_ACTION_TOOLS yang
     dipanggil model, diteruskan app.py ke frontend utk dieksekusi di UI.
 
@@ -1610,6 +1624,10 @@ def _call_chat(messages: List, context: Optional[dict], pengguna: Optional[str] 
     _PENGGUNA.set(pengguna)
     _PERAN.set(peran)
     providers = _chat_providers()
+    if hanya_provider:  # paket uji (scripts/uji_chat.py): ukur satu provider, tanpa cadangan
+        providers = [p for p in providers if p[0].lower() == hanya_provider.lower()]
+        if not providers:
+            raise HTTPException(400, f"Provider '{hanya_provider}' tidak aktif (API key kosong?)")
     if not providers:
         raise HTTPException(
             500,

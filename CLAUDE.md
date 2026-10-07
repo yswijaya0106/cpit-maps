@@ -1010,7 +1010,11 @@ bappenas.xlsx`, `Jalan Tol/`). Done and browser-verified:
     provinsi), plus `tampilkan_usulan_kabupaten` and `zoom_ke_bbox`
     (handlers in chat.js).
   - NPR/CER are hidden for role `umum`.
-  - `_periksa_tabel_karangan` now normalizes `_` and long dashes on both
+  - `_periksa_tabel_karangan` skips number+unit cells (`_SEL_SATUAN`) and
+    aggregate labels (`_SEL_UMUM`). It accepts a multi-word paraphrased
+    label when ALL its 4+ letter words appear in the tool data; single-word
+    labels ("Pelabuhan 1") must still match whole. Found by `uji_chat.py`.
+    It now normalizes `_` and long dashes on both
     sides. Before, model-written row labels ("Kepadatan jalan") vs JSON keys
     (`kepadatan_jalan`) triggered false "tabel karangan" warnings.
 
@@ -1804,6 +1808,19 @@ upsert, so they're safe to re-run:
   dynamic-table `var_id`, some as recent as 2024, others 2016-2021, some
   missing entirely) — **not currently wired into any scoring or UI
   endpoint**, reference data only as of 24 Jul 2026.
+- `uji_chat.py` + `uji_chat/pertanyaan.yaml` (7 Oct 2026, Tahap 2 of the AI
+  kajian) is the chat assistant's test set. It has 24 questions with
+  reference answers computed from the staging DB.
+  - It runs through the real `_call_chat` with `hanya_provider=` (one
+    provider, no fallback). Checks use the executed SQL/tools/actions from
+    `meta`, not just the reply text.
+  - The number parser handles Indonesian/English formats and units
+    (triliun, juta, …).
+  - Reports go to `docs/uji_chat/`. It does not write to `chat_log`. Each
+    run costs ~24 paid LLM calls per provider.
+  - Baseline: deepseek-v4-pro 24/24, gpt-4o-mini 14/24.
+  - Update the reference answers in the YAML when the data is reimported.
+  - Rerun it after any prompt/tool/model change.
 - `smoke_check.py` — not a test suite (see `docs/ARCHITECTURE.md`
   §"Verification without a test suite"); a reusable before/after
   structural diff (`--save`/`--check`) over a fixed list of read-only

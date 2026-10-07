@@ -956,8 +956,17 @@ bappenas.xlsx`, `Jalan Tol/`). Done and browser-verified:
     `STATUS_GAYA`. "Rencana" is dark violet because light pink disappeared
     into the OSM basemap's road color.
   - The script reruns `build_map_layer_wilayah.py` for the new rows.
-Still open: Papua Selatan kab road SHPs (Drive) and the "Analisis Kabupaten
-X" chat prompt.
+- **Papua Selatan regency roads:** `scripts/import_jalan_kabupaten_papua_selatan.py`
+  loads Pemda SHPs for Merauke (1,643 ruas), Boven Digoel (940), Mappi (373)
+  and Asmat (127 Pemda + 133 RBI). They go into the `PAPUA SELATAN` bucket,
+  layer "JALAN KABUPATEN (PEMDA)" (Asmat also gets "(RBI DJJ 2018)").
+  - The Drive folder codes are pre-split 94xx; BPS is 9501–9504.
+  - Each source maps its attributes to standard keys. Status is NOT
+    invented where the source lacks it: Boven Digoel's RBI `NAMA_UNSUR`
+    becomes "Fungsi", so Jalan Lain/Setapak classify as desa (460/940).
+  - Dropped: Boven Digoel runway lines ("Landas Pacu") and degenerate lines
+    that `make_valid` turns into points.
+Still open: the "Analisis Kabupaten X" chat prompt.
 
 ## Multi-modal transport data (Darat/Laut/Udara)
 

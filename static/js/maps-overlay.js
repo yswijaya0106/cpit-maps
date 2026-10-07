@@ -375,6 +375,7 @@ async function loadLayerChildren(provinsi, kabupaten, opts = {}) {
       <button type="button" class="maplayer-download" data-provinsi="${escapeHtml(provinsi)}" data-kabupaten="${escapeHtml(kabupaten)}" data-layer="${escapeHtml(l.layer)}"
         title="Unduh SHP + data atribut layer ini"><i class="bi bi-download"></i></button>
       <input type="range" class="maplayer-opacity" min="0" max="1" step="0.05" value="${opacity}" data-provinsi="${escapeHtml(provinsi)}" data-kabupaten="${escapeHtml(kabupaten)}" data-layer="${escapeHtml(l.layer)}" title="Transparansi layer" ${isActive ? "" : "hidden"} />
+      <span class="maplayer-iconsize-wrap" title="Ukuran ikon titik" ${isActive && layerAdaTitik(key) ? "" : "hidden"}><i class="bi bi-arrows-angle-contract"></i><input type="range" class="maplayer-iconsize" min="0.3" max="1.6" step="0.05" value="${(state.mapLayers.iconScale || {})[key] ?? 1}" data-provinsi="${escapeHtml(provinsi)}" data-kabupaten="${escapeHtml(kabupaten)}" data-layer="${escapeHtml(l.layer)}" aria-label="Ukuran ikon titik" /></span>
     `;
     // Baris ini adalah <label> yg membungkus checkbox -- browser meneruskan klik APAPUN di
     // dalamnya (termasuk tombol unduh) ke checkbox itu (perilaku native <label>) SELAMA
@@ -382,6 +383,11 @@ async function loadLayerChildren(provinsi, kabupaten, opts = {}) {
     // di-delegasikan ke leluhur label (mis. treeEl) baru jalan SETELAH label memproses
     // default action-nya sendiri -- sudah terlambat. Makanya listener tombol unduh dipasang
     // di sini, langsung ke tombolnya (anak label), bukan lewat delegasi treeEl.click di bawah.
+    // Klik di area slider ukuran ikon (selain slidernya sendiri) jangan sampai
+    // diteruskan <label> ke checkbox -- alasan sama dgn tombol unduh di bawah.
+    row.querySelector(".maplayer-iconsize-wrap").addEventListener("click", (e) => {
+      if (!e.target.matches("input")) e.preventDefault();
+    });
     row.querySelector(".maplayer-download").addEventListener("click", (e) => {
       e.preventDefault();
       e.stopPropagation();
@@ -554,9 +560,17 @@ function bindMapLayerToggle() {
     updateMapLayerLabel();
     const range = cb.closest(".maplayer-item").querySelector(".maplayer-opacity");
     if (range) range.hidden = !cb.checked;
+    const ukuran = cb.closest(".maplayer-item").querySelector(".maplayer-iconsize-wrap");
+    if (ukuran) ukuran.hidden = !(cb.checked && layerAdaTitik(mapLayerKey(provinsi, kabupaten, layer)));
   });
 
   treeEl.addEventListener("input", (e) => {
+    const ukuran = e.target.closest(".maplayer-iconsize");
+    if (ukuran) {
+      const { provinsi, kabupaten, layer } = ukuran.dataset;
+      setLayerIconScale(mapLayerKey(provinsi, kabupaten, layer), parseFloat(ukuran.value));
+      return;
+    }
     const range = e.target.closest(".maplayer-opacity");
     if (!range) return;
     const { provinsi, kabupaten, layer } = range.dataset;
@@ -612,9 +626,14 @@ async function showMapLayer(provinsi, kabupaten, layer) {
       if (e.stop) e.stop();
       onFeatureClick(key, e.feature, e.latLng);
     });
+    // Klik kanan fitur -> menu label & ukuran layer ini (layer-label.js)
+    data.addListener("rightclick", (e) => {
+      if (typeof bukaMenuLayer === "function" && e.domEvent) bukaMenuLayer(key, e.domEvent.clientX, e.domEvent.clientY);
+    });
 
     state.mapLayers.active[key] = data;
     state.mapLayers.meta[key] = { provinsi, kabupaten, layer };
+    bindIconZoomRefresh();
     state.mapLayers.lod[key] = { lod: geojson.lod ?? 2, tersedia: !!geojson.lod_tersedia };
     bindMapLayerLodRefresh();
     applyLayerStyle(key);
@@ -649,6 +668,48 @@ async function fetchMapLayerGeojson(provinsi, kabupaten, layer, lod) {
 function mapLayerLodForZoom() {
   const z = state.map ? state.map.getZoom() : 5;
   return z <= 6 ? 0 : z <= 9 ? 1 : 2;
+}
+
+/* ---------- Ukuran ikon titik (usulan pengguna 7 Okt 2026) ----------
+   Ikon titik berukuran tetap dalam piksel, jadi saat peta di-zoom out ke level
+   pulau/nasional ikon tampak terlalu besar & menumpuk. Ukuran = skala manual
+   per layer (slider "Ukuran ikon" di tree Overlay Peta) x skala otomatis per
+   zoom. Ukuran cetak ikut, krn print-map.js membaca icon.scaledSize. */
+function skalaIkonZoom() {
+  const z = state.map ? state.map.getZoom() : 10;
+  return z <= 5 ? 0.55 : z === 6 ? 0.65 : z === 7 ? 0.75 : z === 8 ? 0.88 : 1;
+}
+
+function ukuranIkon(key, dasar) {
+  const manual = (state.mapLayers.iconScale || {})[key] ?? 1;
+  return Math.max(6, Math.round(dasar * manual * skalaIkonZoom()));
+}
+
+function layerAdaTitik(key) {
+  const data = state.mapLayers.active[key];
+  if (!data) return false;
+  let ada = false;
+  data.forEach((f) => { if (!ada && /Point/.test(f.getGeometry()?.getType() || "")) ada = true; });
+  return ada;
+}
+
+function setLayerIconScale(key, value) {
+  state.mapLayers.iconScale = state.mapLayers.iconScale || {};
+  state.mapLayers.iconScale[key] = value;
+  applyLayerStyle(key);
+}
+
+// Gaya ulang layer bertitik hanya saat "kelas" skala zoom berubah (bukan tiap zoom).
+function bindIconZoomRefresh() {
+  if (state._iconZoomBound || !state.map) return;
+  state._iconZoomBound = true;
+  let skalaTerakhir = skalaIkonZoom();
+  state.map.addListener("zoom_changed", () => {
+    const skala = skalaIkonZoom();
+    if (skala === skalaTerakhir) return;
+    skalaTerakhir = skala;
+    Object.keys(state.mapLayers.active).forEach((key) => { if (layerAdaTitik(key)) applyLayerStyle(key); });
+  });
 }
 
 function bindMapLayerLodRefresh() {
@@ -1128,7 +1189,7 @@ function applyLayerStyle(key) {
       // titik dgn label (stasiun KAPLIN): nama tampil di atas titik mulai zoom tertentu
       const zoom = state.map ? state.map.getZoom() : 0;
       return {
-        icon: pointIcon(layerGlyph, "#1f2937", opacity, 20),
+        icon: pointIcon(layerGlyph, "#1f2937", opacity, ukuranIkon(key, 20)),
         label: zoom >= KAPLIN_LABEL_MIN_ZOOM
           ? { text: String(feature.getProperty("_label")), fontSize: "11px", fontWeight: "600", color: "#111827" }
           : null,
@@ -1142,7 +1203,9 @@ function applyLayerStyle(key) {
         ? stasiunStatusColor(feature.getProperty(STASIUN_STATUS_FIELD))
         : glyph === "pesawat" ? bandaraWarnaLayer(key)
         : feature.getProperty("_warna") || color;
-      return { icon: pointIcon(glyph, pointColor, opacity), zIndex: glyph === "pesawat" ? 40 : undefined };
+      const label = typeof labelTitik === "function" ? labelTitik(key, feature) : null; // menu klik kanan (layer-label.js)
+      return { icon: pointIcon(glyph, pointColor, opacity, ukuranIkon(key, 24)), label: label || undefined,
+               zIndex: glyph === "pesawat" ? 40 : undefined };
     }
     if (type === "Polygon" || type === "MultiPolygon") {
       // poligon dgn warna per kategori dari server (mis. Klaster/Subklaster: _warna per klaster)
@@ -1221,6 +1284,9 @@ function hideMapLayer(key) {
   data.setMap(null);
   delete state.mapLayers.active[key];
   delete state.mapLayers.opacity[key];
+  if (state.mapLayers.iconScale) delete state.mapLayers.iconScale[key];
+  if (state.mapLayers.labelCfg) delete state.mapLayers.labelCfg[key];
+  if (typeof hapusLabelPenanda === "function") hapusLabelPenanda(key);
   delete state.mapLayers.meta[key];
   delete state.mapLayers.lod[key];
   clearSelectionForLayer(key);
@@ -1233,6 +1299,8 @@ function hideMapLayer(key) {
     cb.checked = false;
     const range = cb.closest(".maplayer-item")?.querySelector(".maplayer-opacity");
     if (range) range.hidden = true;
+    const ukuran = cb.closest(".maplayer-item")?.querySelector(".maplayer-iconsize-wrap");
+    if (ukuran) ukuran.hidden = true;
   }
 }
 

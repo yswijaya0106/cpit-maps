@@ -2156,7 +2156,7 @@ function ijdDashboardRender(data) {
 
   const komposisiNprHtml = `<div class="laporan-chart-block">
     <div class="laporan-chart-title"><i class="bi bi-bar-chart-steps"></i> Komposisi Kategori NPR</div>
-    <div class="laporan-chart-sub">NPR eksperimental/belum policy resmi — "Belum Tersedia" beda dari "Belum Prioritas" (NPR &lt; 50 tapi terhitung)</div>
+    <div class="laporan-chart-sub">NPR eksperimental/belum policy resmi — "Belum Tersedia" beda dari "Sangat Rendah" (NPR &lt; 50 tapi terhitung)</div>
     ${laporanHBar(data.komposisi_npr, {
       valueKey: "count",
       maxLabelFn: (it) => `${it.label}: ${it.count} usulan (${it.pct}%)`,

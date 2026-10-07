@@ -3839,7 +3839,7 @@ def _ijd_score_dashboard(provinsi: str = "", tahun: int = 2026) -> dict:
     # "apakah ada masukan agar lebih informatif") supaya dashboard tidak
     # cuma nampilin top10 berbasis NPR tanpa konteks sebaran/cakupan NPR
     # nasionalnya. "Belum Tersedia" (NPR None, SI & SC sama sekali tak bisa
-    # dihitung) DIPISAH dari "Belum Prioritas" (NPR < 50 tapi terhitung) --
+    # dihitung) DIPISAH dari "Sangat Rendah" (NPR < 50 tapi terhitung) --
     # pola "belum tersedia, bukan 0" yang sama dipakai di seluruh app ini.
     n_dengan_npr = sum(1 for it in items if it["npr"] is not None)
     avg_npr = round(sum(it["npr"] for it in items if it["npr"] is not None) / n_dengan_npr, 2) if n_dengan_npr else None
@@ -3850,8 +3850,8 @@ def _ijd_score_dashboard(provinsi: str = "", tahun: int = 2026) -> dict:
         for ambang, label in _NPR_KATEGORI:
             if it["npr"] >= ambang:
                 return label
-        return "Belum Prioritas"
-    urutan_kategori_npr = [label for _, label in _NPR_KATEGORI] + ["Belum Prioritas", "Belum Tersedia"]
+        return _NPR_KATEGORI_TERENDAH
+    urutan_kategori_npr = [label for _, label in _NPR_KATEGORI] + [_NPR_KATEGORI_TERENDAH, "Belum Tersedia"]
     komposisi_npr_count = {label: 0 for label in urutan_kategori_npr}
     for it in items:
         komposisi_npr_count[_kategori_npr(it)] += 1
@@ -5402,8 +5402,10 @@ def _npr_skor_cakupan(row: dict, kode_kab: int, ctx: dict = None) -> dict:
             "bobot_tersedia": bobot_tersedia, "skor_ternormalisasi_100": skor_100}
 
 
-_NPR_KATEGORI = [(80, "Prioritas Sangat Tinggi"), (70, "Prioritas Tinggi"), (60, "Prioritas Menengah"),
-                  (50, "Prioritas Rendah")]
+# Label kategori mengikuti deck "20261007 PENAMBAHAN PENYEMPURNAAN SIJALAN" slide 2
+# (Sangat Rendah .. Sangat Tinggi). Ambang 80/70/60/50 tetap (deck tidak menyebut ambang).
+_NPR_KATEGORI = [(80, "Sangat Tinggi"), (70, "Tinggi"), (60, "Sedang"), (50, "Rendah")]
+_NPR_KATEGORI_TERENDAH = "Sangat Rendah"  # NPR < 50 tapi terhitung (dulu "Belum Prioritas")
 
 
 def _compute_npr(row: dict, ctx: dict = None) -> dict:
@@ -5416,7 +5418,7 @@ def _compute_npr(row: dict, ctx: dict = None) -> dict:
     if si["skor_ternormalisasi_100"] is not None and sc["skor_ternormalisasi_100"] is not None:
         npr = round(NPR_BOBOT_SI_SC["SI"] * si["skor_ternormalisasi_100"] +
                      NPR_BOBOT_SI_SC["SC"] * sc["skor_ternormalisasi_100"], 1)
-        kategori = "Belum Prioritas"
+        kategori = _NPR_KATEGORI_TERENDAH
         for ambang, label in _NPR_KATEGORI:
             if npr >= ambang:
                 kategori = label

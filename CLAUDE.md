@@ -966,6 +966,30 @@ bappenas.xlsx`, `Jalan Tol/`). Done and browser-verified:
     becomes "Fungsi", so Jalan Lain/Setapak classify as desa (460/940).
   - Dropped: Boven Digoel runway lines ("Landas Pacu") and degenerate lines
     that `make_valid` turns into points.
+- **NPR category labels** now follow the deck (slide 2): Sangat Tinggi /
+  Tinggi / Sedang / Rendah / Sangat Rendah, using the old 80/70/60/50
+  thresholds. The deck states no thresholds. "Belum Tersedia" stays
+  separate.
+- **Map usability for slide decks (user request, 7 Oct):**
+  - The basemap toggle cycles Google → OSM → **"Tanpa label"**
+    (`StyledMapType` "polos": every label off, OSM-like colors).
+  - Print basemap **"alami"** is Esri World_Ocean_Base. It's the only
+    keyless source with no labels at all, but it has real tiles only up to
+    z10 (`maxz` 10). CARTO `*_nolabels` returns "API KEY REQUIRED", and
+    "terang" (Light Gray Base) still shows faint provinsi names.
+  - Point icon size is **zoom-dynamic** (`skalaIkonZoom`, 0.55× at z≤5),
+    times a per-layer slider (`state.mapLayers.iconScale`, tree row
+    `.maplayer-iconsize`, point layers only). Print follows via
+    `icon.scaledSize`.
+  - [static/js/layer-label.js](static/js/layer-label.js) adds a
+    **right-click menu**: on a feature, a legend row, or an active tree row.
+    It has show/hide label, label field, label size (zoom-dynamic), icon
+    size and opacity.
+  - Point labels use the Data style `label` (`labelTitik`). Line/polygon
+    labels are text Markers at the feature midpoint: viewport only, max 400,
+    collision-avoided in screen space (also against other layers' labels),
+    rebuilt on `idle`.
+  - The chosen field becomes the print dialog's default label field.
 - **"Analisis Kabupaten X" chat tool:** `analisis_kabupaten` is a hybrid tool
   in chat_providers.py.
   - The server resolves the name with `PencocokKabupaten`. A bare twin name

@@ -316,6 +316,17 @@ BASEMAPS = {
         "nama": "Esri Light Gray Canvas (terang)",
         "atribusi": "Esri, HERE, Garmin, © kontributor OpenStreetMap",
     },
+    # "Alami tanpa label" (usulan pengguna 7 Okt 2026: peta dasar polos utk paparan).
+    # Satu-satunya sumber berwarna alami TANPA tulisan sama sekali yg bisa diambil
+    # server tanpa API key (CARTO *_nolabels butuh key; "terang" masih ada label
+    # provinsi samar). Tile asli hanya s.d. zoom 10 -- di atasnya Esri membalas
+    # placeholder, jadi maxz=10 (diperbesar utk area sempit).
+    "alami": {
+        "url": "https://server.arcgisonline.com/ArcGIS/rest/services/Ocean/World_Ocean_Base/MapServer/tile/{z}/{y}/{x}",
+        "maxz": 10,
+        "nama": "Esri World Ocean Base (tanpa label)",
+        "atribusi": "Esri, GEBCO, NOAA, Garmin, HERE",
+    },
     "satelit": {
         "url": "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
         "maxz": 19,

@@ -344,7 +344,10 @@ function renderPrintLayerList() {
     const pref = printLayerPrefs[l.key] || {};
     const fields = l.fields.filter((f) => f === "_label" || !f.startsWith("_"));
     const labelField = pref.labelField !== undefined && (pref.labelField === "" || fields.includes(pref.labelField))
-      ? pref.labelField : printGuessLabelField(fields);
+      ? pref.labelField
+      // label yg sedang ditampilkan di peta (menu klik kanan, layer-label.js) jadi bawaan cetak
+      : (state.mapLayers.labelCfg?.[l.key]?.aktif && fields.includes(state.mapLayers.labelCfg[l.key].field)
+        ? state.mapLayers.labelCfg[l.key].field : printGuessLabelField(fields));
     const row = document.createElement("div");
     row.className = "print-layer-row" + (l.feats.length ? "" : " is-empty");
     row.dataset.key = l.key;

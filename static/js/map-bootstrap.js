@@ -77,24 +77,49 @@ function registerOsmMapType() {
     name: "OpenStreetMap",
   });
   state.map.mapTypes.set("osm", osmMapType);
+  // "Tanpa label" (usulan pengguna 7 Okt 2026): peta dasar polos utk paparan/
+  // PowerPoint -- semua tulisan dimatikan, warna meniru OpenStreetMap.
+  state.map.mapTypes.set("polos", new google.maps.StyledMapType(mapPolosStyle(), { name: "Tanpa label" }));
 }
+
+function mapPolosStyle() {
+  return [
+    { elementType: "labels", stylers: [{ visibility: "off" }] },
+    { featureType: "landscape", elementType: "geometry", stylers: [{ color: "#f2efe9" }] },
+    { featureType: "landscape.natural.landcover", elementType: "geometry", stylers: [{ color: "#e3ead0" }] },
+    { featureType: "poi.park", elementType: "geometry", stylers: [{ color: "#add19e" }] },
+    { featureType: "poi", elementType: "geometry", stylers: [{ visibility: "off" }] },
+    { featureType: "poi.park", stylers: [{ visibility: "on" }] },
+    { featureType: "water", elementType: "geometry", stylers: [{ color: "#aad3df" }] },
+    { featureType: "road.highway", elementType: "geometry", stylers: [{ color: "#e892a2" }] },
+    { featureType: "road.arterial", elementType: "geometry", stylers: [{ color: "#f9b29c" }] },
+    { featureType: "road.local", elementType: "geometry", stylers: [{ color: "#ffffff" }] },
+    { featureType: "transit", stylers: [{ visibility: "off" }] },
+    { featureType: "administrative", elementType: "geometry.stroke", stylers: [{ color: "#9e8fb0" }, { weight: 1 }] },
+    { featureType: "administrative.locality", elementType: "geometry", stylers: [{ visibility: "off" }] },
+  ];
+}
+
+const BASEMAP_URUTAN = ["google", "osm", "polos"];
+const BASEMAP_LABEL = { google: "Google Maps", osm: "OpenStreetMap", polos: "Tanpa label" };
 
 function applyBasemapProvider(provider) {
   state.mapProvider = provider;
-  state.map.setMapTypeId(provider === "osm" ? "osm" : google.maps.MapTypeId.SATELLITE);
+  state.map.setMapTypeId(provider === "osm" ? "osm" : provider === "polos" ? "polos" : google.maps.MapTypeId.SATELLITE);
   const label = document.getElementById("basemapLabel");
-  if (label) label.textContent = provider === "osm" ? "OpenStreetMap" : "Google Maps";
+  if (label) label.textContent = BASEMAP_LABEL[provider] || "Google Maps";
   const attribution = document.getElementById("osmAttribution");
   if (attribution) attribution.hidden = provider !== "osm";
   const themeToggle = document.getElementById("btnMapThemeToggle");
-  if (themeToggle) themeToggle.hidden = provider === "osm";
+  if (themeToggle) themeToggle.hidden = provider !== "google";
 }
 
 function bindBasemapToggle() {
   const btn = document.getElementById("btnBasemapToggle");
   if (!btn) return;
   btn.addEventListener("click", () => {
-    applyBasemapProvider(state.mapProvider === "osm" ? "google" : "osm");
+    const i = BASEMAP_URUTAN.indexOf(state.mapProvider || "google");
+    applyBasemapProvider(BASEMAP_URUTAN[(i + 1) % BASEMAP_URUTAN.length]);
   });
 }
 

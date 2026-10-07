@@ -41,7 +41,7 @@
       </button>
       <div class="topbar-more" id="topbarMore">
         <button type="button" class="topbar-basemap" id="btnBasemapToggle"
-          title="Ganti basemap Google Maps / OpenStreetMap">
+          title="Ganti basemap: Google Maps / OpenStreetMap / Tanpa label (peta polos utk paparan)">
           <i class="bi bi-map"></i>
           <span id="basemapLabel">Google Maps</span>
         </button>
@@ -193,6 +193,7 @@
             <label class="print-field">Basemap
               <select id="printBasemap">
                 <option value="osm">OpenStreetMap</option>
+                <option value="alami">Alami tanpa label (Esri)</option>
                 <option value="terang">Terang (abu-abu)</option>
                 <option value="satelit">Citra satelit</option>
                 <option value="none">Tanpa basemap</option>
@@ -1261,6 +1262,7 @@
   <script src="/js/chat.js"></script>
   <script src="/js/export.js"></script>
   <script src="/js/print-map.js"></script>
+  <script src="/js/layer-label.js"></script>
   <script src="/js/main.js"></script>
 </body>
 

@@ -374,8 +374,10 @@ async function loadLayerChildren(provinsi, kabupaten, opts = {}) {
       <span class="maplayer-item-size">${l.size_mb != null ? `${l.size_mb} MB` : ""}</span>
       <button type="button" class="maplayer-download" data-provinsi="${escapeHtml(provinsi)}" data-kabupaten="${escapeHtml(kabupaten)}" data-layer="${escapeHtml(l.layer)}"
         title="Unduh SHP + data atribut layer ini"><i class="bi bi-download"></i></button>
-      <input type="range" class="maplayer-opacity" min="0" max="1" step="0.05" value="${opacity}" data-provinsi="${escapeHtml(provinsi)}" data-kabupaten="${escapeHtml(kabupaten)}" data-layer="${escapeHtml(l.layer)}" title="Transparansi layer" ${isActive ? "" : "hidden"} />
-      <span class="maplayer-iconsize-wrap" title="Ukuran ikon titik / tebal garis" ${isActive && layerJenisSkala(key) ? "" : "hidden"}><i class="bi bi-arrows-angle-contract"></i><input type="range" class="maplayer-iconsize" min="0.3" max="1.6" step="0.05" value="${(state.mapLayers.iconScale || {})[key] ?? 1}" data-provinsi="${escapeHtml(provinsi)}" data-kabupaten="${escapeHtml(kabupaten)}" data-layer="${escapeHtml(l.layer)}" aria-label="Ukuran ikon titik" /></span>
+      <div class="maplayer-kontrol" ${isActive ? "" : "hidden"}>
+        <span class="maplayer-kontrol-item" title="Transparansi layer"><i class="bi bi-circle-half"></i><input type="range" class="maplayer-opacity" min="0" max="1" step="0.05" value="${opacity}" data-provinsi="${escapeHtml(provinsi)}" data-kabupaten="${escapeHtml(kabupaten)}" data-layer="${escapeHtml(l.layer)}" aria-label="Transparansi layer" /></span>
+        <span class="maplayer-kontrol-item maplayer-iconsize-wrap" title="Ukuran ikon titik / tebal garis" ${isActive && layerJenisSkala(key) ? "" : "hidden"}><i class="bi bi-arrows-angle-expand"></i><input type="range" class="maplayer-iconsize" min="0.3" max="1.6" step="0.05" value="${(state.mapLayers.iconScale || {})[key] ?? 1}" data-provinsi="${escapeHtml(provinsi)}" data-kabupaten="${escapeHtml(kabupaten)}" data-layer="${escapeHtml(l.layer)}" aria-label="Ukuran ikon titik / tebal garis" /></span>
+      </div>
     `;
     // Baris ini adalah <label> yg membungkus checkbox -- browser meneruskan klik APAPUN di
     // dalamnya (termasuk tombol unduh) ke checkbox itu (perilaku native <label>) SELAMA
@@ -385,7 +387,7 @@ async function loadLayerChildren(provinsi, kabupaten, opts = {}) {
     // di sini, langsung ke tombolnya (anak label), bukan lewat delegasi treeEl.click di bawah.
     // Klik di area slider ukuran ikon (selain slidernya sendiri) jangan sampai
     // diteruskan <label> ke checkbox -- alasan sama dgn tombol unduh di bawah.
-    row.querySelector(".maplayer-iconsize-wrap").addEventListener("click", (e) => {
+    row.querySelector(".maplayer-kontrol").addEventListener("click", (e) => {
       if (!e.target.matches("input")) e.preventDefault();
     });
     row.querySelector(".maplayer-download").addEventListener("click", (e) => {
@@ -558,8 +560,8 @@ function bindMapLayerToggle() {
     }
     cb.disabled = false;
     updateMapLayerLabel();
-    const range = cb.closest(".maplayer-item").querySelector(".maplayer-opacity");
-    if (range) range.hidden = !cb.checked;
+    const kontrol = cb.closest(".maplayer-item").querySelector(".maplayer-kontrol");
+    if (kontrol) kontrol.hidden = !cb.checked;
     const ukuran = cb.closest(".maplayer-item").querySelector(".maplayer-iconsize-wrap");
     if (ukuran) ukuran.hidden = !(cb.checked && layerJenisSkala(mapLayerKey(provinsi, kabupaten, layer)));
   });
@@ -1319,8 +1321,8 @@ function hideMapLayer(key) {
   const cb = listCheckboxFor(key);
   if (cb) {
     cb.checked = false;
-    const range = cb.closest(".maplayer-item")?.querySelector(".maplayer-opacity");
-    if (range) range.hidden = true;
+    const kontrol = cb.closest(".maplayer-item")?.querySelector(".maplayer-kontrol");
+    if (kontrol) kontrol.hidden = true;
     const ukuran = cb.closest(".maplayer-item")?.querySelector(".maplayer-iconsize-wrap");
     if (ukuran) ukuran.hidden = true;
   }

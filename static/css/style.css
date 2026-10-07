@@ -822,11 +822,16 @@ td.checklist-cell .ijd-badge { margin-right: 4px; }
   font-size: 13px; cursor: pointer; padding: 3px 4px; border-radius: 6px; line-height: 1;
 }
 .maplayer-download:hover { color: var(--primary); background: rgba(79, 124, 255, 0.16); }
-.maplayer-opacity { flex: 0 0 60px; width: 60px; accent-color: var(--primary); cursor: pointer; }
-/* slider ukuran ikon titik (hanya layer bertitik), lihat ukuranIkon() di maps-overlay.js */
-.maplayer-iconsize-wrap { display: inline-flex; align-items: center; gap: 3px; flex: 0 0 auto; color: var(--text-dim); font-size: 11px; }
-.maplayer-iconsize-wrap[hidden] { display: none; }
-.maplayer-iconsize { width: 56px; accent-color: var(--accent); cursor: pointer; }
+/* Baris kontrol layer aktif: baris KEDUA di bawah nama layer (dulu satu baris dgn
+   nama -> nama terjepit jadi huruf vertikal). Kiri sejajar nama layer. */
+.maplayer-item { flex-wrap: wrap; row-gap: 4px; }
+.maplayer-kontrol { flex: 1 0 100%; display: flex; gap: 14px; padding-left: 36px; cursor: default; }
+.maplayer-kontrol[hidden], .maplayer-kontrol-item[hidden] { display: none; }
+.maplayer-kontrol-item { flex: 1 1 0; min-width: 0; max-width: 150px; display: flex; align-items: center; gap: 6px;
+  color: var(--text-dim); font-size: 12px; }
+.maplayer-kontrol-item input[type="range"] { flex: 1; min-width: 0; width: 100%; height: 14px; margin: 0; cursor: pointer; }
+.maplayer-opacity { accent-color: var(--primary); }
+.maplayer-iconsize { accent-color: var(--accent); }
 
 /* Panel overlay peta versi tree (ArcGIS-style: kategori -> provinsi ->
    kabupaten/kota -> layer, tiap tingkat expand lazy) -- lebih lebar/tinggi
@@ -1632,6 +1637,13 @@ html::-webkit-scrollbar, body::-webkit-scrollbar, .sidebar::-webkit-scrollbar, .
   .topbar-more .topbar-basemap,
   .topbar-more #btnDataTable {
     justify-content: flex-start;
+  }
+  /* Panel Overlay Peta di dalam dropdown "...": mengalir di dalam dropdown (bukan
+     mengambang 340px di kotak 300px -> dulu meluber & terpotong di kiri). */
+  .topbar-more { width: min(92vw, 380px); }
+  .topbar-more .topbar-maplayer { flex-wrap: wrap; border-radius: 12px; }
+  .topbar-more .maplayer-panel {
+    position: static; width: 100%; max-height: none; box-shadow: none; margin-top: 6px;
   }
 }
 

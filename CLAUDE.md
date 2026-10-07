@@ -983,7 +983,11 @@ bappenas.xlsx`, `Jalan Tol/`). Done and browser-verified:
     `.maplayer-iconsize`). Print follows via `icon.scaledSize`. The same
     slider sets **line width** on line layers. `applyLayerStyle` wraps every
     line style and multiplies `strokeWeight`. `layerJenisSkala()` decides
-    whether a row shows it (titik/garis yes, polygon no).
+    whether a row shows it (titik/garis yes, polygon no). Both sliders live on a
+    second row under the layer name (`.maplayer-kontrol`). On one row they
+    squeezed the name into a vertical column of letters. Under 900px the
+    Overlay panel flows inside the "…" dropdown instead of floating; before,
+    it overflowed and was clipped on the left.
   - [static/js/layer-label.js](static/js/layer-label.js) adds a
     **right-click menu**: on a feature, a legend row, or an active tree row.
     It has show/hide label, label field, label size (zoom-dynamic), icon

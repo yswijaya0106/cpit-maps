@@ -150,7 +150,8 @@ def main():
              "gagal": gagal, "durasi_detik": round(time.time() - mulai, 1), "model": meta.get("model"),
              "token_masuk": meta.get("token_masuk"), "token_keluar": meta.get("token_keluar"),
              "tools": meta.get("tools", []), "aksi": [a.get("nama") for a in actions], "jawaban": teks[:3000], "galat": galat,
-             "direvisi": meta.get("direvisi")}
+             "direvisi": meta.get("direvisi"), "catatan": meta.get("catatan", []), "sql": meta.get("sql", []),
+             "sql_galat": meta.get("sql_galat", [])}
         hasil.append(r)
         print(f"{'LULUS' if r['lulus'] else 'GAGAL'}  {b['id']} [{b['kategori']}] {r['durasi_detik']}s"
               + (" (direvisi)" if r["direvisi"] else "")

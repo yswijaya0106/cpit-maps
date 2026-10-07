@@ -772,7 +772,20 @@ Deps: `requirements.txt`, venv at `.venv/` (already gitignored).
   `kata_kunci` frontmatter. `_pilih_catatan` inserts at most 3 notes whose
   keywords appear in the question (only titles when none match). For Claude
   they go outside the cached system block. The folder must be deployed with
-  chat_providers.py, or the model silently loses every note;
+  chat_providers.py, or the model silently loses every note.
+  **Tahap 4b (8 Oct 2026), learning loop:**
+  - `_pengetahuan()` reloads notes when a file changes, so no restart is
+    needed.
+  - Unmatched notes are listed as `judul [nama]`, and the model can fetch one
+    with the tool `baca_catatan_pengetahuan`.
+  - `chat_log` gains `catatan`, `direvisi`, `sql_galat`, plus 👍/👎 from
+    `POST /api/chat/umpan-balik`. Only the asker can rate a row. The answer
+    text is stored only for 👎.
+  - `scripts/belajar_catatan_chat.py` collects failed cases (chat_log +
+    uji_chat `.json`). A DeepSeek agent checks the DB read-only and writes
+    drafts to `chat_pengetahuan/_usulan/` with `status: usulan`, which chat
+    never reads. Evidence SQL is re-run by the script into `.bukti.md`.
+  - A human promotes a draft with `--terima <draf>`, then reruns uji_chat;
   (2) `_periksa_tabel_karangan` flags markdown tables whose text cells don't
   appear in any tool result from that request (a fabricated "Pelabuhan 1 |
   Lokasi 1" table was observed);

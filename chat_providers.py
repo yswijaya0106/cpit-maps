@@ -488,9 +488,14 @@ _CATATAN = contextvars.ContextVar("chat_catatan", default="")
 # pertanyaan yg disisipkan (lihat chat_pengetahuan/README.md).
 _DIR_PENGETAHUAN = os.path.join(os.path.dirname(os.path.abspath(__file__)), "chat_pengetahuan")
 _MAKS_CATATAN = 3
+# Nama catatan yg disisipkan / dibaca model di request ini -> meta & chat_log (Tahap 4b).
+_CATATAN_NAMA = contextvars.ContextVar("chat_catatan_nama", default=())
 
 
 def _muat_pengetahuan() -> list:
+    """Hanya file *.md di tingkat atas folder. Draf hasil scripts/belajar_catatan_chat.py
+    ada di subfolder _usulan/ (tidak terbaca di sini) dan baru berlaku setelah
+    dipindah ke atas oleh manusia; `status:` selain 'aktif' juga dilewati."""
     catatan = []
     if not os.path.isdir(_DIR_PENGETAHUAN):
         return catatan
@@ -502,6 +507,8 @@ def _muat_pengetahuan() -> list:
         if not m:
             continue
         kepala = dict(re.findall(r"^(\w+):\s*(.+)$", m.group(1), re.M))
+        if kepala.get("status", "aktif").strip().lower() != "aktif":
+            continue
         kunci = [k.strip().lower() for k in kepala.get("kata_kunci", "").strip("[] ").split(",") if k.strip()]
         pola = [re.compile(r"\b" + re.escape(k[:-1]) if k.endswith("*") else r"\b" + re.escape(k) + r"\b") for k in kunci]
         catatan.append({"nama": nama[:-3], "judul": kepala.get("judul", nama[:-3]), "pola": pola,
@@ -510,34 +517,69 @@ def _muat_pengetahuan() -> list:
 
 
 _PENGETAHUAN = _muat_pengetahuan()
+_PENGETAHUAN_STEMPEL = None
+
+
+def _pengetahuan() -> list:
+    """Catatan terkini: dimuat ulang bila ada file di folder yg berubah/bertambah,
+    supaya catatan yg baru diterima langsung berlaku tanpa restart server."""
+    global _PENGETAHUAN, _PENGETAHUAN_STEMPEL
+    try:
+        stempel = tuple(sorted((e.name, e.stat().st_mtime) for e in os.scandir(_DIR_PENGETAHUAN)
+                               if e.is_file() and e.name.endswith(".md")))
+    except OSError:
+        return _PENGETAHUAN
+    if stempel != _PENGETAHUAN_STEMPEL:
+        _PENGETAHUAN, _PENGETAHUAN_STEMPEL = _muat_pengetahuan(), stempel
+    return _PENGETAHUAN
 
 
 def _pilih_catatan(pertanyaan_terakhir: str, sebelumnya: str = "") -> str:
     """Catatan topik yg kata kuncinya muncul di pertanyaan (maks _MAKS_CATATAN,
     paling banyak cocok dulu). Pertanyaan sebelumnya ikut dihitung dgn bobot
     kecil supaya tindak lanjut ("buat grafiknya") tetap dapat catatan topiknya.
-    Tak ada yg cocok -> hanya daftar judul, supaya model tahu topik apa saja
-    yg punya catatan & tetap memeriksa kolom lewat daftar_tabel_database."""
+    Tak ada yg cocok -> hanya daftar judul+nama, supaya model tahu topik apa saja
+    yg punya catatan & bisa membacanya sendiri lewat baca_catatan_pengetahuan
+    (Tahap 4b: kata kunci tak pernah lengkap, model yg memutuskan)."""
+    semua = _pengetahuan()
     baru, lama = (pertanyaan_terakhir or "").lower(), (sebelumnya or "").lower()
     skor = []
-    for c in _PENGETAHUAN:
+    for c in semua:
         s = 2 * sum(1 for p in c["pola"] if p.search(baru)) + sum(1 for p in c["pola"] if p.search(lama))
         if s:
             skor.append((s, c))
     skor.sort(key=lambda x: -x[0])
     pilih = [c for _, c in skor[:_MAKS_CATATAN]]
+    _CATATAN_NAMA.set(tuple(c["nama"] for c in pilih))
+    if not semua:
+        return ""
+    daftar = "; ".join(f"{c['judul']} [{c['nama']}]" for c in semua if c not in pilih)
     if not pilih:
-        if not _PENGETAHUAN:
-            return ""
-        return ("\n\nCATATAN SUMBER DATA tersedia utk topik: " + "; ".join(c["judul"] for c in _PENGETAHUAN)
-                + ". (Tidak disisipkan krn pertanyaan tidak menyebutnya -- periksa nama tabel/kolom lewat "
-                  "daftar_tabel_database sebelum query.)")
+        return ("\n\nCATATAN SUMBER DATA tersedia utk topik: " + daftar
+                + ". (Tidak disisipkan krn pertanyaan tidak menyebutnya. Bila pertanyaan menyangkut salah satu "
+                  "topik itu, panggil baca_catatan_pengetahuan(nama) dulu; selain itu periksa nama tabel/kolom "
+                  "lewat daftar_tabel_database sebelum query.)")
     return ("\n\nCATATAN SUMBER DATA (sumber yang benar utk topik pertanyaan ini -- pakai ini, jangan menebak):\n"
-            + "\n".join(c["isi"] for c in pilih))
+            + "\n".join(c["isi"] for c in pilih)
+            + (f"\nCatatan topik lain (baca lewat baca_catatan_pengetahuan bila perlu): {daftar}" if daftar else ""))
+
+
+def _tool_baca_catatan_pengetahuan(nama=None) -> dict:
+    """Isi satu catatan chat_pengetahuan/ (nama file tanpa .md, atau judulnya)."""
+    semua = _pengetahuan()
+    kunci = re.sub(r"\.md$", "", str(nama or "").strip().lower())
+    c = next((c for c in semua if kunci in (c["nama"].lower(), c["judul"].lower())), None)
+    if c is None:
+        return {"error": f"Catatan '{nama}' tidak ada.",
+                "catatan_tersedia": [{"nama": x["nama"], "judul": x["judul"]} for x in semua]}
+    jejak = _JEJAK.get()
+    if jejak is not None and c["nama"] not in jejak["catatan_dibaca"]:
+        jejak["catatan_dibaca"].append(c["nama"])
+    return {"nama": c["nama"], "judul": c["judul"], "isi": c["isi"]}
 
 
 def _jejak_baru() -> dict:
-    return {"token_masuk": 0, "token_keluar": 0, "tools": [], "sql": [], "hasil": []}
+    return {"token_masuk": 0, "token_keluar": 0, "tools": [], "sql": [], "hasil": [], "catatan_dibaca": []}
 
 
 def _catat_token(masuk, keluar):
@@ -1135,6 +1177,24 @@ def _tool_analisis_kabupaten(nama=None, provinsi=None, actions=None) -> dict:
     return hasil
 
 
+CHAT_TOOLS += [{
+    "type": "function",
+    "function": {
+        "name": "baca_catatan_pengetahuan",
+        "description": (
+            "Membaca satu CATATAN SUMBER DATA (tabel/kolom/layer yang benar utk satu topik, sudah diverifikasi). "
+            "Daftar nama catatan ada di system prompt. Panggil bila pertanyaan menyangkut topik yang catatannya "
+            "belum disisipkan, SEBELUM menyusun query."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {"nama": {"type": "string", "description": "Nama catatan dlm kurung siku, mis. 'pelabuhan'"}},
+            "required": ["nama"],
+        },
+    },
+}]
+
+
 CHAT_TOOL_DISPATCH = {
     "cari_usulan_inpres": _tool_cari_usulan_inpres,
     "detail_usulan_inpres": _tool_detail_usulan_inpres,
@@ -1150,6 +1210,7 @@ CHAT_TOOL_DISPATCH = {
     "tampilkan_di_peta": _tool_tampilkan_di_peta,
     "buat_laporan": _tool_buat_laporan,
     "analisis_kabupaten": _tool_analisis_kabupaten,
+    "baca_catatan_pengetahuan": _tool_baca_catatan_pengetahuan,
     # "tampilkan_usulan_di_peta" SENGAJA tidak didaftarkan di sini -- ada di
     # CLIENT_ACTION_TOOLS, diteruskan ke frontend lewat _run_tool_call, bukan
     # dieksekusi di server.
@@ -1780,6 +1841,10 @@ def _call_chat(messages: List, context: Optional[dict], pengguna: Optional[str] 
             "tools": jejak["tools"],
             "sql": jejak["sql"],
             "direvisi": direvisi,
+            # Tahap 4b: bahan scripts/belajar_catatan_chat.py (lewat chat_log)
+            "catatan": list(dict.fromkeys(list(_CATATAN_NAMA.get()) + jejak["catatan_dibaca"])),
+            "sql_galat": [h["error"] for h in jejak["hasil"]
+                          if h["tool"] == "jalankan_query_sql" and h["error"]][:10],
         }
         return teks, actions, meta
 

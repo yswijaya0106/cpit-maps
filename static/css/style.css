@@ -1866,6 +1866,11 @@ html::-webkit-scrollbar, body::-webkit-scrollbar, .sidebar::-webkit-scrollbar, .
 .chat-datalist-item pre { margin: 6px 0 0; white-space: pre-wrap; word-break: break-word; font-size: 10.5px; color: var(--text-dim); max-height: 160px; overflow: auto; }
 .chat-examples { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
 .chat-meta { margin-top: 6px; font-size: 11px; color: var(--text-dim); }
+.chat-nilai-grup { margin-left: 6px; white-space: nowrap; }
+.chat-nilai {
+  border: 0; background: none; padding: 0 3px; cursor: pointer; color: var(--text-dim); font-size: 12px;
+}
+.chat-nilai:hover, .chat-nilai.aktif { color: var(--accent); }
 .chat-meta-cadangan {
   display: inline-block; margin-left: 4px; padding: 0 6px; border-radius: 999px; cursor: help;
   border: 1px solid var(--warn); color: var(--warn); font-weight: 600;

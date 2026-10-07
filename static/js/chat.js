@@ -307,28 +307,60 @@ function renderChatMessages() {
     const actions = m.actions || [];
     const cards = actions.map((a, j) => chatCardHtml(a, i, j)).join("");
     const contoh = m.contoh ? `<div class="chat-examples">${m.contoh.map((t) => `<button type="button" class="chat-example">${escapeHtml(t)}</button>`).join("")}</div>` : "";
-    return `<div class="chat-msg chat-msg-assistant"><div class="chat-md">${renderMarkdown(m.text)}</div>${cards}${chatDataListHtml(actions)}${contoh}${chatMetaHtml(m.meta)}</div>`;
+    return `<div class="chat-msg chat-msg-assistant"><div class="chat-md">${renderMarkdown(m.text)}</div>${cards}${chatDataListHtml(actions)}${contoh}${chatMetaHtml(m.meta, i)}</div>`;
   }).join("");
   if (state.chat.busy) {
     listEl.innerHTML += `<div class="chat-msg chat-msg-assistant chat-msg-loading"><span class="chat-spinner"></span> Menganalisis data… analisis besar bisa perlu 1–2 menit.</div>`;
   }
   chatHydrateCards(listEl);
   listEl.querySelectorAll(".chat-example").forEach((b) => { b.onclick = () => sendChatMessage(b.textContent); });
+  listEl.querySelectorAll(".chat-nilai").forEach((b) => {
+    b.onclick = () => chatKirimNilai(Number(b.dataset.msg), Number(b.dataset.nilai));
+  });
   listEl.scrollTop = listEl.scrollHeight;
 }
 
 // Baris kecil "dijawab oleh <model>" di bawah jawaban (meta dari /api/chat).
 // Model cadangan = provider di depannya gagal (mis. kredit Claude habis) --
 // dulu terjadi diam-diam, kini terlihat beserta alasannya di tooltip.
-function chatMetaHtml(meta) {
+function chatMetaHtml(meta, idx) {
   if (!meta || !meta.model) return "";
+  // 👍/👎 (Tahap 4b): masuk chat_log, bahan scripts/belajar_catatan_chat.py.
+  const nilai = meta.chat_log_id
+    ? ` <span class="chat-nilai-grup">${[[1, "bi-hand-thumbs-up", "Jawaban membantu"], [-1, "bi-hand-thumbs-down", "Jawaban salah / kurang tepat"]]
+      .map(([v, ikon, judul]) => `<button type="button" class="chat-nilai${meta.nilai === v ? " aktif" : ""}" data-msg="${idx}" data-nilai="${v}" title="${judul}"><i class="bi ${ikon}${meta.nilai === v ? "-fill" : ""}"></i></button>`).join("")}</span>`
+    : "";
   const alasan = (meta.gagal_sebelumnya || []).map((g) => `${g.provider}: ${g.alasan}`).join("\n");
   const cadangan = meta.cadangan
     ? ` <span class="chat-meta-cadangan" title="${escapeHtml("Provider utama gagal:\n" + alasan)}">model cadangan</span>`
     : "";
   const durasi = meta.durasi_detik != null ? ` · ${String(meta.durasi_detik).replace(".", ",")} dtk` : "";
   const revisi = meta.direvisi ? ` · <span title="Jawaban pertama tidak lolos pemeriksaan otomatis (mis. query kosong, grafik belum dibuat) lalu diperbaiki">diperiksa ulang</span>` : "";
-  return `<div class="chat-meta">dijawab oleh ${escapeHtml(meta.model)}${durasi}${revisi}${cadangan}</div>`;
+  return `<div class="chat-meta">dijawab oleh ${escapeHtml(meta.model)}${durasi}${revisi}${cadangan}${nilai}</div>`;
+}
+
+async function chatKirimNilai(idx, nilai) {
+  const m = state.chat.messages[idx];
+  if (!m || !m.meta || !m.meta.chat_log_id) return;
+  if (m.meta.nilai === nilai) nilai = 0; // klik ulang = batal
+  let komentar = null;
+  if (nilai === -1) {
+    komentar = window.prompt("Apa yang salah atau kurang dari jawaban ini? (opsional)", "");
+    if (komentar === null) return; // dibatalkan
+  }
+  try {
+    const res = await fetch("/api/chat/umpan-balik", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ chat_log_id: m.meta.chat_log_id, nilai, komentar, jawaban: nilai === -1 ? m.text : null }),
+    });
+    if (!res.ok) throw new Error((await res.json()).detail || res.statusText);
+    m.meta.nilai = nilai || null;
+    renderChatMessages();
+    if (nilai === -1) toast("Terima kasih, masukan dicatat untuk perbaikan asisten.");
+  } catch (err) {
+    toast(`Gagal mengirim penilaian: ${err.message || err}`, true);
+  }
 }
 
 // Panel status provider (admin): hasil GET /api/chat/status-provider dirender

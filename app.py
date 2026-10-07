@@ -10291,8 +10291,9 @@ def _catat_chat_log(pengguna, peran, pertanyaan, meta=None, actions=None, galat=
                 _chat_log_siap = True
             cur.execute(
                 "INSERT INTO chat_log (pengguna, peran, pertanyaan, provider, model, cadangan, gagal_sebelumnya, "
-                "durasi_detik, token_masuk, token_keluar, tools, sql_dijalankan, dataset_ids, galat) "
-                "VALUES (%s, %s, %s, %s, %s, %s, %s::jsonb, %s, %s, %s, %s, %s, %s, %s) RETURNING id",
+                "durasi_detik, token_masuk, token_keluar, tools, sql_dijalankan, dataset_ids, galat, "
+                "catatan, direvisi, sql_galat) "
+                "VALUES (%s, %s, %s, %s, %s, %s, %s::jsonb, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id",
                 (
                     pengguna, peran, (pertanyaan or "")[:4000], meta.get("provider"), meta.get("model"),
                     meta.get("cadangan"), json.dumps(meta.get("gagal_sebelumnya") or []),
@@ -10301,6 +10302,7 @@ def _catat_chat_log(pengguna, peran, pertanyaan, meta=None, actions=None, galat=
                     [a["argumen"]["dataset_id"] for a in (actions or [])
                      if a.get("nama") == "dataset_tersedia" and (a.get("argumen") or {}).get("dataset_id")],
                     galat,
+                    meta.get("catatan") or [], meta.get("direvisi"), meta.get("sql_galat") or [],
                 ),
             )
             return cur.fetchone()["id"]
@@ -10342,6 +10344,34 @@ def chat(payload: ChatRequest, request: Request):
     tampil["direvisi"] = bool(meta.get("direvisi"))  # Tahap 3: jawaban diperiksa & diperbaiki otomatis
     tampil["chat_log_id"] = log_id
     return {"reply": reply, "actions": actions, "meta": tampil}
+
+
+class ChatUmpanBalik(BaseModel):
+    chat_log_id: int
+    nilai: int  # 1 = 👍, -1 = 👎, 0 = batal
+    komentar: Optional[str] = None
+    jawaban: Optional[str] = None  # teks jawaban, hanya disimpan utk 👎
+
+
+@app.post("/api/chat/umpan-balik")
+def chat_umpan_balik(payload: ChatUmpanBalik, request: Request):
+    """👍/👎 pada satu jawaban chat (Tahap 4b): bahan scripts/belajar_catatan_chat.py.
+    Hanya pengguna yg bertanya yg bisa menilai baris chat_log-nya."""
+    if payload.nilai not in (-1, 0, 1):
+        raise HTTPException(400, "nilai harus -1, 0, atau 1")
+    ident = _resolve_identity(request) or {}
+    buruk = payload.nilai == -1
+    with db_cursor() as cur:
+        cur.execute(
+            "UPDATE chat_log SET nilai = %s, komentar = %s, jawaban_dinilai = %s "
+            "WHERE id = %s AND pengguna IS NOT DISTINCT FROM %s",
+            (payload.nilai or None, (payload.komentar or "")[:2000] or None if buruk else None,
+             (payload.jawaban or "")[:8000] or None if buruk else None,
+             payload.chat_log_id, ident.get("username")),
+        )
+        if cur.rowcount == 0:
+            raise HTTPException(404, "Jawaban tidak ditemukan")
+    return {"ok": True}
 
 
 @app.get("/api/chat/status-provider")

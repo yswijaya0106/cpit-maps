@@ -26,3 +26,14 @@ CREATE TABLE IF NOT EXISTS chat_log (
 );
 
 CREATE INDEX IF NOT EXISTS idx_chat_log_waktu ON chat_log (waktu);
+
+-- Tahap 4b (loop belajar chat_pengetahuan/): bahan scripts/belajar_catatan_chat.py.
+-- Isi jawaban tetap TIDAK disimpan, kecuali yg dinilai 👎 pengguna
+-- (jawaban_dinilai, dikirim frontend bersama umpan baliknya).
+ALTER TABLE chat_log ADD COLUMN IF NOT EXISTS catatan         TEXT[];   -- catatan chat_pengetahuan yg disisipkan/dibaca
+ALTER TABLE chat_log ADD COLUMN IF NOT EXISTS direvisi        TEXT;     -- instruksi revisi Tahap 3 (NULL = lolos)
+ALTER TABLE chat_log ADD COLUMN IF NOT EXISTS sql_galat       TEXT[];   -- pesan error query SQL yg gagal
+ALTER TABLE chat_log ADD COLUMN IF NOT EXISTS nilai           SMALLINT; -- umpan balik pengguna: 1 👍, -1 👎
+ALTER TABLE chat_log ADD COLUMN IF NOT EXISTS komentar        TEXT;     -- alasan 👎 (opsional)
+ALTER TABLE chat_log ADD COLUMN IF NOT EXISTS jawaban_dinilai TEXT;     -- jawaban yg dinilai 👎
+ALTER TABLE chat_log ADD COLUMN IF NOT EXISTS dipelajari_pada TIMESTAMPTZ; -- sudah diolah belajar_catatan_chat.py

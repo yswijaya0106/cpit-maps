@@ -420,7 +420,25 @@ const CHAT_CLIENT_ACTIONS = {
     showMapLayer(args.provinsi, args.kabupaten ?? "", args.layer);
   },
   tampilkan_di_peta: (args) => { chatTampilkanDiPeta(args || {}).catch((e) => console.error(e)); },
+  // analisis_kabupaten (chat_providers.py): ruas usulan IJD kab/kota itu dipilih (multi-select) & peta di-zoom.
+  tampilkan_usulan_kabupaten: (args) => { chatTampilkanUsulanKabupaten(args || {}).catch((e) => console.error(e)); },
+  zoom_ke_bbox: (args) => {
+    if (!state.map || args.barat == null) return;
+    state.map.fitBounds(new google.maps.LatLngBounds({ lat: args.selatan, lng: args.barat }, { lat: args.utara, lng: args.timur }));
+  },
 };
+
+async function chatTampilkanUsulanKabupaten(args) {
+  if (!args.kabupaten_kota || typeof toggleUsulanMulti !== "function") return;
+  const res = await fetch(`/api/usulan-inpres?kabupaten_kota=${encodeURIComponent(args.kabupaten_kota)}&limit=200`);
+  if (!res.ok) return;
+  const data = await res.json();
+  const antrean = (data.usulan || []).filter((u) => u.has_geometry);
+  const pekerja = Array.from({ length: 6 }, async () => {
+    while (antrean.length) await toggleUsulanMulti(antrean.shift(), true);
+  });
+  await Promise.all(pekerja);
+}
 
 function runChatAction(action) {
   const fn = CHAT_CLIENT_ACTIONS[action?.nama];
@@ -455,6 +473,7 @@ const CHAT_CONTOH_POOL = [
   "Bandara di {prov} mana yang permintaan penumpangnya melebihi kapasitas terminal?",
   "Berapa jumlah usulan IJD per jenis penanganan di {prov}? Buat grafik batang",
   "Kantor SAR mana yang waktu respon operasinya paling lama? Buat tabel dan grafik",
+  "Analisis Kabupaten Bandung: jaringan jalan, usulan IJD, dan konektivitasnya",
   "Bandingkan tren penumpang dan bongkar muat barang pelabuhan di {prov} beberapa tahun terakhir",
   "Kabupaten/kota mana di {prov} yang tidak dilalui koridor IJD sama sekali?",
   "Rangkum data kecelakaan lalu lintas di {prov} 2020-2025 dalam grafik tren",

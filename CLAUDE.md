@@ -966,7 +966,22 @@ bappenas.xlsx`, `Jalan Tol/`). Done and browser-verified:
     becomes "Fungsi", so Jalan Lain/Setapak classify as desa (460/940).
   - Dropped: Boven Digoel runway lines ("Landas Pacu") and degenerate lines
     that `make_valid` turns into points.
-Still open: the "Analisis Kabupaten X" chat prompt.
+- **"Analisis Kabupaten X" chat tool:** `analisis_kabupaten` is a hybrid tool
+  in chat_providers.py.
+  - The server resolves the name with `PencocokKabupaten`. A bare twin name
+    becomes the Kab, with a note only when a same-named Kota exists.
+  - It returns: profile, road indicators with national index (reusing
+    `_program_indikator_jalan`), usulan summary + NPRwa, spatial
+    connectivity (features intersecting the kab polygon), Program IJD
+    history and CER.
+  - It emits `tampilkan_layer_peta_overlay` with exact `map_layer_meta`
+    names (batas kecamatan, kab roads, PETA KORIDOR, Jalan Nasional per
+    provinsi), plus `tampilkan_usulan_kabupaten` and `zoom_ke_bbox`
+    (handlers in chat.js).
+  - NPR/CER are hidden for role `umum`.
+  - `_periksa_tabel_karangan` now normalizes `_` and long dashes on both
+    sides. Before, model-written row labels ("Kepadatan jalan") vs JSON keys
+    (`kepadatan_jalan`) triggered false "tabel karangan" warnings.
 
 ## Multi-modal transport data (Darat/Laut/Udara)
 

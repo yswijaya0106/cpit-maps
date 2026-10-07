@@ -362,6 +362,30 @@ CHAT_TOOLS = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "analisis_kabupaten",
+            "description": (
+                "Analisis lengkap SATU kabupaten/kota (deck 20261007 slide 3: 'Analisis Kabupaten X'). Pakai ini "
+                "kalau pengguna minta 'analisis/profil/kondisi kabupaten X' atau 'analisa wilayah X'. Satu panggilan "
+                "mengembalikan profil wilayah (penduduk, luas, kecamatan), indikator jaringan jalan (kemantapan, "
+                "kepadatan, kerapatan + indeks nasional), ringkasan usulan IJD 2026, konektivitas spasial (bandara, "
+                "pelabuhan, ruas koridor di dalam wilayah), riwayat Program IJD, dan skor CER AWP-1 -- SEKALIGUS "
+                "menyalakan overlay awal di peta (batas kecamatan, jalan nasional, jalan kab/kota, peta koridor, "
+                "ruas usulan IJD) dan zoom ke wilayah itu. Tidak perlu daftar_layer_peta_overlay atau SQL dulu. "
+                "Susun analisis dari hasilnya; sebut keterbatasan data yang dilaporkan di 'catatan'."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "nama": {"type": "string", "description": "Nama kabupaten/kota, mis. 'Kabupaten Bandung', 'Kota Bandung', 'Merauke'"},
+                    "provinsi": {"type": "string", "description": "Opsional, utk membedakan nama yang sama di provinsi lain"},
+                },
+                "required": ["nama"],
+            },
+        },
+    },
 ]
 
 # Tool yang PANGGILANNYA diteruskan MENTAH ke frontend utk dieksekusi di UI,
@@ -468,7 +492,7 @@ CLIENT_ACTION_TOOLS = {"tampilkan_usulan_di_peta"}
 # modelnya sendiri yang disuruh panggil daftar_layer_peta_overlay dulu.
 _TOOLS_NEED_ACTIONS_PARAM = {
     "tampilkan_layer_batas_administratif_usulan", "jalankan_query_sql",
-    "tampilkan_tabel", "buat_grafik", "tampilkan_di_peta", "buat_laporan",
+    "tampilkan_tabel", "buat_grafik", "tampilkan_di_peta", "buat_laporan", "analisis_kabupaten",
 }
 
 # Pengguna yg sedang chat (dicatat di dataset/laporan). ContextVar, bukan
@@ -953,6 +977,138 @@ def _tool_buat_laporan(judul=None, isi_markdown=None, dataset_ids=None, actions=
     return {"status": "laporan Word siap diunduh dari chat", **hasil}
 
 
+def _kunci_nama(s) -> str:
+    return re.sub(r"[^a-z0-9]", "", str(s or "").lower())
+
+
+def _tool_analisis_kabupaten(nama=None, provinsi=None, actions=None) -> dict:
+    """Profil + overlay awal satu kab/kota. Semua angka dari tabel/fungsi yang sudah
+    tervalidasi di aplikasi (kemantapan_ijd_2026, _program_indikator_jalan,
+    usulan_inpres, NPR benchmark, cer_awp1_koridor, map_layers); model hanya
+    menarasikan. Bagian penilaian (NPR, CER) disembunyikan utk akun umum."""
+    import app  # lazy: hindari circular import
+    from wilayah_cocok import PencocokKabupaten  # scripts/ sudah di sys.path oleh app.py
+
+    if not nama:
+        return {"error": "nama kabupaten/kota diperlukan"}
+    catatan = []
+    with db_cursor() as cur:
+        cur.execute("SELECT DISTINCT kode_provinsi, provinsi, kode_kabupaten, kabupaten_kota FROM penduduk_kecamatan")
+        master = cur.fetchall()
+        m = PencocokKabupaten(master).cari(provinsi, nama)
+        if not m:
+            kandidat = [r["kabupaten_kota"] for r in master if _kunci_nama(nama).replace("kabupaten", "").replace("kota", "")
+                        in _kunci_nama(r["kabupaten_kota"])][:8]
+            return {"error": f"Kab/kota '{nama}' tidak ditemukan atau ambigu.", "kandidat": kandidat}
+        kode_kab, kode_prov = int(m["kode_kabupaten"]), int(m["kode_provinsi"])
+        jenis = "Kota" if kode_kab % 100 >= 71 else "Kabupaten"
+        nama_kab = re.sub(r"^(KABUPATEN|KOTA)\s+", "", str(m["kabupaten_kota"]).strip(), flags=re.I).title()
+        label = f"{jenis} {nama_kab}"
+        nama_prov = str(m["provinsi"]).strip()
+        tanpa_jenis = not re.search(r"(?i)\b(kab\.?|kabupaten|kota)\b", str(nama))
+        kembar_kota = any(int(r["kode_kabupaten"]) % 100 >= 71 and int(r["kode_kabupaten"]) != kode_kab
+                          and _kunci_nama(re.sub(r"(?i)^(kota|kabupaten)\s+", "", r["kabupaten_kota"])) == _kunci_nama(nama_kab)
+                          for r in master)
+        if tanpa_jenis and jenis == "Kabupaten" and kembar_kota:
+            catatan.append(f"'{nama}' dibaca sbg {label}; ada juga Kota {nama_kab} -- sebut 'Kota {nama_kab}' bila itu yang dimaksud.")
+
+        # Profil wilayah
+        cur.execute("SELECT count(*) AS kec, SUM(jumlah_penduduk) AS pend FROM penduduk_kecamatan WHERE kode_kabupaten=%s", (kode_kab,))
+        p = cur.fetchone()
+        cur.execute("""SELECT SUM(ST_Area(geom::geography)) / 1e6 AS luas,
+                              ST_XMin(ST_Extent(geom)) x1, ST_YMin(ST_Extent(geom)) y1, ST_XMax(ST_Extent(geom)) x2, ST_YMax(ST_Extent(geom)) y2
+                       FROM map_layers WHERE provinsi='BATAS KABUPATEN' AND attrs->>'KODE_KABUPATEN' = %s""", (str(kode_kab),))
+        g = cur.fetchone()
+        ind = app._program_indikator_jalan(cur)
+        ij, nas = ind["kab"].get(kode_kab, {}), ind["nasional"]
+        jaringan = {k: ij.get(k) for k in ("panjang_jalan_km", "kemantapan_pct", "kepadatan_jalan", "kerapatan_jalan")}
+        for k in ("kemantapan_pct", "kepadatan_jalan", "kerapatan_jalan"):
+            jaringan[f"indeks_{k}"] = round(ij[k] / nas[k], 2) if ij.get(k) is not None and nas.get(k) else None
+        jaringan["nasional"] = nas
+        jaringan["sumber"] = "jalan daerah kab/kota, data kemantapan IJD 2026; indeks = nilai ÷ nasional"
+
+        # Usulan IJD 2026
+        cur.execute("""SELECT count(*) n, count(*) FILTER (WHERE seleksi_sistem='LULUS') lulus,
+                              round(SUM(panjang_penanganan_pemda)::numeric, 1) km, SUM(alokasi_usulan_pemda) rp
+                       FROM usulan_inpres WHERE kode_kabupaten=%s""", (kode_kab,))
+        u = cur.fetchone()
+        cur.execute("SELECT jenis_penanganan j, count(*) n FROM usulan_inpres WHERE kode_kabupaten=%s GROUP BY 1 ORDER BY 2 DESC", (kode_kab,))
+        usulan = {"jumlah": u["n"], "lulus_seleksi_sistem": u["lulus"], "panjang_penanganan_km": float(u["km"] or 0),
+                  "alokasi_usulan_pemda_rp": int(u["rp"] or 0), "per_jenis": {r["j"]: r["n"] for r in cur.fetchall()}}
+        if u["n"] and not _tanpa_penilaian():
+            cur.execute("SELECT * FROM usulan_inpres WHERE kode_kabupaten=%s LIMIT 1", (kode_kab,))
+            bm = app._npr_benchmark_kabupaten(cur.fetchone(), None)
+            usulan["npr_weighted_average_kabupaten"] = bm["npr_wa"]
+            usulan["npr_rata_rata"] = bm["npr_rata_rata"]
+
+        # Konektivitas spasial: simpul & koridor di dalam poligon kab/kota
+        cur.execute("""WITH k AS (SELECT ST_Union(geom) g FROM map_layers WHERE provinsi='BATAS KABUPATEN' AND attrs->>'KODE_KABUPATEN'=%s)
+                       SELECT m.provinsi, m.layer, count(*) n FROM map_layers m, k
+                       WHERE ((m.provinsi='BANDARA' AND m.layer='Bandara') OR (m.provinsi='PELABUHAN' AND m.layer='Pelabuhan Nasional')
+                              OR m.layer='PETA KORIDOR' OR (m.provinsi='JALAN NASIONAL' AND m.layer='Jalan Nasional')
+                              OR (m.provinsi='JALAN TOL' AND m.layer LIKE 'Rencana Umum%%'))
+                         AND m.geom && k.g AND ST_Intersects(m.geom, k.g)
+                       GROUP BY 1, 2""", (str(kode_kab),))
+        sp = {f"{r['provinsi']} / {r['layer']}": r["n"] for r in cur.fetchall()}
+        konektivitas = {"bandara": sp.get("BANDARA / Bandara", 0), "pelabuhan_nasional": sp.get("PELABUHAN / Pelabuhan Nasional", 0),
+                        "ruas_jalan_nasional": sp.get("JALAN NASIONAL / Jalan Nasional", 0),
+                        "ruas_tol_rencana_umum": sp.get("JALAN TOL / Rencana Umum Jalan Tol (JBH 2023)", 0),
+                        "ruas_peta_koridor": sum(v for k, v in sp.items() if k.endswith("/ PETA KORIDOR")),
+                        "metode": "fitur yang beririsan dgn poligon batas kab/kota"}
+
+        # Riwayat Program IJD & CER AWP-1
+        cur.execute("SELECT count(*) n, round(SUM(alokasi_rp)/1e9, 1) m, round(SUM(panjang_jalan_km)::numeric, 1) km FROM program_ijd_riwayat WHERE kode_kabupaten=%s", (kode_kab,))
+        pr = cur.fetchone()
+        program = {"kegiatan_2023_2026": pr["n"], "alokasi_rp_miliar": float(pr["m"] or 0), "panjang_jalan_km": float(pr["km"] or 0)}
+        cer = None
+        if not _tanpa_penilaian():
+            cur.execute("SELECT to_regclass('public.cer_awp1_koridor') t")
+            if cur.fetchone()["t"]:
+                cur.execute("""SELECT no_koridor, nama_koridor, round(cer_score::numeric, 2) cer, peringkat_cer,
+                                      round(tot_score::numeric, 3) tot FROM cer_awp1_koridor
+                               WHERE kode_kabupaten=%s ORDER BY cer_score DESC LIMIT 5""", (kode_kab,))
+                top = [dict(r) for r in cur.fetchall()]
+                cur.execute("SELECT count(*) n FROM cer_awp1_koridor WHERE kode_kabupaten=%s", (kode_kab,))
+                cer = {"jumlah_koridor": cur.fetchone()["n"], "teratas_menurut_cer": top,
+                       "catatan": "model eksperimental AWP-1, CER = manfaat ÷ biaya relatif; terpisah dari skor IJD"}
+
+        # Overlay awal: nama layer persis dari map_layer_meta (tidak ditebak model)
+        lapis = []
+        cur.execute("""SELECT provinsi, kabupaten, layer FROM map_layer_meta
+                       WHERE provinsi='BATAS KECAMATAN' AND lower(kabupaten)=lower(%s) AND lower(layer)=lower(%s)""", (nama_prov, label))
+        lapis += cur.fetchall()
+        cur.execute("""SELECT provinsi, kabupaten, layer FROM map_layer_meta
+                       WHERE lower(provinsi)=lower(%s) AND lower(kabupaten)=lower(%s)
+                         AND (layer ~* '^jalan' OR layer = 'PETA KORIDOR') ORDER BY layer = 'PETA KORIDOR', layer LIMIT 3""",
+                    (nama_prov, label))
+        lapis += cur.fetchall()
+        cur.execute("SELECT 1 FROM map_layer_meta WHERE provinsi='JALAN NASIONAL' AND kabupaten='' AND layer='Jalan Nasional'")
+        if cur.fetchone():
+            lapis.append({"provinsi": "JALAN NASIONAL", "kabupaten": nama_prov.title().replace("Dki", "DKI").replace("Di ", "DI "),
+                          "layer": "Jalan Nasional"})
+    if not any(l["provinsi"] == "BATAS KECAMATAN" for l in lapis):
+        catatan.append("Layer batas kecamatan utk wilayah ini tidak ditemukan.")
+    if actions is not None:
+        for l in lapis:
+            actions.append({"nama": "tampilkan_layer_peta_overlay",
+                            "argumen": {"provinsi": l["provinsi"], "kabupaten": l["kabupaten"], "layer": l["layer"]}})
+        if usulan["jumlah"]:
+            actions.append({"nama": "tampilkan_usulan_kabupaten", "argumen": {"kode_kabupaten": kode_kab, "kabupaten_kota": m["kabupaten_kota"]}})
+        if g and g["x1"] is not None:
+            actions.append({"nama": "zoom_ke_bbox", "argumen": {"barat": g["x1"], "selatan": g["y1"], "timur": g["x2"], "utara": g["y2"]}})
+    hasil = {
+        "wilayah": {"nama": label, "provinsi": nama_prov, "kode_kabupaten": kode_kab, "kode_provinsi": kode_prov,
+                    "jumlah_kecamatan": p["kec"], "penduduk": int(p["pend"] or 0),
+                    "luas_km2": round(float(g["luas"]), 1) if g and g["luas"] else None},
+        "jaringan_jalan": jaringan, "usulan_ijd_2026": usulan, "konektivitas": konektivitas,
+        "riwayat_program_ijd": program, "overlay_dinyalakan": [f"{l['provinsi']} / {l['kabupaten']} / {l['layer']}" for l in lapis],
+        "catatan": catatan,
+    }
+    if cer is not None:
+        hasil["cer_awp1"] = cer
+    return hasil
+
+
 CHAT_TOOL_DISPATCH = {
     "cari_usulan_inpres": _tool_cari_usulan_inpres,
     "detail_usulan_inpres": _tool_detail_usulan_inpres,
@@ -967,6 +1123,7 @@ CHAT_TOOL_DISPATCH = {
     "buat_grafik": _tool_buat_grafik,
     "tampilkan_di_peta": _tool_tampilkan_di_peta,
     "buat_laporan": _tool_buat_laporan,
+    "analisis_kabupaten": _tool_analisis_kabupaten,
     # "tampilkan_usulan_di_peta" SENGAJA tidak didaftarkan di sini -- ada di
     # CLIENT_ACTION_TOOLS, diteruskan ke frontend lewat _run_tool_call, bukan
     # dieksekusi di server.
@@ -1387,7 +1544,12 @@ def _periksa_tabel_karangan(teks: str, actions: list) -> str:
             ds = chat_dataset.muat(a["argumen"].get("dataset_id", ""))
             if ds:
                 sumber.append(json.dumps(ds["rows"], ensure_ascii=False, default=str)[:500000])
-    korpus = " ".join(sumber).lower()
+    # Normalisasi dua sisi: kunci JSON (kepadatan_jalan) vs label tabel buatan model
+    # ("Kepadatan jalan"), dan tanda pisah panjang vs "-" -- dulu memicu peringatan palsu.
+    def _norm(t):
+        return re.sub(r"\s+", " ", t.lower().replace("_", " ").replace("–", "-").replace("—", "-"))
+
+    korpus = _norm(" ".join(sumber))
     curiga = False
     tabel, dalam = [], False
     for baris in teks.split("\n") + [""]:
@@ -1401,7 +1563,7 @@ def _periksa_tabel_karangan(teks: str, actions: list) -> str:
             sel = [c.strip().strip("*").strip() for r in isi for c in r.strip("|").split("|")]
             sel = [c for c in sel if len(c) >= 4 and not _SEL_ANGKA.match(c)]
             if len(isi) >= 2 and len(sel) >= 2:
-                cocok = sum(1 for c in sel if c.lower() in korpus)
+                cocok = sum(1 for c in sel if _norm(c) in korpus)
                 if cocok / len(sel) < 0.3:
                     curiga = True
             tabel, dalam = [], False

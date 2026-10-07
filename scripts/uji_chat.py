@@ -108,8 +108,9 @@ def periksa(butir, teks, actions, meta, db_sebelum):
         if not cocok_angka(t, angka):
             gagal.append(f"angka {t['nilai']:g} tidak ada di jawaban")
     for t in butir.get("teks_wajib", []):
-        if t.lower() not in teks.lower():
-            gagal.append(f"teks '{t}' tidak ada")
+        alternatif = t if isinstance(t, list) else [t]   # daftar = salah satu cukup
+        if not any(x.lower() in teks.lower() for x in alternatif):
+            gagal.append(f"teks '{' / '.join(alternatif)}' tidak ada")
     for pola in butir.get("tidak_boleh", []):
         if re.search(pola, teks, re.I):
             gagal.append(f"memuat pola terlarang /{pola}/")
@@ -148,9 +149,11 @@ def main():
         r = {"id": b["id"], "kategori": b["kategori"], "pertanyaan": b["pertanyaan"], "lulus": not gagal,
              "gagal": gagal, "durasi_detik": round(time.time() - mulai, 1), "model": meta.get("model"),
              "token_masuk": meta.get("token_masuk"), "token_keluar": meta.get("token_keluar"),
-             "tools": meta.get("tools", []), "aksi": [a.get("nama") for a in actions], "jawaban": teks[:3000], "galat": galat}
+             "tools": meta.get("tools", []), "aksi": [a.get("nama") for a in actions], "jawaban": teks[:3000], "galat": galat,
+             "direvisi": meta.get("direvisi")}
         hasil.append(r)
         print(f"{'LULUS' if r['lulus'] else 'GAGAL'}  {b['id']} [{b['kategori']}] {r['durasi_detik']}s"
+              + (" (direvisi)" if r["direvisi"] else "")
               + ("" if r["lulus"] else "  -> " + "; ".join(gagal)), flush=True)
 
     n_lulus = sum(r["lulus"] for r in hasil)
@@ -173,8 +176,10 @@ def main():
           f"rata-rata {sum(r['durasi_detik'] for r in hasil) / max(1, len(hasil)):.1f} dtk/pertanyaan", "",
           "| Kategori | Lulus |", "|---|---|"]
     md += [f"| {k} | {v[0]}/{v[1]} |" for k, v in sorted(per_kat.items())]
-    md += ["", "| ID | Kategori | Hasil | Durasi | Tool dipakai | Alasan gagal |", "|---|---|---|---|---|---|"]
-    md += [f"| {r['id']} | {r['kategori']} | {'✅' if r['lulus'] else '❌'} | {r['durasi_detik']} dtk | "
+    n_revisi = sum(1 for r in hasil if r.get("direvisi"))
+    md += ["", f"Direvisi otomatis (Tahap 3): {n_revisi} pertanyaan.", "",
+           "| ID | Kategori | Hasil | Revisi | Durasi | Tool dipakai | Alasan gagal |", "|---|---|---|---|---|---|---|"]
+    md += [f"| {r['id']} | {r['kategori']} | {'✅' if r['lulus'] else '❌'} | {'ya' if r.get('direvisi') else ''} | {r['durasi_detik']} dtk | "
            f"{', '.join(dict.fromkeys(r['tools'])) or '-'} | {'; '.join(r['gagal']) or ''} |" for r in hasil]
     dasar.with_suffix(".md").write_text("\n".join(md) + "\n", encoding="utf-8")
     print(f"\nLulus {n_lulus}/{len(hasil)}. Laporan: {dasar.with_suffix('.md')}")

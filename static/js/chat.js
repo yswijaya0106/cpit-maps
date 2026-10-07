@@ -327,7 +327,8 @@ function chatMetaHtml(meta) {
     ? ` <span class="chat-meta-cadangan" title="${escapeHtml("Provider utama gagal:\n" + alasan)}">model cadangan</span>`
     : "";
   const durasi = meta.durasi_detik != null ? ` · ${String(meta.durasi_detik).replace(".", ",")} dtk` : "";
-  return `<div class="chat-meta">dijawab oleh ${escapeHtml(meta.model)}${durasi}${cadangan}</div>`;
+  const revisi = meta.direvisi ? ` · <span title="Jawaban pertama tidak lolos pemeriksaan otomatis (mis. query kosong, grafik belum dibuat) lalu diperbaiki">diperiksa ulang</span>` : "";
+  return `<div class="chat-meta">dijawab oleh ${escapeHtml(meta.model)}${durasi}${revisi}${cadangan}</div>`;
 }
 
 // Panel status provider (admin): hasil GET /api/chat/status-provider dirender

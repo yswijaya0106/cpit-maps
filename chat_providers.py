@@ -17,6 +17,7 @@ import os
 import re
 import time
 from datetime import datetime, timezone
+from types import SimpleNamespace
 from typing import List, Optional
 
 import anthropic
@@ -124,6 +125,17 @@ iri_ruas_nasional (linkid, provinsi, link_name, paved_mantap_pct ...), lalu lint
 kode_koridor, panjang_ruas_km; geometri di geom_geojson berupa TEKS GeoJSON -> ST_GeomFromGeoJSON(geom_geojson)).
 - Batas wilayah: map_layers provinsi='BATAS PROVINSI' (attrs PROVINSI) dan 'BATAS KABUPATEN' (attrs PROVINSI, \
 KABUPATEN_KOTA, KODE_KABUPATEN).
+- Penduduk & kecamatan: penduduk_kecamatan (satu baris = satu kecamatan; jumlah_penduduk). kabupaten_kota berisi \
+nama TANPA awalan & KEMBAR utk Kab/Kota sama nama ('BANDUNG' = Kab. Bandung 3204 DAN Kota Bandung 3273) -> \
+WAJIB filter kode_kabupaten; cari kodenya di ref_wilayah_kabupaten (nama_kabupaten_kota, jenis_kabupaten \
+'KABUPATEN'/'KOTA'). Utk profil satu kab/kota lebih baik pakai tool analisis_kabupaten.
+- Kecelakaan lalu lintas: anev_laka_lantas_polda (polda, tahun TEKS, kejadian, korban_md/lb/lr). Nama polda SINGKATAN: \
+'JABAR', 'JATENG', 'JATIM', 'METRO JAYA' (DKI), 'DIY', 'BABEL', 'SUMUT', 'SULSEL', dst. -- cek SELECT DISTINCT polda.
+- Bandara tersibuk / jumlah penumpang: bandara_kemenhub.lalu_lintas_penumpang (+ lalu_lintas_tahun), BUKAN bps_data_bandara.
+- Kantor SAR waktu respon: basarnas_analisis_kantor (lokasi, status 'Kantor SAR'/'Pos SAR', waktu_respon_rata_rata_menit \
+-- NULL utk Pos SAR) atau hitung dari basarnas_ops_sar.
+- Skor CER AWP-1 (model eksperimental): cer_awp1_koridor (no_koridor, nama_koridor, kabupaten_kota, cer_score, \
+tot_score, c_score, peringkat_cer). Saat menyebut koridor, sertakan nama koridor & kab/kota, bukan hanya kodenya.
 Contoh pola query terdekat (pelabuhan -> Kantor SAR):
 SELECT p.nama_pelabuhan, k.attrs->>'nama_kantor' AS kantor_sar, \
 round((ST_Distance(ST_SetSRID(ST_MakePoint(p.lon,p.lat),4326)::geography, k.geom::geography)/1000)::numeric,1) AS jarak_km, \
@@ -511,7 +523,7 @@ _JEJAK = contextvars.ContextVar("chat_jejak", default=None)
 
 
 def _jejak_baru() -> dict:
-    return {"token_masuk": 0, "token_keluar": 0, "tools": [], "sql": []}
+    return {"token_masuk": 0, "token_keluar": 0, "tools": [], "sql": [], "hasil": []}
 
 
 def _catat_token(masuk, keluar):
@@ -1157,6 +1169,14 @@ def _run_tool_call(name: str, args: dict, actions: list) -> dict:
         actions.append({"nama": name, "argumen": args})
         return {"status": "diteruskan_ke_frontend_untuk_dieksekusi"}
     hasil = _jalankan_tool(name, args, actions)
+    if jejak is not None and isinstance(hasil, dict):  # utk _periksa_jawaban (Tahap 3)
+        n = hasil.get("jumlah_baris", hasil.get("total_ditemukan"))
+        # agregat bernilai nol (COUNT/SUM dgn filter salah tulis -> 1 baris berisi 0): perlakukan spt kosong
+        prat = hasil.get("pratinjau_baris") or []
+        if n == 1 and prat and all((v in (0, None)) for v in prat[0].values() if not isinstance(v, str)) \
+                and any(not isinstance(v, str) for v in prat[0].values()):
+            n = 0
+        jejak["hasil"].append({"tool": name, "n": n, "error": hasil.get("error")})
     rekam = _HASIL_TOOL.get()
     if rekam is not None:
         rekam.append(json.dumps(jsonable_encoder(hasil), ensure_ascii=False, default=str)[:200000])
@@ -1454,6 +1474,71 @@ def _chat_providers() -> list:
     return providers
 
 
+# ---------- Tahap 3 kajian agentic workflow: observe -> revise ----------
+# Aturan (bukan LLM) yg memeriksa jawaban sebelum dikirim; bila gagal, model
+# diberi SATU kesempatan revisi dgn instruksi spesifik. Pola diambil dari
+# kegagalan nyata di scripts/uji_chat.py (baseline 7 Okt 2026, gpt-4o-mini).
+_POLA_KONFIRMASI = re.compile(r"mohon konfirmasi|apakah anda (ingin|mau) saya|silakan konfirmasi|perlu saya (cari|ambil)", re.I)
+_POLA_NIHIL = re.compile(r"\btidak ada\b|\btidak ditemukan\b|\bbelum ada data\b|\bnihil\b|"
+                         r"(?<![\d.,])0(?:[.,]0+)? ?(%|persen|usulan|baris|data|kegiatan)\b", re.I)
+_POLA_PENOLAKAN = re.compile(r"tidak (boleh|diizinkan|diperbolehkan)|tidak dapat (menghapus|mengubah|menampilkan data pribadi)|"
+                             r"read.?only|hanya (dapat )?membaca|privasi|kerahasiaan", re.I)
+_AKSI_PETA = {"tampilkan_di_peta", "tampilkan_usulan_di_peta", "tampilkan_layer_peta_overlay"}
+
+
+def _periksa_jawaban(pertanyaan: str, teks: str, actions: list, jejak: dict) -> Optional[str]:
+    """None bila jawaban lolos; selain itu instruksi revisi utk model."""
+    p = (pertanyaan or "").lower()
+    tools = jejak.get("tools") or []
+    hasil = jejak.get("hasil") or []
+    aksi = {a.get("nama") for a in actions}
+    if _POLA_PENOLAKAN.search(teks):
+        return None  # penolakan yg disengaja (data pribadi, tulis data) bukan kegagalan
+    if not tools and _POLA_KONFIRMASI.search(teks):
+        return ("Jangan meminta konfirmasi -- pertanyaannya sudah jelas. Langsung cari datanya: pakai "
+                "daftar_tabel_database bila perlu, lalu jalankan_query_sql, dan jawab dari hasilnya.")
+    if not tools and _POLA_NIHIL.search(teks):
+        return ("Kamu menyimpulkan datanya tidak ada TANPA memeriksa database. Cari dulu: daftar_tabel_database "
+                "lalu jalankan_query_sql, baru jawab dari hasilnya.")
+    sql_terakhir = next((h for h in reversed(hasil) if h["tool"] == "jalankan_query_sql"), None)
+    if sql_terakhir and (sql_terakhir["error"] or not sql_terakhir["n"]) and _POLA_NIHIL.search(teks):
+        return ("Query terakhirmu menghasilkan 0 baris atau error, lalu kamu menyimpulkan datanya tidak ada/0. "
+                "Itu sering karena nilai filter salah tulis. Periksa nilai sebenarnya dgn SELECT DISTINCT <kolom> "
+                "(nilai teks di database umumnya HURUF BESAR, mis. seleksi_sistem = 'LULUS' / 'TIDAK LULUS', "
+                "provinsi = 'PAPUA SELATAN'), atau pakai ILIKE, lalu ulangi query dan jawab dari hasilnya.")
+    hanya_cari = "cari_usulan_inpres" in tools and "jalankan_query_sql" not in tools
+    filter_lanjut = re.search(r"lulus|seleksi|jenis|kondisi|mantap|status|verifikasi|persen|alokasi|panjang", p)
+    if hanya_cari and re.search(r"\bberapa\b|\bjumlah\b|\bpersen", p) and (_POLA_NIHIL.search(teks) or filter_lanjut):
+        return ("cari_usulan_inpres hanya menampilkan contoh & tidak bisa memfilter status seleksi/kondisi, jadi "
+                "tidak boleh dipakai utk menyimpulkan 'tidak ada'. Hitung dgn jalankan_query_sql (COUNT ... FROM "
+                "usulan_inpres WHERE ...), lalu jawab angkanya.")
+    angka_teks = [x for x in (y.strip(".,") for y in re.findall(r"\d[\d.,]*", teks)) if not re.fullmatch(r"(19|20)\d\d", x)]
+    if re.search(r"\bberapa\b|\bjumlah\b|\bpersen", p) and tools and not angka_teks:
+        return ("Pertanyaannya meminta angka, tapi teks jawabanmu tidak menyebut angka hasilnya (tabel/kartu saja tidak "
+                "cukup). Tulis angka jawabannya secara eksplisit di kalimat pertama.")
+    if re.search(r"\bgrafik|\bchart\b|\bdiagram", p) and "buat_grafik" not in aksi:
+        return ("Pengguna meminta grafik, tapi buat_grafik belum dipanggil. Pakai dataset_id dari query yang sudah "
+                "ada (atau jalankan query dulu), lalu panggil buat_grafik.")
+    if re.search(r"\b(di|ke) peta\b|tampilkan .{0,60}peta", p) and not (aksi & _AKSI_PETA):
+        return ("Pengguna meminta ditampilkan di peta, tapi belum ada aksi peta. Panggil tampilkan_di_peta "
+                "(dataset berkolom koordinat/geometri) atau tool peta yang sesuai.")
+    if re.search(r"\blaporan\b|\bword\b|\bdocx\b", p) and "unduh_laporan" not in aksi:
+        return "Pengguna meminta laporan Word, tapi buat_laporan belum dipanggil. Susun isinya lalu panggil buat_laporan."
+    if "Peringatan sistem" in teks:
+        return ("Tabel di jawabanmu tidak cocok dgn data hasil tool. Susun ulang tabel HANYA dari hasil tool/dataset "
+                "yang benar-benar didapat; jangan mengarang baris atau nama.")
+    return None
+
+
+def _catatan_dataset(actions: list) -> str:
+    ds = [a["argumen"] for a in actions if a.get("nama") == "dataset_tersedia"]
+    if not ds:
+        return ""
+    return "\n\n[Dataset dari jawaban ini: " + "; ".join(
+        f"{d['dataset_id']} = \"{d.get('judul', '')}\" ({d.get('jumlah_baris')} baris; kolom: {', '.join(d.get('kolom') or [])})"
+        for d in ds) + "]"
+
+
 _POLA_ALASAN = [
     (re.compile(r"credit balance is too low|used all available credits|insufficient[_ ]balance|"
                 r"insufficient_quota|exceeded your current quota|spending limit", re.I), "saldo/kredit habis"),
@@ -1648,6 +1733,21 @@ def _call_chat(messages: List, context: Optional[dict], pengguna: Optional[str] 
             gagal.append({"provider": name, "model": model, "alasan": _ringkas_alasan(e)})
             print(f"  [chat] provider {name} ({model}) gagal: {str(e)[:300]}")
             continue
+        teks = _periksa_tabel_karangan(_rapikan_jawaban(teks, actions), actions)
+        # Tahap 3: periksa -> satu kali revisi dgn provider yg SAMA (jejak/token ikut terakumulasi).
+        pertanyaan = next((m.text for m in reversed(messages) if m.role == "user"), "")
+        instruksi = _periksa_jawaban(pertanyaan, teks, actions, jejak)
+        direvisi = None
+        if instruksi:
+            ulang = list(messages) + [SimpleNamespace(role="assistant", text=teks + _catatan_dataset(actions)),
+                                      SimpleNamespace(role="user", text="[Pemeriksaan otomatis aplikasi] " + instruksi)]
+            try:
+                teks2, actions2 = call(ulang, context)
+                actions = actions + [a for a in actions2 if a not in actions]
+                teks = _periksa_tabel_karangan(_rapikan_jawaban(teks2, actions), actions)
+                direvisi = instruksi
+            except Exception as e:  # revisi gagal -> tetap kirim jawaban pertama
+                print(f"  [chat] revisi {name} gagal: {str(e)[:200]}")
         meta = {
             "provider": name,
             "model": model,
@@ -1658,8 +1758,9 @@ def _call_chat(messages: List, context: Optional[dict], pengguna: Optional[str] 
             "token_keluar": jejak["token_keluar"] or None,
             "tools": jejak["tools"],
             "sql": jejak["sql"],
+            "direvisi": direvisi,
         }
-        return _periksa_tabel_karangan(_rapikan_jawaban(teks, actions), actions), actions, meta
+        return teks, actions, meta
 
     # Pesan ringkas utk pengguna (alasan per provider); pesan asli sudah di log server.
     raise HTTPException(502, "Semua provider LLM gagal — " + " | ".join(f"{g['provider']}: {g['alasan']}" for g in gagal))

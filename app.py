@@ -10339,6 +10339,7 @@ def chat(payload: ChatRequest, request: Request):
     # Ke frontend cukup yg perlu ditampilkan; daftar tool/SQL lengkap ada di chat_log.
     tampil = {k: meta.get(k) for k in ("provider", "model", "cadangan", "gagal_sebelumnya",
                                        "durasi_detik", "token_masuk", "token_keluar")}
+    tampil["direvisi"] = bool(meta.get("direvisi"))  # Tahap 3: jawaban diperiksa & diperbaiki otomatis
     tampil["chat_log_id"] = log_id
     return {"reply": reply, "actions": actions, "meta": tampil}
 

@@ -1818,7 +1818,23 @@ upsert, so they're safe to re-run:
     (triliun, juta, …).
   - Reports go to `docs/uji_chat/`. It does not write to `chat_log`. Each
     run costs ~24 paid LLM calls per provider.
-  - Baseline: deepseek-v4-pro 24/24, gpt-4o-mini 14/24.
+  - Baseline: deepseek-v4-pro 24/24, gpt-4o-mini 14/24. After Tahap 3 the
+    results are 24/24 and 17–18/24.
+- **Tahap 3 observe→revise** (chat_providers.py `_periksa_jawaban`): after an
+  answer, rule-based checks run (not an LLM). On failure, the SAME provider
+  gets ONE revision with a specific instruction. Checks:
+  - asked for confirmation without trying;
+  - "tidak ada/0" with no query, or after a 0-row query (a single all-zero
+    aggregate row also counts as empty);
+  - a filtered count answered from `cari_usulan_inpres` only;
+  - a numeric question with no number in the text;
+  - a requested chart/map/report action is missing;
+  - a fabricated-table flag.
+  Deliberate refusals are exempt. `_JEJAK["hasil"]` records rows/errors per
+  tool. `meta.direvisi` is shown as "diperiksa ulang" in chat.js. Any
+  PETA DATA prompt note must be verified against the data. A wrong note
+  (`penduduk_kecamatan` naming) briefly caused a regression that the suite
+  caught.
   - Update the reference answers in the YAML when the data is reimported.
   - Rerun it after any prompt/tool/model change.
 - `smoke_check.py` — not a test suite (see `docs/ARCHITECTURE.md`

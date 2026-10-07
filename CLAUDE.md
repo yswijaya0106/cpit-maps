@@ -765,9 +765,14 @@ Deps: `requirements.txt`, venv at `.venv/` (already gitignored).
     activity icon in the chat header, shown to admin only.
   **Guardrails, all motivated by observed gpt-4o-mini failures while the
   Claude API balance was empty:**
-  (1) the system prompt carries a "PETA DATA" cheat-sheet (which table or
-  `map_layers` group holds pelabuhan, bandara, Basarnas, KA, koridor, jalan)
-  because weak models skip the catalog tool and guess;
+  (1) a "PETA DATA" cheat-sheet (which table or `map_layers` group holds
+  pelabuhan, bandara, Basarnas, KA, koridor, jalan) because weak models skip
+  the catalog tool and guess. **Since 7 Oct 2026 (Tahap 4a)** it lives in
+  [chat_pengetahuan/](chat_pengetahuan/), one `*.md` per topic with
+  `kata_kunci` frontmatter. `_pilih_catatan` inserts at most 3 notes whose
+  keywords appear in the question (only titles when none match). For Claude
+  they go outside the cached system block. The folder must be deployed with
+  chat_providers.py, or the model silently loses every note;
   (2) `_periksa_tabel_karangan` flags markdown tables whose text cells don't
   appear in any tool result from that request (a fabricated "Pelabuhan 1 |
   Lokasi 1" table was observed);

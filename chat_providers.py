@@ -99,49 +99,7 @@ menulis gambar markdown, tautan, atau URL untuk grafik/peta/unduhan (tautan buat
 9. DILARANG KERAS membuat tabel/angka contoh atau placeholder (mis. "Pelabuhan 1", "Lokasi 1", "Jarak 1 km"). \
 Kalau data gagal diambil, katakan apa adanya tanpa tabel. Sistem memeriksa isi tabel jawaban terhadap hasil \
 tool dan menandai tabel yang isinya tidak ditemukan di data.
-
-PETA DATA (sumber yang benar utk entitas yang sering ditanya -- pakai ini, jangan menebak):
-- Pelabuhan: tabel pelabuhan_daerah (nama_pelabuhan, provinsi berformat 'Provinsi Maluku Utara', kabupaten_kota \
-'Kab. ...'/'Kota ...', hirarki_pelabuhan, hirarki_kode PP/PR/PL, lat, lon, penumpang_2024, barang_2024). Titik \
-pelabuhan nasional juga di map_layers provinsi='PELABUHAN' layer='Pelabuhan Nasional' (attrs Name, Provinsi, hierarki).
-- Bandara: tabel bps_data_bandara (nama_bandara, provinsi, kabupaten, kelas, hirarki, lat, lon, \
-kapasitas_eksisting_valid, kapasitas_eksisting_estimasi, catatan_data; kode wilayah: pakai kode_kabupaten_bps/\
-kode_provinsi_bps, BUKAN kode_kabupaten/kode_provinsi yg salah urut utk Papua). demand_pax satuannya TIDAK seragam \
-antarbandara -- jangan dijumlah/dibandingkan; utk jumlah penumpang aktual pakai bandara_kemenhub.lalu_lintas_penumpang \
-(join bps_data_bandara.bandara_kemenhub_id = bandara_kemenhub.bandara_id). Titik di map_layers provinsi='BANDARA KEMENHUB' layer='Bandara Kemenhub' (attrs Name, \
-IATA, Kelas, Hierarki, Provinsi); rute penerbangan layer='Rute Penerbangan (Kemenhub)'.
-- Basarnas: map_layers provinsi='BASARNAS': layer='KANTOR SAR' (attrs nama_kantor, tipe_kelas, latitude, longitude), \
-layer='POS SAR' (attrs 'Nama Pos SAR', 'Nama Kantor SAR'), layer='WILAYAH TANGGUNG JAWAB SAR' (poligon, attrs \
-'Nama Kantor Pencarian dan Pertolongan'). Data operasional: basarnas_alut, basarnas_ops_sar, basarnas_analisis_kantor.
-- Kereta api: map_layers provinsi='KERETA API' layer='Stasiun Kereta Api' (attrs name, "PROVINSI", "STATUS OPERASI", \
-JENIS), layer 'Rel Jawa'/'Rel Sumatera', 'Jembatan KA'; kapasitas lintas: provinsi='KAPASITAS LINTAS KA' layer \
-'KAPLIN PETAK JALAN' (attrs 'Petak Jalan', 'Kategori utilisasi', 'Jarak petak (km)') & 'KAPLIN STASIUN'.
-- Koridor IJD: map_layers provinsi='PETA KORIDOR' (attrs NO_KORIDOR; kolom kabupaten = nama kab), tabel \
-bappenas_koridor, koridor_simpul_terdekat (jarak koridor -> bandara/pelabuhan/penyeberangan terdekat, sudah dihitung).
-- Jalan nasional: map_layers provinsi='JALAN NASIONAL' layer='Jalan Nasional' (attrs LINKID, LINK_NAME), kondisi \
-iri_ruas_nasional (linkid, provinsi, link_name, paved_mantap_pct ...), lalu lintas harian bps_lhr_ruas_nasional \
-(linkid, linkname, provinsi, aadt_total, vcr = rasio volume/kapasitas, >0,85 = padat). Titik rawan: layer 'BLACKSPOT KECELAKAAN'.
-- Usulan Inpres/IJD: tabel usulan_inpres (provinsi HURUF BESAR mis. 'MALUKU UTARA', kabupaten_kota, nama_ruas, \
-kode_koridor, panjang_ruas_km; geometri di geom_geojson berupa TEKS GeoJSON -> ST_GeomFromGeoJSON(geom_geojson)).
-- Batas wilayah: map_layers provinsi='BATAS PROVINSI' (attrs PROVINSI) dan 'BATAS KABUPATEN' (attrs PROVINSI, \
-KABUPATEN_KOTA, KODE_KABUPATEN).
-- Penduduk & kecamatan: penduduk_kecamatan (satu baris = satu kecamatan; jumlah_penduduk). kabupaten_kota berisi \
-nama TANPA awalan & KEMBAR utk Kab/Kota sama nama ('BANDUNG' = Kab. Bandung 3204 DAN Kota Bandung 3273) -> \
-WAJIB filter kode_kabupaten; cari kodenya di ref_wilayah_kabupaten (nama_kabupaten_kota, jenis_kabupaten \
-'KABUPATEN'/'KOTA'). Utk profil satu kab/kota lebih baik pakai tool analisis_kabupaten.
-- Kecelakaan lalu lintas: anev_laka_lantas_polda (polda, tahun TEKS, kejadian, korban_md/lb/lr). Nama polda SINGKATAN: \
-'JABAR', 'JATENG', 'JATIM', 'METRO JAYA' (DKI), 'DIY', 'BABEL', 'SUMUT', 'SULSEL', dst. -- cek SELECT DISTINCT polda.
-- Bandara tersibuk / jumlah penumpang: bandara_kemenhub.lalu_lintas_penumpang (+ lalu_lintas_tahun), BUKAN bps_data_bandara.
-- Kantor SAR waktu respon: basarnas_analisis_kantor (lokasi, status 'Kantor SAR'/'Pos SAR', waktu_respon_rata_rata_menit \
--- NULL utk Pos SAR) atau hitung dari basarnas_ops_sar.
-- Skor CER AWP-1 (model eksperimental): cer_awp1_koridor (no_koridor, nama_koridor, kabupaten_kota, cer_score, \
-tot_score, c_score, peringkat_cer). Saat menyebut koridor, sertakan nama koridor & kab/kota, bukan hanya kodenya.
-Contoh pola query terdekat (pelabuhan -> Kantor SAR):
-SELECT p.nama_pelabuhan, k.attrs->>'nama_kantor' AS kantor_sar, \
-round((ST_Distance(ST_SetSRID(ST_MakePoint(p.lon,p.lat),4326)::geography, k.geom::geography)/1000)::numeric,1) AS jarak_km, \
-p.lat, p.lon FROM pelabuhan_daerah p CROSS JOIN LATERAL (SELECT attrs, geom FROM map_layers WHERE provinsi='BASARNAS' \
-AND layer='KANTOR SAR' ORDER BY geom <-> ST_SetSRID(ST_MakePoint(p.lon,p.lat),4326) LIMIT 1) k \
-WHERE p.provinsi ILIKE '%maluku utara%' AND p.lat IS NOT NULL ORDER BY jarak_km DESC"""
+"""
 
 CHAT_SEARCH_AVAILABLE_NOTE = (
     " Anda memiliki akses pencarian web untuk pertanyaan yang BENAR-BENAR di luar data aplikasi maupun "
@@ -520,6 +478,62 @@ _PERAN = contextvars.ContextVar("chat_peran", default=None)
 # agentic workflow): token, nama tool yg dipanggil, SQL yg dijalankan.
 # ContextVar: per request/thread, sama alasannya dgn _HASIL_TOOL.
 _JEJAK = contextvars.ContextVar("chat_jejak", default=None)
+# Catatan topik terpilih utk request ini (Tahap 4a, _pilih_catatan), disisipkan
+# _chat_system_text. Dipilih sekali di _call_chat, dipakai ulang saat revisi.
+_CATATAN = contextvars.ContextVar("chat_catatan", default="")
+
+# Tahap 4a kajian agentic workflow: "PETA DATA" (sumber yg benar per topik) dulu
+# ditempel utuh di system prompt & terkirim ulang di tiap putaran tool. Kini tiap
+# topik satu file chat_pengetahuan/*.md dgn kata_kunci; hanya yg cocok dgn
+# pertanyaan yg disisipkan (lihat chat_pengetahuan/README.md).
+_DIR_PENGETAHUAN = os.path.join(os.path.dirname(os.path.abspath(__file__)), "chat_pengetahuan")
+_MAKS_CATATAN = 3
+
+
+def _muat_pengetahuan() -> list:
+    catatan = []
+    if not os.path.isdir(_DIR_PENGETAHUAN):
+        return catatan
+    for nama in sorted(os.listdir(_DIR_PENGETAHUAN)):
+        if not nama.endswith(".md") or nama.lower() == "readme.md":
+            continue
+        teks = open(os.path.join(_DIR_PENGETAHUAN, nama), encoding="utf-8").read()
+        m = re.match(r"---\s*\n(.*?)\n---\s*\n(.*)", teks, re.S)
+        if not m:
+            continue
+        kepala = dict(re.findall(r"^(\w+):\s*(.+)$", m.group(1), re.M))
+        kunci = [k.strip().lower() for k in kepala.get("kata_kunci", "").strip("[] ").split(",") if k.strip()]
+        pola = [re.compile(r"\b" + re.escape(k[:-1]) if k.endswith("*") else r"\b" + re.escape(k) + r"\b") for k in kunci]
+        catatan.append({"nama": nama[:-3], "judul": kepala.get("judul", nama[:-3]), "pola": pola,
+                        "isi": m.group(2).strip()})
+    return catatan
+
+
+_PENGETAHUAN = _muat_pengetahuan()
+
+
+def _pilih_catatan(pertanyaan_terakhir: str, sebelumnya: str = "") -> str:
+    """Catatan topik yg kata kuncinya muncul di pertanyaan (maks _MAKS_CATATAN,
+    paling banyak cocok dulu). Pertanyaan sebelumnya ikut dihitung dgn bobot
+    kecil supaya tindak lanjut ("buat grafiknya") tetap dapat catatan topiknya.
+    Tak ada yg cocok -> hanya daftar judul, supaya model tahu topik apa saja
+    yg punya catatan & tetap memeriksa kolom lewat daftar_tabel_database."""
+    baru, lama = (pertanyaan_terakhir or "").lower(), (sebelumnya or "").lower()
+    skor = []
+    for c in _PENGETAHUAN:
+        s = 2 * sum(1 for p in c["pola"] if p.search(baru)) + sum(1 for p in c["pola"] if p.search(lama))
+        if s:
+            skor.append((s, c))
+    skor.sort(key=lambda x: -x[0])
+    pilih = [c for _, c in skor[:_MAKS_CATATAN]]
+    if not pilih:
+        if not _PENGETAHUAN:
+            return ""
+        return ("\n\nCATATAN SUMBER DATA tersedia utk topik: " + "; ".join(c["judul"] for c in _PENGETAHUAN)
+                + ". (Tidak disisipkan krn pertanyaan tidak menyebutnya -- periksa nama tabel/kolom lewat "
+                  "daftar_tabel_database sebelum query.)")
+    return ("\n\nCATATAN SUMBER DATA (sumber yang benar utk topik pertanyaan ini -- pakai ini, jangan menebak):\n"
+            + "\n".join(c["isi"] for c in pilih))
 
 
 def _jejak_baru() -> dict:
@@ -1142,12 +1156,14 @@ CHAT_TOOL_DISPATCH = {
 }
 
 
-def _chat_system_text(context: Optional[dict], has_search: bool = False) -> str:
+def _chat_system_text(context: Optional[dict], has_search: bool = False, dengan_catatan: bool = True) -> str:
     system_text = CHAT_SYSTEM_PROMPT + (CHAT_SEARCH_AVAILABLE_NOTE if has_search else CHAT_SEARCH_UNAVAILABLE_NOTE)
     if _tanpa_penilaian():
         system_text += ("\n\nPENGGUNA INI AKUN UMUM (Sikon): jangan menghitung, menyebut, atau menebak skor/"
                         "penilaian/peringkat IJD (skor teknokratis A-E, NPR, prioritas nasional, penilaian "
                         "Bappenas). Data usulan dan data sektor lain tetap boleh dijawab.")
+    if dengan_catatan:
+        system_text += _CATATAN.get()
     if context:
         system_text += "\n\nData rute saat ini (JSON):\n" + json.dumps(context, ensure_ascii=False)
     return system_text
@@ -1412,7 +1428,10 @@ def _call_claude(api_key: str, model: str, messages: List, context: Optional[dic
 
     for _ in range(_MAKS_PUTARAN_TOOL):  # batas jumlah putaran pemanggilan fungsi, cegah loop tak berujung
         try:
-            system_blocks = [{"type": "text", "text": _chat_system_text(None), "cache_control": {"type": "ephemeral"}}]
+            system_blocks = [{"type": "text", "text": _chat_system_text(None, dengan_catatan=False),
+                              "cache_control": {"type": "ephemeral"}}]
+            if _CATATAN.get():  # catatan topik berbeda per pertanyaan -> di LUAR blok yg di-cache
+                system_blocks.append({"type": "text", "text": _CATATAN.get().strip()})
             if context:  # konteks rute berubah-ubah -> di LUAR blok yg di-cache
                 system_blocks.append({"type": "text", "text": "Data rute saat ini (JSON):\n" + json.dumps(context, ensure_ascii=False)})
             response = client.messages.create(
@@ -1708,6 +1727,8 @@ def _call_chat(messages: List, context: Optional[dict], pengguna: Optional[str] 
     gpt-4o-mini krn kredit Claude & Grok habis, dan tidak ada yg tahu."""
     _PENGGUNA.set(pengguna)
     _PERAN.set(peran)
+    teks_user = [m.text for m in messages if m.role == "user"]
+    _CATATAN.set(_pilih_catatan(teks_user[-1] if teks_user else "", " ".join(teks_user[-3:-1])))
     providers = _chat_providers()
     if hanya_provider:  # paket uji (scripts/uji_chat.py): ukur satu provider, tanpa cadangan
         providers = [p for p in providers if p[0].lower() == hanya_provider.lower()]

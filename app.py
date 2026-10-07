@@ -921,6 +921,7 @@ DATA_TABLES = {
     "jpl_prioritas_djka": "Prioritas Keselamatan Perlintasan Sebidang KA (DJKA)",
     "penanganan_ss_ka_tahap": "Rencana Penanganan Perlintasan Sebidang KA Bertahap (I/II/III)",
     "koridor_simpul_terdekat": "Peta Koridor — Jarak Terdekat ke Simpul Bandara & Pelabuhan",
+    "cer_awp1_koridor": "Analisis Skoring Jalan AWP-1 — CER per Koridor (eksperimental)",
     "iri_ruas_nasional": "IRI & Kemantapan Jalan Nasional per Ruas (Survei Juli 2026)",
     "subklaster_analisis_transportasi": "Analisis Konektivitas Klaster/Subklaster Merauke (Bandara/Pelabuhan/Jalan Terdekat)",
     # BPSDM Perhubungan (scripts/import_bpsdm_perhubungan.py, docs/kajian_data_bpsdm_perhubungan.md)
@@ -966,6 +967,7 @@ DATA_TABLE_GEO = {
     "si_lahan_sawah_provinsi": ("kode_provinsi", "kode_provinsi"),
     "pelabuhan_daerah": ("kode_provinsi", "kode_kabupaten"),
     "koridor_simpul_terdekat": ("kode_provinsi", "kode_kab"),
+    "cer_awp1_koridor": ("kode_provinsi", "kode_kabupaten"),
     "program_ijd_riwayat": ("kode_provinsi", "kode_kabupaten"),
     # kode dari lokasi titik UPT (bukan "Kode Daerah" sumber), lihat import_bpsdm_perhubungan.py
     **{t: ("kode_provinsi", "kode_kabupaten") for t in (

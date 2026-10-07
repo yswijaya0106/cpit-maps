@@ -118,6 +118,7 @@ function printLegendSubitems(key, raw, meta, jenis) {
   const kelasJalan = jalanKelasDiLayer(key);
   if (kelasJalan.length) return kelasJalan.map((k) => ({ warna: JALAN_KELAS[k].warna, teks: JALAN_KELAS[k].teks, jenis: "garis" }));
   if (raw === "PETA KORIDOR") return [{ warna: KORIDOR_GAYA.warna, teks: KORIDOR_GAYA.teks, jenis: "garis" }];
+  if (raw === AWP1_LAYER) return [{ warna: AWP1_WARNA, teks: "Koridor AWP-1 (skor CER, eksperimental)", jenis: "garis" }];
   if (raw === STASIUN_LAYER_NAME) {
     return Object.entries(STASIUN_STATUS_COLORS).map(([teks, warna]) => ({ warna, teks, jenis: "titik" }))
       .concat([{ warna: STASIUN_STATUS_DEFAULT_COLOR, teks: "Lainnya / tanpa data", jenis: "titik" }]);
@@ -183,7 +184,7 @@ function printCollectOverlay(key, view, dupRaw) {
     sumber: [meta.provinsi, meta.kabupaten].filter(Boolean).join(" / "),
     warna: kelasJalan.length === 1 ? JALAN_KELAS[kelasJalan[0]].warna
       : kelasJalan.length > 1 ? JALAN_KELAS.kabkota.warna
-      : raw === "PETA KORIDOR" ? KORIDOR_GAYA.warna : color,
+      : raw === "PETA KORIDOR" ? KORIDOR_GAYA.warna : raw === AWP1_LAYER ? AWP1_WARNA : color,
     jenis,
     fields: [...fields],
     legend: printLegendSubitems(key, raw, meta, jenis),

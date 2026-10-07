@@ -197,6 +197,9 @@ const MAP_LAYER_CATEGORIES = [
   // Kawasan tematik Bappenas (tabel kawasan_tematik, aslinya tanpa geometri) yang
   // dipetakan ke poligon kecamatan/kab-kota oleh scripts/build_kawasan_tematik_layer.py.
   // Warna tetap per kategori: KAWASAN_TEMATIK_WARNA di bawah.
+  // KORIDOR AWP-1: ruas PETA KORIDOR + skor CER (scripts/import_cer_awp1.py), model eksperimental.
+  { id: "koridor-awp1", label: "Koridor AWP-1 (CER, eksperimental)", icon: "bi-bezier2",
+    match: (p) => p === "KORIDOR AWP-1" },
   { id: "kawasan-bappenas", label: "Kawasan Tematik (Bappenas)", icon: "bi-pin-map",
     match: (p) => p === "KAWASAN TEMATIK BAPPENAS" },
   { id: "jalan", label: "Jalan", icon: "bi-signpost-2", match: () => true }, // catch-all, HARUS terakhir
@@ -1040,6 +1043,9 @@ const JALAN_KELAS_URUT = ["tol", "nasional", "provinsi", "kabkota", "desa"];
 // garis putus-putus, tetapi google.maps.Data tidak mendukung pola garis.
 const KORIDOR_GAYA = { warna: "#c026d3", lebar: 2.8, z: 8, teks: "Koridor hasil analisis (PETA KORIDOR)" };
 
+const AWP1_LAYER = "Koridor AWP-1";
+const AWP1_WARNA = "#ec4899";
+
 function jalanLayerJenis(key) {
   const meta = state.mapLayers.meta[key] || {};
   const raw = mapLayerRawName(key);
@@ -1101,6 +1107,7 @@ function applyLayerStyle(key) {
   const glyphPerJenis = state.mapLayers.meta[key]?.provinsi === "RTRW";
   const jenisJalan = jalanLayerJenis(key);
   const isKoridor = mapLayerRawName(key) === "PETA KORIDOR";
+  const isAwp1 = mapLayerRawName(key) === AWP1_LAYER;
   data.setStyle((feature) => {
     if (isArus && !arusFeatureVisible(feature)) return { visible: false };
     if (feature.getProperty("DILINTASI_RUTE") === "YA") {
@@ -1146,6 +1153,10 @@ function applyLayerStyle(key) {
     if (jenisJalan && !warnaGaris) {
       const k = JALAN_KELAS[jalanKelasFitur(feature, jenisJalan)];
       return { strokeColor: k.warna, strokeWeight: k.lebar, strokeOpacity: 0.95 * opacity, zIndex: k.z };
+    }
+    if (isAwp1) {
+      // pink (deck slide 3); di atas jalan & PETA KORIDOR (8), di bawah garis usulan (20-30)
+      return { strokeColor: warnaGaris || AWP1_WARNA, strokeWeight: Number(feature.getProperty("_lebar")) || 3, strokeOpacity: 0.95 * opacity, zIndex: 9 };
     }
     if (isKoridor && !warnaGaris) {
       return { strokeColor: KORIDOR_GAYA.warna, strokeWeight: KORIDOR_GAYA.lebar, strokeOpacity: 0.95 * opacity, zIndex: KORIDOR_GAYA.z };

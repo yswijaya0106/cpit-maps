@@ -791,7 +791,7 @@ function updateMapLegend() {
     const kelasJalan = jalanKelasDiLayer(key);
     const warnaLegenda = kelasJalan.length === 1 ? JALAN_KELAS[kelasJalan[0]].warna
       : kelasJalan.length > 1 ? JALAN_KELAS.kabkota.warna
-      : raw === "PETA KORIDOR" ? KORIDOR_GAYA.warna : mapLayerColor(raw);
+      : raw === "PETA KORIDOR" ? KORIDOR_GAYA.warna : raw === AWP1_LAYER ? AWP1_WARNA : mapLayerColor(raw);
     const simbol = layerLegendSymbolHtml(key, raw === STASIUN_LAYER_NAME ? STASIUN_STATUS_DEFAULT_COLOR
       : raw === "KAPLIN STASIUN" ? "#1f2937" : warnaLegenda);
     row.innerHTML = `

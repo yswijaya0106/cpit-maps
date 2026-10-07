@@ -930,10 +930,24 @@ bappenas.xlsx`, `Jalan Tol/`). Done and browser-verified:
   Its 98xx Papua Barat Daya codes map to master by jenis+name (its code order
   also differs from BPS). Classes are fixed thresholds for kemantapan
   (40/67/80) and quartiles for the rest.
-Still open (needs data import / owner decisions): CER "Analisis Skoring Jalan
-AWP-1", the national toll master plan `JBHRENCUM_28022023` (362 segments,
-13,078 km planned vs 48 in the DB), Papua Selatan kab road SHPs (Drive), and
-the "Analisis Kabupaten X" chat prompt.
+- **CER "Analisis Skoring Jalan AWP-1"** (experimental, separate from IJD A–E
+  and NPR). Formulas are in [cer_awp1.py](cer_awp1.py), from deck slides
+  10–20. `scripts/import_cer_awp1.py` recomputes every corridor from the
+  Excel inputs and **refuses to write unless TOT/C/CER match the values
+  stored in the Excel**. All 8,076/8,076 match; slide 19/21/22 figures
+  reproduce exactly.
+  - Outputs: the `cer_awp1_koridor` table (Data menu, geo-filterable) and
+    the pink overlay bucket `KORIDOR AWP-1` (one layer per provinsi).
+  - The overlay is copied in SQL from PETA KORIDOR ruas joined on
+    `ID_KORIDOR`. Don't join on `no_koridor`: 227 codes span several
+    kab/kota.
+  - 2,565/2,692 corridors have geometry. 131 have 0 km length (flagged in
+    `catatan_data`).
+  - Rerun after a new Excel version.
+Still open (needs data import / owner decisions): the national toll master
+plan `JBHRENCUM_28022023` (362 segments, 13,078 km planned vs 48 in the DB),
+Papua Selatan kab road SHPs (Drive), and the "Analisis Kabupaten X" chat
+prompt.
 
 ## Multi-modal transport data (Darat/Laut/Udara)
 

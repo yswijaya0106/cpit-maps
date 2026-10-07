@@ -944,10 +944,20 @@ bappenas.xlsx`, `Jalan Tol/`). Done and browser-verified:
   - 2,565/2,692 corridors have geometry. 131 have 0 km length (flagged in
     `catatan_data`).
   - Rerun after a new Excel version.
-Still open (needs data import / owner decisions): the national toll master
-plan `JBHRENCUM_28022023` (362 segments, 13,078 km planned vs 48 in the DB),
-Papua Selatan kab road SHPs (Drive), and the "Analisis Kabupaten X" chat
-prompt.
+- **Toll master plan:** `scripts/import_jalan_tol_rencana_umum.py` loads
+  `JBHRENCUM_28022023` (national toll master plan, 28 Feb 2023, RAR v5
+  extracted with bsdtar/unrar).
+  - It becomes the layer "Rencana Umum Jalan Tol (JBH 2023)" in the flat
+    `JALAN TOL` bucket, beside the old 48-segment `Jalan_Tol`, which is left
+    untouched.
+  - 362 segments: Operasi 3,508 km, Operasi Sebagian 587, Konstruksi 1,512,
+    Rencana 12,949, and 487 km with no status.
+  - Colors are per status via `_warna`; `TOL_STATUS_LEGEND` must match
+    `STATUS_GAYA`. "Rencana" is dark violet because light pink disappeared
+    into the OSM basemap's road color.
+  - The script reruns `build_map_layer_wilayah.py` for the new rows.
+Still open: Papua Selatan kab road SHPs (Drive) and the "Analisis Kabupaten
+X" chat prompt.
 
 ## Multi-modal transport data (Darat/Laut/Udara)
 

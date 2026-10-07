@@ -809,6 +809,7 @@ function updateMapLegend() {
       : raw === "KAPLIN KORIDOR UTAMA" ? KAPLIN_KORIDOR_LEGEND
       : isKlaster ? KLASTER_LEGEND
       : raw === PERLINTASAN_BTP_LAYER ? PERLINTASAN_BTP_LEGEND
+      : raw === TOL_RENCANA_LAYER ? TOL_STATUS_LEGEND
       : RTRW_PAPSEL_LEGEND[raw] || null;
     if (kaplinLegend) {
       const titik = raw === PERLINTASAN_BTP_LAYER;
@@ -823,7 +824,7 @@ function updateMapLegend() {
       listEl.appendChild(sub);
     }
     // Layer jalan kab/kota berisi beberapa kelas (status per ruas) -> sub-daftar kelas yang ada.
-    if (kelasJalan.length > 1) {
+    if (kelasJalan.length > 1 && !kaplinLegend) {
       const sub = document.createElement("div");
       sub.className = "map-legend-subitems";
       sub.innerHTML = kelasJalan.map((k) => `

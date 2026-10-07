@@ -115,6 +115,7 @@ function printLegendSubitems(key, raw, meta, jenis) {
   else if (raw === PERLINTASAN_BTP_LAYER) return PERLINTASAN_BTP_LEGEND.map(([warna, teks]) => ({ warna, teks, jenis: "titik" }));
   else if (typeof RTRW_PAPSEL_LEGEND !== "undefined" && RTRW_PAPSEL_LEGEND[raw]) items = RTRW_PAPSEL_LEGEND[raw];
   if (items) return items.map(([warna, teks]) => ({ warna, teks, jenis }));
+  if (raw === TOL_RENCANA_LAYER) return TOL_STATUS_LEGEND.map(([warna, teks]) => ({ warna, teks, jenis: "garis" }));
   const kelasJalan = jalanKelasDiLayer(key);
   if (kelasJalan.length) return kelasJalan.map((k) => ({ warna: JALAN_KELAS[k].warna, teks: JALAN_KELAS[k].teks, jenis: "garis" }));
   if (raw === "PETA KORIDOR") return [{ warna: KORIDOR_GAYA.warna, teks: KORIDOR_GAYA.teks, jenis: "garis" }];

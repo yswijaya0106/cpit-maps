@@ -1044,6 +1044,12 @@ const JALAN_KELAS_URUT = ["tol", "nasional", "provinsi", "kabkota", "desa"];
 const KORIDOR_GAYA = { warna: "#c026d3", lebar: 2.8, z: 8, teks: "Koridor hasil analisis (PETA KORIDOR)" };
 
 const AWP1_LAYER = "Koridor AWP-1";
+// Rencana Umum Jalan Tol (scripts/import_jalan_tol_rencana_umum.py): warna HARUS sama dgn STATUS_GAYA di skrip itu.
+const TOL_RENCANA_LAYER = "Rencana Umum Jalan Tol (JBH 2023)";
+const TOL_STATUS_LEGEND = [
+  ["#991b1b", "Operasi"], ["#dc2626", "Operasi sebagian"], ["#f97316", "Konstruksi"],
+  ["#6d28d9", "Rencana"], ["#9ca3af", "Status tidak tercatat"],
+];
 const AWP1_WARNA = "#ec4899";
 
 function jalanLayerJenis(key) {
@@ -1150,9 +1156,12 @@ function applyLayerStyle(key) {
     // ketebalan garis sudah dihitung server-side (skala log rupiah/ton) di
     // properti "Ketebalan garis (px)"; garis tipis digambar di atas yang tebal.
     const warnaGaris = feature.getProperty("_warna");
-    if (jenisJalan && !warnaGaris) {
+    if (jenisJalan) {
+      // _warna/_lebar per ruas (mis. Rencana Umum Jalan Tol: warna per status) tetap
+      // memakai zIndex hierarki jalan, bukan kaplinZ (yg menaruhnya di atas garis usulan).
       const k = JALAN_KELAS[jalanKelasFitur(feature, jenisJalan)];
-      return { strokeColor: k.warna, strokeWeight: k.lebar, strokeOpacity: 0.95 * opacity, zIndex: k.z };
+      return { strokeColor: warnaGaris || k.warna, strokeWeight: Number(feature.getProperty("_lebar")) || k.lebar,
+               strokeOpacity: 0.95 * opacity, zIndex: k.z };
     }
     if (isAwp1) {
       // pink (deck slide 3); di atas jalan & PETA KORIDOR (8), di bawah garis usulan (20-30)

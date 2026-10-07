@@ -375,7 +375,7 @@ async function loadLayerChildren(provinsi, kabupaten, opts = {}) {
       <button type="button" class="maplayer-download" data-provinsi="${escapeHtml(provinsi)}" data-kabupaten="${escapeHtml(kabupaten)}" data-layer="${escapeHtml(l.layer)}"
         title="Unduh SHP + data atribut layer ini"><i class="bi bi-download"></i></button>
       <input type="range" class="maplayer-opacity" min="0" max="1" step="0.05" value="${opacity}" data-provinsi="${escapeHtml(provinsi)}" data-kabupaten="${escapeHtml(kabupaten)}" data-layer="${escapeHtml(l.layer)}" title="Transparansi layer" ${isActive ? "" : "hidden"} />
-      <span class="maplayer-iconsize-wrap" title="Ukuran ikon titik" ${isActive && layerAdaTitik(key) ? "" : "hidden"}><i class="bi bi-arrows-angle-contract"></i><input type="range" class="maplayer-iconsize" min="0.3" max="1.6" step="0.05" value="${(state.mapLayers.iconScale || {})[key] ?? 1}" data-provinsi="${escapeHtml(provinsi)}" data-kabupaten="${escapeHtml(kabupaten)}" data-layer="${escapeHtml(l.layer)}" aria-label="Ukuran ikon titik" /></span>
+      <span class="maplayer-iconsize-wrap" title="Ukuran ikon titik / tebal garis" ${isActive && layerJenisSkala(key) ? "" : "hidden"}><i class="bi bi-arrows-angle-contract"></i><input type="range" class="maplayer-iconsize" min="0.3" max="1.6" step="0.05" value="${(state.mapLayers.iconScale || {})[key] ?? 1}" data-provinsi="${escapeHtml(provinsi)}" data-kabupaten="${escapeHtml(kabupaten)}" data-layer="${escapeHtml(l.layer)}" aria-label="Ukuran ikon titik" /></span>
     `;
     // Baris ini adalah <label> yg membungkus checkbox -- browser meneruskan klik APAPUN di
     // dalamnya (termasuk tombol unduh) ke checkbox itu (perilaku native <label>) SELAMA
@@ -561,7 +561,7 @@ function bindMapLayerToggle() {
     const range = cb.closest(".maplayer-item").querySelector(".maplayer-opacity");
     if (range) range.hidden = !cb.checked;
     const ukuran = cb.closest(".maplayer-item").querySelector(".maplayer-iconsize-wrap");
-    if (ukuran) ukuran.hidden = !(cb.checked && layerAdaTitik(mapLayerKey(provinsi, kabupaten, layer)));
+    if (ukuran) ukuran.hidden = !(cb.checked && layerJenisSkala(mapLayerKey(provinsi, kabupaten, layer)));
   });
 
   treeEl.addEventListener("input", (e) => {
@@ -683,6 +683,18 @@ function skalaIkonZoom() {
 function ukuranIkon(key, dasar) {
   const manual = (state.mapLayers.iconScale || {})[key] ?? 1;
   return Math.max(6, Math.round(dasar * manual * skalaIkonZoom()));
+}
+
+// Layer yg punya slider ukuran: titik (ukuran ikon) atau garis (tebal garis).
+function layerJenisSkala(key) {
+  const data = state.mapLayers.active[key];
+  if (!data) return null;
+  let titik = false, garis = false;
+  data.forEach((f) => {
+    const t = f.getGeometry()?.getType() || "";
+    if (/Point/.test(t)) titik = true; else if (/LineString/.test(t)) garis = true;
+  });
+  return titik ? "titik" : garis ? "garis" : null;
 }
 
 function layerAdaTitik(key) {
@@ -1175,7 +1187,7 @@ function applyLayerStyle(key) {
   const jenisJalan = jalanLayerJenis(key);
   const isKoridor = mapLayerRawName(key) === "PETA KORIDOR";
   const isAwp1 = mapLayerRawName(key) === AWP1_LAYER;
-  data.setStyle((feature) => {
+  const gaya = (feature) => {
     if (isArus && !arusFeatureVisible(feature)) return { visible: false };
     if (feature.getProperty("DILINTASI_RUTE") === "YA") {
       return {
@@ -1251,6 +1263,16 @@ function applyLayerStyle(key) {
     }
     // garis lain (rel, alur, ...): tetap di atas poligon overlay (zIndex 0)
     return { strokeColor: color, strokeWeight: 1.6, strokeOpacity: 0.9 * opacity, zIndex: 2 };
+  };
+  // Slider ukuran yg sama (iconScale) mengatur TEBAL GARIS utk fitur garis; ikon titik
+  // sudah memakainya lewat ukuranIkon(). Poligon tidak ikut.
+  const skalaGaris = (state.mapLayers.iconScale || {})[key] ?? 1;
+  data.setStyle((f) => {
+    const st = gaya(f);
+    if (skalaGaris !== 1 && st && st.strokeWeight && /LineString/.test(f.getGeometry()?.getType() || "")) {
+      return { ...st, strokeWeight: Math.max(0.5, st.strokeWeight * skalaGaris) };
+    }
+    return st;
   });
 }
 

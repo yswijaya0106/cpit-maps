@@ -152,7 +152,7 @@ function bukaMenuLayer(key, x, y) {
   bindLabelRefresh();
   const kolom = labelKolomLayer(key);
   const cfg = labelCfg(key) || { aktif: false, field: printGuessLabelField(kolom), ukuran: 12 };
-  const titik = typeof layerAdaTitik === "function" && layerAdaTitik(key);
+  const jenisSkala = typeof layerJenisSkala === "function" ? layerJenisSkala(key) : null;
   const skala = (state.mapLayers.iconScale || {})[key] ?? 1;
   const opacity = state.mapLayers.opacity[key] ?? 1;
   const menu = document.createElement("div");
@@ -164,7 +164,7 @@ function bukaMenuLayer(key, x, y) {
     <label class="layer-context-baris">Kolom
       <select data-aksi="kolom">${kolom.map((k) => `<option value="${escapeHtml(k)}" ${k === cfg.field ? "selected" : ""}>${escapeHtml(k)}</option>`).join("")}</select></label>
     <label class="layer-context-baris">Ukuran label <input type="range" data-aksi="ukuran" min="8" max="22" step="1" value="${cfg.ukuran}"><span data-nilai="ukuran">${cfg.ukuran}px</span></label>
-    ${titik ? `<label class="layer-context-baris">Ukuran ikon <input type="range" data-aksi="ikon" min="0.3" max="1.6" step="0.05" value="${skala}"><span data-nilai="ikon">${Math.round(skala * 100)}%</span></label>` : ""}
+    ${jenisSkala ? `<label class="layer-context-baris">${jenisSkala === "titik" ? "Ukuran ikon" : "Tebal garis"} <input type="range" data-aksi="ikon" min="0.3" max="1.6" step="0.05" value="${skala}"><span data-nilai="ikon">${Math.round(skala * 100)}%</span></label>` : ""}
     <label class="layer-context-baris">Transparansi <input type="range" data-aksi="opacity" min="0" max="1" step="0.05" value="${opacity}"><span data-nilai="opacity">${Math.round(opacity * 100)}%</span></label>
     <div class="layer-context-catatan">Ukuran label & ikon juga menyesuaikan zoom otomatis.</div>`;
   document.body.append(menu);

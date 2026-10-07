@@ -980,8 +980,10 @@ bappenas.xlsx`, `Jalan Tol/`). Done and browser-verified:
     "terang" (Light Gray Base) still shows faint provinsi names.
   - Point icon size is **zoom-dynamic** (`skalaIkonZoom`, 0.55× at z≤5),
     times a per-layer slider (`state.mapLayers.iconScale`, tree row
-    `.maplayer-iconsize`, point layers only). Print follows via
-    `icon.scaledSize`.
+    `.maplayer-iconsize`). Print follows via `icon.scaledSize`. The same
+    slider sets **line width** on line layers. `applyLayerStyle` wraps every
+    line style and multiplies `strokeWeight`. `layerJenisSkala()` decides
+    whether a row shows it (titik/garis yes, polygon no).
   - [static/js/layer-label.js](static/js/layer-label.js) adds a
     **right-click menu**: on a feature, a legend row, or an active tree row.
     It has show/hide label, label field, label size (zoom-dynamic), icon

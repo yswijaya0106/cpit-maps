@@ -15,6 +15,8 @@ import contextvars
 import json
 import os
 import re
+import time
+from datetime import datetime, timezone
 from typing import List, Optional
 
 import anthropic
@@ -478,6 +480,21 @@ _HASIL_TOOL = contextvars.ContextVar("chat_hasil_tool", default=None)
 # Role pengguna (app.py ROLE_TANPA_PENILAIAN): akun 'umum' tidak boleh melihat
 # hasil penilaian IJD lewat chat -- tool skor ditolak, tabel penilaian diblokir.
 _PERAN = contextvars.ContextVar("chat_peran", default=None)
+# Jejak satu request /api/chat utk meta jawaban & chat_log (Tahap 1 kajian
+# agentic workflow): token, nama tool yg dipanggil, SQL yg dijalankan.
+# ContextVar: per request/thread, sama alasannya dgn _HASIL_TOOL.
+_JEJAK = contextvars.ContextVar("chat_jejak", default=None)
+
+
+def _jejak_baru() -> dict:
+    return {"token_masuk": 0, "token_keluar": 0, "tools": [], "sql": []}
+
+
+def _catat_token(masuk, keluar):
+    j = _JEJAK.get()
+    if j is not None:
+        j["token_masuk"] += int(masuk or 0)
+        j["token_keluar"] += int(keluar or 0)
 _TOOLS_PENILAIAN = {"hitung_skor_ijd_usulan"}
 _TABEL_PENILAIAN = re.compile(r"\bpenilaian_bappenas_ai\b", re.IGNORECASE)
 
@@ -762,7 +779,7 @@ def _tool_daftar_tabel_database(tabel=None, kelompok_layer=None) -> dict:
             "FROM information_schema.tables t LEFT JOIN pg_stat_user_tables s "
             "  ON s.relname = t.table_name AND s.schemaname = 'public' "
             "WHERE t.table_schema='public' AND t.table_type='BASE TABLE' "
-            "  AND t.table_name NOT IN ('users', 'psc119_layanan') ORDER BY t.table_name"
+            "  AND t.table_name NOT IN ('users', 'psc119_layanan', 'chat_log') ORDER BY t.table_name"
         )
         tabel_list = [{"nama": r["table_name"], "label": DATA_TABLES.get(r["table_name"], ""),
                        "perkiraan_baris": r["perkiraan_baris"]} for r in cur.fetchall()]
@@ -777,7 +794,7 @@ def _tool_daftar_tabel_database(tabel=None, kelompok_layer=None) -> dict:
                            "Detail layer & kunci attrs: daftar_tabel_database(kelompok_layer=...)."}
 
 
-_SQL_TABEL_TERLARANG = re.compile(r"\b(users|psc119_layanan)\b", re.IGNORECASE)
+_SQL_TABEL_TERLARANG = re.compile(r"\b(users|psc119_layanan|chat_log)\b", re.IGNORECASE)
 
 
 def _tool_jalankan_query_sql(sql=None, judul=None, actions=None) -> dict:
@@ -785,7 +802,7 @@ def _tool_jalankan_query_sql(sql=None, judul=None, actions=None) -> dict:
     if error:
         return {"error": error}
     if _SQL_TABEL_TERLARANG.search(sql):
-        return {"error": "Tabel akun pengguna / data pribadi layanan PSC119 tidak boleh diakses lewat chat."}
+        return {"error": "Tabel akun pengguna, log chat, dan data pribadi layanan PSC119 tidak boleh diakses lewat chat."}
     if _tanpa_penilaian() and _TABEL_PENILAIAN.search(sql):
         return {"error": "Akun umum tidak memiliki akses ke hasil penilaian IJD (tabel penilaian_bappenas_ai)."}
     inti = sql.strip().rstrip(";")
@@ -974,6 +991,11 @@ def _run_tool_call(name: str, args: dict, actions: list) -> dict:
     CLIENT_ACTION_TOOLS dicatat ke sini dan dibalas dgn status sukses palsu
     supaya model tetap lanjut menyusun kalimat penutup wajar (bukan menunggu
     hasil eksekusi UI yang memang tidak/belum terjadi saat ini)."""
+    jejak = _JEJAK.get()
+    if jejak is not None:
+        jejak["tools"].append(name)
+        if name == "jalankan_query_sql" and (args or {}).get("sql"):
+            jejak["sql"].append(str(args["sql"]))
     if name in CLIENT_ACTION_TOOLS:
         actions.append({"nama": name, "argumen": args})
         return {"status": "diteruskan_ke_frontend_untuk_dieksekusi"}
@@ -1025,6 +1047,7 @@ def _call_openai_compatible(provider: str, api_url: str, api_key: str, model: st
             raise RuntimeError(f"{provider}: {detail}")
 
         data = resp.json()
+        _catat_token((data.get("usage") or {}).get("prompt_tokens"), (data.get("usage") or {}).get("completion_tokens"))
         choices = data.get("choices") or []
         if not choices:
             raise RuntimeError(f"{provider}: tidak mengembalikan jawaban")
@@ -1088,6 +1111,7 @@ def _call_openai_responses(api_key: str, model: str, messages: List, context: Op
             raise RuntimeError(f"OpenAI: {detail}")
 
         data = resp.json()
+        _catat_token((data.get("usage") or {}).get("input_tokens"), (data.get("usage") or {}).get("output_tokens"))
         output = data.get("output") or []
 
         function_calls = [item for item in output if item.get("type") == "function_call"]
@@ -1169,6 +1193,8 @@ def _call_gemini(api_key: str, model: str, messages: List, context: Optional[dic
             raise RuntimeError(f"Gemini: {detail}")
 
         data = resp.json()
+        _catat_token((data.get("usageMetadata") or {}).get("promptTokenCount"),
+                     (data.get("usageMetadata") or {}).get("candidatesTokenCount"))
         candidates = data.get("candidates") or []
         if not candidates:
             raise RuntimeError("Gemini: tidak mengembalikan jawaban")
@@ -1222,6 +1248,9 @@ def _call_claude(api_key: str, model: str, messages: List, context: Optional[dic
         except anthropic.APIError as e:
             raise RuntimeError(f"Claude: {e.message}")
 
+        u = response.usage
+        _catat_token((u.input_tokens or 0) + (getattr(u, "cache_read_input_tokens", 0) or 0)
+                     + (getattr(u, "cache_creation_input_tokens", 0) or 0), u.output_tokens)
         tool_use_blocks = [b for b in response.content if b.type == "tool_use"]
         if not tool_use_blocks:
             text = "".join(b.text for b in response.content if b.type == "text")
@@ -1247,25 +1276,99 @@ def _chat_providers() -> list:
     """Provider yang API key-nya diisi di .env, urut prioritas (yang free-tier-nya
     paling longgar duluan) — dicoba satu per satu di _call_chat sampai ada yang
     berhasil, supaya chat tidak macet total hanya karena satu provider kehabisan
-    kuota harian."""
+    kuota harian. Return [(nama, model, fungsi)]."""
     providers = []
     # Claude duluan: model utama mode analitik (banyak langkah tool + laporan). Kalau gagal
     # (mis. kredit habis / kuota), otomatis lanjut ke provider berikutnya seperti biasa.
     if os.getenv("CLOUDE_API_KEY"):
-        providers.append(("Claude", lambda msgs, ctx: _call_claude(os.getenv("CLOUDE_API_KEY"), CLAUDE_MODEL, msgs, ctx)))
+        providers.append(("Claude", CLAUDE_MODEL, lambda msgs, ctx: _call_claude(os.getenv("CLOUDE_API_KEY"), CLAUDE_MODEL, msgs, ctx)))
     # DeepSeek kedua: model kuat dgn tool calling, cadangan utama bila Claude gagal
     # (mis. kredit habis), sebelum provider yg lebih lemah di alur multi-langkah.
     if os.getenv("DEEPSEEK_API_KEY"):
-        providers.append(("DeepSeek", lambda msgs, ctx: _call_openai_compatible("DeepSeek", DEEPSEEK_API_URL, os.getenv("DEEPSEEK_API_KEY"), DEEPSEEK_MODEL, msgs, ctx)))
+        providers.append(("DeepSeek", DEEPSEEK_MODEL, lambda msgs, ctx: _call_openai_compatible("DeepSeek", DEEPSEEK_API_URL, os.getenv("DEEPSEEK_API_KEY"), DEEPSEEK_MODEL, msgs, ctx)))
     if os.getenv("GROQ_API_KEY"):
-        providers.append(("Groq", lambda msgs, ctx: _call_openai_compatible("Groq", GROQ_API_URL, os.getenv("GROQ_API_KEY"), GROQ_MODEL, msgs, ctx)))
+        providers.append(("Groq", GROQ_MODEL, lambda msgs, ctx: _call_openai_compatible("Groq", GROQ_API_URL, os.getenv("GROQ_API_KEY"), GROQ_MODEL, msgs, ctx)))
     if os.getenv("GROK_API_KEY"):
-        providers.append(("Grok", lambda msgs, ctx: _call_openai_compatible("Grok", GROK_API_URL, os.getenv("GROK_API_KEY"), GROK_MODEL, msgs, ctx)))
+        providers.append(("Grok", GROK_MODEL, lambda msgs, ctx: _call_openai_compatible("Grok", GROK_API_URL, os.getenv("GROK_API_KEY"), GROK_MODEL, msgs, ctx)))
     if os.getenv("OPEN_AI_API_KEY"):
-        providers.append(("OpenAI", lambda msgs, ctx: _call_openai_responses(os.getenv("OPEN_AI_API_KEY"), OPENAI_MODEL, msgs, ctx)))
+        providers.append(("OpenAI", OPENAI_MODEL, lambda msgs, ctx: _call_openai_responses(os.getenv("OPEN_AI_API_KEY"), OPENAI_MODEL, msgs, ctx)))
     if os.getenv("GEMINI_API_KEY"):
-        providers.append(("Gemini", lambda msgs, ctx: _call_gemini(os.getenv("GEMINI_API_KEY"), GEMINI_MODEL, msgs, ctx)))
+        providers.append(("Gemini", GEMINI_MODEL, lambda msgs, ctx: _call_gemini(os.getenv("GEMINI_API_KEY"), GEMINI_MODEL, msgs, ctx)))
     return providers
+
+
+_POLA_ALASAN = [
+    (re.compile(r"credit balance is too low|used all available credits|insufficient[_ ]balance|"
+                r"insufficient_quota|exceeded your current quota|spending limit", re.I), "saldo/kredit habis"),
+    (re.compile(r"\b401\b|invalid[_ ]api[_ ]key|incorrect api key|authentication|unauthorized", re.I), "API key tidak valid"),
+    (re.compile(r"\b429\b|rate[_ ]limit|too many requests|resource_exhausted", re.I), "batas permintaan (rate limit)"),
+    (re.compile(r"timed? ?out|timeout", re.I), "waktu habis (timeout)"),
+]
+
+
+def _ringkas_alasan(e) -> str:
+    """Pesan error provider (sering JSON panjang) -> alasan pendek yg bisa
+    dibaca pengguna/admin; pesan asli tetap di log server."""
+    teks = str(e)
+    for pola, label in _POLA_ALASAN:
+        if pola.search(teks):
+            return label
+    return teks[:160]
+
+
+def _ping_provider(nama: str, model: str):
+    """Permintaan sekecil mungkin (tanpa tools/system prompt) utk memeriksa key
+    & saldo provider -- jauh lebih murah drpd mengirim ~7.000 token prompt chat."""
+    pesan = [{"role": "user", "content": "ping"}]
+    if nama == "Claude":
+        anthropic.Anthropic(api_key=os.getenv("CLOUDE_API_KEY"), timeout=30.0).messages.create(
+            model=model, max_tokens=5, messages=pesan)
+        return
+    if nama == "Gemini":
+        r = requests.post(
+            f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={os.getenv('GEMINI_API_KEY')}",
+            json={"contents": [{"parts": [{"text": "ping"}]}], "generationConfig": {"maxOutputTokens": 5}},
+            timeout=30)
+    else:
+        url, key = {
+            "DeepSeek": (DEEPSEEK_API_URL, os.getenv("DEEPSEEK_API_KEY")),
+            "Groq": (GROQ_API_URL, os.getenv("GROQ_API_KEY")),
+            "Grok": (GROK_API_URL, os.getenv("GROK_API_KEY")),
+            "OpenAI": ("https://api.openai.com/v1/chat/completions", os.getenv("OPEN_AI_API_KEY")),
+        }[nama]
+        r = requests.post(url, headers={"Authorization": f"Bearer {key}"},
+                          json={"model": model, "messages": pesan, "max_tokens": 5}, timeout=30)
+    if not r.ok:
+        raise RuntimeError(f"{r.status_code} {r.text[:500]}")
+
+
+_STATUS_PROVIDER_CACHE = {"waktu": 0.0, "hasil": None}
+_STATUS_PROVIDER_TTL_DETIK = 300
+
+
+def status_provider(paksa: bool = False) -> dict:
+    """Status tiap provider yg key-nya diisi, urut sesuai _chat_providers
+    (GET /api/chat/status-provider, admin). Di-cache 5 menit per worker supaya
+    membuka panel status tidak memanggil 5 API berbayar tiap kali."""
+    if (not paksa and _STATUS_PROVIDER_CACHE["hasil"] is not None
+            and time.time() - _STATUS_PROVIDER_CACHE["waktu"] < _STATUS_PROVIDER_TTL_DETIK):
+        return _STATUS_PROVIDER_CACHE["hasil"]
+    hasil = []
+    for nama, model, _ in _chat_providers():
+        mulai = time.time()
+        try:
+            _ping_provider(nama, model)
+            ok, alasan = True, None
+        except Exception as e:
+            ok, alasan = False, _ringkas_alasan(e)
+            print(f"  [chat] status provider {nama} ({model}) gagal: {str(e)[:300]}")
+        hasil.append({"provider": nama, "model": model, "ok": ok, "alasan": alasan,
+                      "durasi_detik": round(time.time() - mulai, 1)})
+    aktif = next((h["provider"] for h in hasil if h["ok"]), None)
+    data = {"providers": hasil, "provider_aktif": aktif,
+            "diuji_pada": datetime.now(timezone.utc).isoformat(timespec="seconds")}
+    _STATUS_PROVIDER_CACHE.update(waktu=time.time(), hasil=data)
+    return data
 
 
 _SEL_ANGKA = re.compile(r"^[\s\d.,%:+\-/()kmhaRp$]*$", re.IGNORECASE)
@@ -1334,8 +1437,14 @@ def _rapikan_jawaban(teks: str, actions: list) -> str:
 
 def _call_chat(messages: List, context: Optional[dict], pengguna: Optional[str] = None,
                peran: Optional[str] = None) -> tuple:
-    """Return (teks, actions) -- actions = daftar CLIENT_ACTION_TOOLS yang
-    dipanggil model, diteruskan app.py ke frontend utk dieksekusi di UI."""
+    """Return (teks, actions, meta) -- actions = daftar CLIENT_ACTION_TOOLS yang
+    dipanggil model, diteruskan app.py ke frontend utk dieksekusi di UI.
+
+    meta (Tahap 1 kajian agentic workflow, "gateway transparan"): provider &
+    model yang menjawab, apakah itu cadangan (provider di depannya gagal) dan
+    kenapa, durasi, token, tool & SQL yg dijalankan. Sebelumnya kegagalan
+    provider ditelan diam-diam -- 6 Okt 2026 semua jawaban ternyata dari
+    gpt-4o-mini krn kredit Claude & Grok habis, dan tidak ada yg tahu."""
     _PENGGUNA.set(pengguna)
     _PERAN.set(peran)
     providers = _chat_providers()
@@ -1346,12 +1455,31 @@ def _call_chat(messages: List, context: Optional[dict], pengguna: Optional[str] 
         )
 
     errors = []
-    for name, call in providers:
+    gagal = []
+    mulai = time.time()
+    for name, model, call in providers:
         _HASIL_TOOL.set([])  # direset per provider: hasil tool provider yg gagal tidak ikut dihitung
+        jejak = _jejak_baru()
+        _JEJAK.set(jejak)
         try:
             teks, actions = call(messages, context)
-            return _periksa_tabel_karangan(_rapikan_jawaban(teks, actions), actions), actions
         except Exception as e:
             errors.append(f"{name}: {e}")
+            gagal.append({"provider": name, "model": model, "alasan": _ringkas_alasan(e)})
+            print(f"  [chat] provider {name} ({model}) gagal: {str(e)[:300]}")
+            continue
+        meta = {
+            "provider": name,
+            "model": model,
+            "cadangan": bool(gagal),
+            "gagal_sebelumnya": gagal,
+            "durasi_detik": round(time.time() - mulai, 1),
+            "token_masuk": jejak["token_masuk"] or None,
+            "token_keluar": jejak["token_keluar"] or None,
+            "tools": jejak["tools"],
+            "sql": jejak["sql"],
+        }
+        return _periksa_tabel_karangan(_rapikan_jawaban(teks, actions), actions), actions, meta
 
-    raise HTTPException(502, "Semua provider LLM gagal — " + " | ".join(errors))
+    # Pesan ringkas utk pengguna (alasan per provider); pesan asli sudah di log server.
+    raise HTTPException(502, "Semua provider LLM gagal — " + " | ".join(f"{g['provider']}: {g['alasan']}" for g in gagal))

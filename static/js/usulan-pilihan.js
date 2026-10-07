@@ -306,7 +306,13 @@ function usulanPilihanRenderLegend(daftar, nomor) {
   el.hidden = !daftar.length;
   if (!daftar.length) return;
   const tampil = daftar.slice(0, USULAN_PILIHAN_LEGEND_MAKS);
+  const nLulus = daftar.filter((e) => usulanMultiStatus(e.u) === "lulus").length;
+  const nTidak = daftar.filter((e) => usulanMultiStatus(e.u) === "tidak_lulus").length;
   el.innerHTML = `<div class="map-legend-pilihan-judul">Usulan IJD dipilih (${daftar.length})</div>`
+    + `<div class="map-legend-status">
+        <span><i class="map-legend-status-swatch is-lulus"></i>Lulus seleksi sistem (${nLulus})</span>
+        <span><i class="map-legend-status-swatch is-tidak"></i>Tidak lulus (${nTidak})</span>
+      </div>`
     + tampil.map((e) => `<div class="map-legend-item" data-pilihan-id="${e.u.id}" title="Klik untuk zoom">
         <span class="usulan-pilihan-no" style="background:${e.warna}">${nomor.get(e.u.id)}</span>
         <span class="map-legend-item-label">${escapeHtml(usulanPilihanNama(e.u))}</span>

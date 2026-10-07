@@ -788,10 +788,14 @@ function updateMapLegend() {
     row.className = "map-legend-item";
     // simbol sesuai geometri: titik = ikon jenis (pesawat/jangkar/...) sama dgn di peta,
     // garis = garis patah, poligon = kotak berisi
+    const kelasJalan = jalanKelasDiLayer(key);
+    const warnaLegenda = kelasJalan.length === 1 ? JALAN_KELAS[kelasJalan[0]].warna
+      : kelasJalan.length > 1 ? JALAN_KELAS.kabkota.warna
+      : raw === "PETA KORIDOR" ? KORIDOR_GAYA.warna : mapLayerColor(raw);
     const simbol = layerLegendSymbolHtml(key, raw === STASIUN_LAYER_NAME ? STASIUN_STATUS_DEFAULT_COLOR
-      : raw === "KAPLIN STASIUN" ? "#1f2937" : mapLayerColor(raw));
+      : raw === "KAPLIN STASIUN" ? "#1f2937" : warnaLegenda);
     row.innerHTML = `
-      ${simbol || `<span class="maplayer-swatch" style="background:${mapLayerColor(raw)}"></span>`}
+      ${simbol || `<span class="maplayer-swatch" style="background:${warnaLegenda}"></span>`}
       <span class="map-legend-item-label">${escapeHtml(label)}</span>
       <button type="button" class="map-legend-item-remove" data-key="${escapeHtml(key)}" title="Matikan layer ini"><i class="bi bi-x-lg"></i></button>
     `;
@@ -815,6 +819,17 @@ function updateMapLegend() {
           ${titik ? `<img src="${pointIconUrl("perlintasan", c)}" width="14" height="14" alt="">`
             : `<span style="display:inline-block;width:28px;height:${isKlaster ? 12 : 4}px;background:${c};border-radius:2px"></span>`}
           <span class="map-legend-subitem-label">${escapeHtml(t)}</span>
+        </div>`).join("");
+      listEl.appendChild(sub);
+    }
+    // Layer jalan kab/kota berisi beberapa kelas (status per ruas) -> sub-daftar kelas yang ada.
+    if (kelasJalan.length > 1) {
+      const sub = document.createElement("div");
+      sub.className = "map-legend-subitems";
+      sub.innerHTML = kelasJalan.map((k) => `
+        <div class="map-legend-subitem">
+          <span style="display:inline-block;width:28px;height:${Math.max(3, Math.round(JALAN_KELAS[k].lebar))}px;background:${JALAN_KELAS[k].warna};border-radius:2px"></span>
+          <span class="map-legend-subitem-label">${escapeHtml(JALAN_KELAS[k].teks)}</span>
         </div>`).join("");
       listEl.appendChild(sub);
     }

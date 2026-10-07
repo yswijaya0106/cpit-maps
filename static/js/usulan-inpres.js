@@ -90,6 +90,28 @@ async function analyzeUsulanInpres() {
   });
 }
 
+// % mantap ruas (deck 20261007 slide 2): rumus & ambang SAMA PERSIS dgn
+// _ijd_score_kemantapan_v2 (parameter B resmi) di app.py -- (baik + sedang)
+// / panjang_ruas_km x 100, dibatasi 100%, < 60% = tidak mantap. Data kondisi
+// adalah isian Pemda di SITIA, bukan survei IRI. null bila data belum lengkap.
+function usulanKemantapan(u) {
+  const baik = u.kondisi_baik_km, sedang = u.kondisi_sedang_km, panjang = Number(u.panjang_ruas_km);
+  if (baik == null || sedang == null || !(panjang > 0)) return null;
+  const pct = Math.min(100, ((Number(baik) + Number(sedang)) / panjang) * 100);
+  return { pct, mantap: pct >= 60, pembangunan: /pembangunan/i.test(u.jenis_penanganan || "") };
+}
+
+function usulanKemantapanTeks(u) {
+  const k = usulanKemantapan(u);
+  if (!k) return null;
+  const angka = `${k.pct.toLocaleString("id-ID", { maximumFractionDigits: 1 })}%`;
+  if (k.pembangunan) return `${angka} (pembangunan baru: tidak dinilai kemantapan)`;
+  const semuaNol = [u.kondisi_baik_km, u.kondisi_sedang_km, u.kondisi_ringan_km, u.kondisi_berat_km]
+    .every((v) => !Number(v));
+  return `${angka} — ${k.mantap ? "Mantap" : "Tidak mantap"} (ambang 60%)`
+    + (semuaNol ? " · keempat kondisi diisi 0 oleh Pemda" : "");
+}
+
 // Label + atribut polyline usulan utk cetak peta (print-map.js membaca
 // pl.get("printInfo"); Polyline Google tidak menyimpan metadata sendiri).
 function usulanPrintInfo(u, kmlLengthKm) {
@@ -104,6 +126,7 @@ function usulanPrintInfo(u, kmlLengthKm) {
       "Provinsi": u.provinsi || "",
       "Jenis Penanganan": u.jenis_penanganan || "",
       "Panjang KML (km)": Number(kmlLengthKm.toFixed(2)),
+      "Kemantapan": usulanKemantapanTeks(u) || "data kondisi belum lengkap",
     },
   };
 }
@@ -748,13 +771,31 @@ async function loadUsulanBrowseList(reset) {
    masing-masing dgn warna sendiri, terpisah dari geometri usulan yang sedang
    dibuka di panel detail (browseUsulanPolylines, dibersihkan tiap ganti detail).
    Pilihan bertahan saat filter/pencarian diganti; dibersihkan saat ganti moda. */
-const USULAN_MULTI_WARNA = [
-  "#f59e0b", "#ec4899", "#8b5cf6", "#06b6d4", "#84cc16", "#f97316", "#ef4444", "#14b8a6",
-  "#a855f7", "#eab308", "#3b82f6", "#22c55e",
+// Palet dibagi menurut Seleksi Sistem (deck 20261007 slide 2): LULUS = keluarga
+// warna dingin (biru/hijau/teal), TIDAK LULUS = keluarga hangat (merah/oranye/
+// merah muda). Tiap usulan tetap punya warna sendiri (nomor <-> garis), tetapi
+// statusnya terbaca langsung dari garis, badge nomor, dan legenda.
+const USULAN_MULTI_WARNA_LULUS = [
+  "#2563eb", "#16a34a", "#0891b2", "#4f46e5", "#0d9488", "#65a30d", "#0284c7", "#059669",
 ];
+const USULAN_MULTI_WARNA_TIDAK_LULUS = [
+  "#dc2626", "#ea580c", "#db2777", "#d97706", "#b91c1c", "#c2410c", "#be185d", "#e11d48",
+];
+const USULAN_MULTI_WARNA_LAIN = ["#6b7280", "#78716c"]; // status kosong/lainnya
+function usulanMultiStatus(u) {
+  const s = String(u.seleksi_sistem || "").trim().toUpperCase();
+  return s === "LULUS" ? "lulus" : s === "TIDAK LULUS" ? "tidak_lulus" : "lain";
+}
+function usulanMultiWarnaBerikut(u) {
+  const status = usulanMultiStatus(u);
+  const palet = { lulus: USULAN_MULTI_WARNA_LULUS, tidak_lulus: USULAN_MULTI_WARNA_TIDAK_LULUS,
+                  lain: USULAN_MULTI_WARNA_LAIN }[status];
+  const i = usulanMultiUrut[status]++;
+  return palet[i % palet.length];
+}
 const USULAN_MULTI_MAKS = 300;
 const usulanMulti = new Map(); // id -> { u, warna, polylines: [], bounds, memuat }
-let usulanMultiUrut = 0;
+let usulanMultiUrut = { lulus: 0, tidak_lulus: 0, lain: 0 };
 
 function usulanMultiPolylines() {
   const out = [];
@@ -797,7 +838,7 @@ async function toggleUsulanMulti(u, pilih) {
     return;
   }
   const entri = {
-    u, warna: USULAN_MULTI_WARNA[usulanMultiUrut++ % USULAN_MULTI_WARNA.length],
+    u, warna: usulanMultiWarnaBerikut(u),
     polylines: [], bounds: null, memuat: true,
   };
   usulanMulti.set(u.id, entri);
@@ -831,6 +872,7 @@ function gambarUsulanMulti(entri, geojson) {
     + `${escapeHtml(u.kabupaten_kota || "")}, ${escapeHtml(u.provinsi || "")}<br/>`
     + `${escapeHtml(u.jenis_penanganan || "")} · ${formatRupiah(u.alokasi_usulan_pemda)}<br/>`
     + `Panjang KML: ${kmlLengthKm.toFixed(2)} km<br/>`
+    + `Kemantapan: ${escapeHtml(usulanKemantapanTeks(u) || "data kondisi belum lengkap")}<br/>`
     + `<a href="#" class="usulan-multi-detail">Lihat detail</a>`;
   isi.querySelector(".usulan-multi-detail").addEventListener("click", (e) => {
     e.preventDefault();
@@ -867,7 +909,7 @@ function clearUsulanMulti() {
     usulanMulti.get(id).polylines.forEach((pl) => pl.setMap(null));
     usulanMulti.delete(id);
   });
-  usulanMultiUrut = 0;
+  usulanMultiUrut = { lulus: 0, tidak_lulus: 0, lain: 0 };
   if (typeof updateKecamatanLintasan === "function") updateKecamatanLintasan();
   renderUsulanMultiBar();
 }
@@ -934,6 +976,7 @@ async function loadUsulanDetail(id) {
     ["Kondisi Sedang", u.kondisi_sedang_km != null ? `${u.kondisi_sedang_km} km` : "-"],
     ["Kondisi Ringan", u.kondisi_ringan_km != null ? `${u.kondisi_ringan_km} km` : "-"],
     ["Kondisi Berat", u.kondisi_berat_km != null ? `${u.kondisi_berat_km} km` : "-"],
+    ["Kemantapan", usulanKemantapanTeks(u) || "Data kondisi/panjang ruas belum lengkap"],
     ["Kondisi Jembatan", u.kondisi_jembatan],
     ["Catatan RC DED (Balai)", u.catatan_rc_ded_balai, true],
     ["Catatan RC FS (Balai)", u.catatan_rc_fs_balai, true],
@@ -1263,6 +1306,21 @@ function renderNprHtml(data) {
     <span class="ijd-score-title"><i class="bi bi-graph-up-arrow"></i> NPR — Nilai Prioritas Ruas (metodologi alternatif, eksperimental)</span>
     <span class="ijd-score-total">${escapeHtml(totalLabel)}</span>
   </div>`;
+  // Benchmark kab/kota (deck 20261007 slide 2): NPR ruas vs NPR weighted average kab/kota.
+  const bm = data.benchmark_kabupaten;
+  if (bm) {
+    const fmt = (v) => (v == null ? "—" : v.toLocaleString("id-ID", { minimumFractionDigits: 1, maximumFractionDigits: 1 }));
+    const kelas = bm.posisi === "di atas benchmark" ? "usulan-badge-ok" : bm.posisi === "di bawah benchmark" ? "usulan-badge-warn" : "";
+    html += `<div class="npr-benchmark">
+      <div><span class="npr-benchmark-angka">NPR ${fmt(data.npr)}</span>
+        <span class="npr-benchmark-vs">vs</span>
+        <span class="npr-benchmark-angka">NPRwa ${fmt(bm.npr_wa)}</span>
+        ${bm.posisi ? `<span class="usulan-badge ${kelas} ijd-badge">${escapeHtml(bm.posisi)}</span>` : ""}</div>
+      <div class="hint">Benchmark ${escapeHtml(bm.kabupaten_kota || "kab/kota")}: ${escapeHtml(bm.dasar)}
+        (${bm.n_dipakai} dari ${bm.n_usulan_kabupaten} usulan${bm.n_tanpa_npr ? `; ${bm.n_tanpa_npr} tanpa NPR` : ""}${bm.n_tanpa_panjang ? `; ${bm.n_tanpa_panjang} tanpa panjang` : ""}; rata-rata biasa ${fmt(bm.npr_rata_rata)}).
+        Histori kategori NPR per tahun belum tersedia: NPR hanya dihitung untuk usulan 2026.</div>
+    </div>`;
+  }
   const si = data.skor_intensitas, sc = data.skor_cakupan;
   html += `<p class="hint">Skor Intensitas (bobot ${Math.round(data.bobot_si_sc.SI * 100)}%)` +
     (si.skor_ternormalisasi_100 != null ? ` — ${si.skor_ternormalisasi_100.toFixed(1)}/100` : " — belum dapat dihitung") + `</p>`;

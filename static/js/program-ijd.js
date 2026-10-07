@@ -25,7 +25,48 @@ const PIJD_METRIK = {
   alokasi_m: { label: "Total alokasi", fmt: (v) => pijdRp(v) },
   panjang_km: { label: "Panjang jalan", fmt: (v) => `${biayaFmt(v)} km` },
   n_kegiatan: { label: "Jumlah kegiatan", fmt: (v) => `${(v || 0).toLocaleString("id-ID")} kegiatan` },
+  // Indikator deck 20261007 slide 4. kelas "tetap" = ambang kemantapan; "kuartil"
+  // = 4 kelas kuartil wilayah yg tampil. Nilai null = tidak ada data (abu-abu).
+  kemantapan_pct: {
+    kolom: "% Mantap", label: "Kemantapan jalan daerah 2026", kelas: "tetap", fmt: (v) => pijdPct(v),
+    ambang: [40, 67, 80], warna: ["#dc2626", "#f97316", "#86efac", "#166534"],
+    teks: ["Mantap < 40%", "Mantap 40–<67%", "Mantap 67–<80%", "Mantap ≥ 80%"],
+  },
+  alokasi_tipikal: {
+    kolom: "Rp M/km", label: "Alokasi tipikal (Σ alokasi ÷ Σ panjang)", kelas: "kuartil", fmt: (v) => `${biayaFmt(v)} Rp M/km`,
+    warna: ["#dbeafe", "#93c5fd", "#2563eb", "#1e3a8a"],
+  },
+  kepadatan_jalan: {
+    kolom: "km/km²", label: "Kepadatan jalan (Σ panjang ÷ luas)", kelas: "kuartil",
+    fmt: (v) => (v == null ? "–" : `${v.toLocaleString("id-ID", { maximumFractionDigits: 3 })} km/km²`),
+    warna: ["#fef3c7", "#fdba74", "#d97706", "#78350f"],
+  },
+  kerapatan_jalan: {
+    kolom: "km/1rb jiwa", label: "Kerapatan jalan (Σ panjang ÷ penduduk × 1.000)", kelas: "kuartil",
+    fmt: (v) => (v == null ? "–" : `${v.toLocaleString("id-ID", { maximumFractionDigits: 2 })} km/1.000 jiwa`),
+    warna: ["#ede9fe", "#c4b5fd", "#8b5cf6", "#4c1d95"],
+  },
 };
+
+// Batas kuartil (Q1, Q2, Q3) dari nilai non-null -> 4 kelas.
+function pijdKuartil(nilai) {
+  const v = nilai.filter((x) => x != null && Number.isFinite(x)).sort((a, b) => a - b);
+  if (!v.length) return [];
+  const q = (p) => {
+    const i = (v.length - 1) * p, lo = Math.floor(i), hi = Math.ceil(i);
+    return v[lo] + (v[hi] - v[lo]) * (i - lo);
+  };
+  return [q(0.25), q(0.5), q(0.75)];
+}
+
+// Indeks kelas (0..3) utk metrik indikator; -1 = tidak ada data.
+function pijdKelasIndikator(m, v, batas) {
+  if (v == null) return -1;
+  const b = m.kelas === "tetap" ? m.ambang : batas;
+  let i = 0;
+  while (i < b.length && (m.kelas === "tetap" ? v >= b[i] : v > b[i])) i++;
+  return i;
+}
 
 function pijdRp(m) {
   if (m == null) return "–";
@@ -104,6 +145,15 @@ function pijdInitMap() {
   return true;
 }
 
+function pijdTooltipIndikator(f) {
+  const metrik = document.getElementById("pijdMetrik").value;
+  const m = PIJD_METRIK[metrik];
+  if (!m.kelas) return "";
+  const ix = f.getProperty(`indeks_${metrik}`);
+  return `<div><b>${escapeHtml(m.label.split(" (")[0])}:</b> ${escapeHtml(m.fmt(f.getProperty(metrik)))}${ix != null
+    ? ` · indeks ${ix.toLocaleString("id-ID", { maximumFractionDigits: 2 })}` : ""}</div>`;
+}
+
 function pijdTooltip(e) {
   const f = e.feature;
   const box = document.getElementById("pijdMap").getBoundingClientRect();
@@ -115,7 +165,7 @@ function pijdTooltip(e) {
       <div class="hint">${n.toLocaleString("id-ID")} kegiatan${f.getProperty("n_kab") ? ` · ${f.getProperty("n_kab")} kab/kota` : ""}
       ${f.getProperty("rp_per_km_semua") != null ? ` · ${biayaFmt(f.getProperty("rp_per_km_semua"))} Rp M/km` : ""}</div>
       <div class="hint">Klik untuk ${pijd.level === "provinsi" ? "melihat kab/kota" : "melihat daftar kegiatan"}</div>`
-    : `<div class="hint">Tidak ada kegiatan IJD pada filter ini</div>`}`;
+    : `<div class="hint">Tidak ada kegiatan IJD pada filter ini</div>`}${pijdTooltipIndikator(f)}`;
   pijd.tooltip.hidden = false;
   let x = ev.clientX - box.left + 14, y = ev.clientY - box.top + 14;
   if (x + 270 > box.width) x -= 290;
@@ -151,9 +201,27 @@ function pijdGambarPeta(fit) {
   const map = pijd.map;
   map.data.forEach((f) => map.data.remove(f));
   const fitur = map.data.addGeoJson({ type: "FeatureCollection", features: d.features });
+  const m = PIJD_METRIK[metrik];
+  const warnaNol = pijdWarnaNol();
+  if (m.kelas) {
+    const batas = m.kelas === "kuartil" ? pijdKuartil(d.wilayah.map((w) => w[metrik])) : m.ambang;
+    map.data.setStyle((f) => {
+      const k = pijdKelasIndikator(m, f.getProperty(metrik), batas);
+      return {
+        fillColor: k < 0 ? warnaNol : m.warna[k], fillOpacity: k < 0 ? 0.5 : 0.85,
+        strokeColor: state.mapTheme === "dark" ? "#0f1420" : "#ffffff", strokeWeight: 0.8, cursor: "pointer",
+      };
+    });
+    if (fit && fitur.length) {
+      const b = new google.maps.LatLngBounds();
+      fitur.forEach((f) => f.getGeometry().forEachLatLng((ll) => b.extend(ll)));
+      map.fitBounds(b, 10);
+    }
+    pijdRenderSide(batas, metrik);
+    return;
+  }
   const batas = pijdKelas(d.features.map((f) => f.properties[metrik] || 0));
   const ramp = pijdRamp();
-  const warnaNol = pijdWarnaNol();
   map.data.setStyle((f) => {
     const v = f.getProperty(metrik) || 0;
     return {
@@ -171,7 +239,22 @@ function pijdGambarPeta(fit) {
   pijdRenderSide(batas, metrik);
 }
 
+function pijdLegendIndikator(batas, metrik) {
+  const m = PIJD_METRIK[metrik];
+  const nas = pijd.data?.nasional?.[metrik];
+  let teks = m.teks;
+  if (m.kelas === "kuartil") {
+    teks = batas.length ? [`≤ ${m.fmt(batas[0])} (Q1)`, `${m.fmt(batas[0])} – ${m.fmt(batas[1])} (Q2)`,
+      `${m.fmt(batas[1])} – ${m.fmt(batas[2])} (Q3)`, `> ${m.fmt(batas[2])} (Q4)`] : [];
+  }
+  const rows = teks.map((t, i) => `<div class="pijd-legend-row"><span class="pijd-swatch" style="background:${m.warna[i]}"></span>${escapeHtml(t)}</div>`);
+  rows.push(`<div class="pijd-legend-row"><span class="pijd-swatch" style="background:${pijdWarnaNol()}"></span>Tidak ada data</div>`);
+  return `<div class="pijd-legend"><div><b>${escapeHtml(m.label)}</b> · ${m.kelas === "kuartil" ? "kelas kuartil wilayah yang tampil" : "ambang kemantapan"}</div>${rows.join("")}
+    <div class="hint">Nasional: ${escapeHtml(m.fmt(nas))}. Indeks = nilai wilayah ÷ nasional (1,0 = setara nasional).</div></div>`;
+}
+
 function pijdLegend(batas, metrik) {
+  if (PIJD_METRIK[metrik].kelas) return pijdLegendIndikator(batas, metrik);
   const fmt = PIJD_METRIK[metrik].fmt;
   const ramp = pijdRamp();
   const rows = [];
@@ -202,14 +285,18 @@ function pijdRenderSide(batas, metrik) {
     ${laporanKpiTile("Panjang jalan", `${biayaFmt(d.total.panjang_km)} km`, d.total.jembatan_m ? `+ jembatan ${biayaFmt(d.total.jembatan_m)} m` : "")}
     ${laporanKpiTile("Kegiatan", d.total.n_kegiatan.toLocaleString("id-ID"), `${adaIjd} ${unitWil} menerima`)}
   </div>`;
-  const urut = [...d.wilayah].sort((a, b) => (b[metrik] || 0) - (a[metrik] || 0));
+  const mInd = PIJD_METRIK[metrik].kelas ? PIJD_METRIK[metrik] : null;
+  const fmtIndeks = (v) => (v == null ? "" : `<div class="hint">indeks ${v.toLocaleString("id-ID", { maximumFractionDigits: 2 })}</div>`);
+  const angkaRingkas = (v) => (v == null ? "–" : v.toLocaleString("id-ID", { maximumFractionDigits: metrik === "kepadatan_jalan" ? 3 : 2 }));
+  const kolomAkhir = (w) => (mInd ? `${angkaRingkas(w[metrik])}${fmtIndeks(w[`indeks_${metrik}`])}` : biayaFmt(w.rp_per_km_semua));
+  const urut = [...d.wilayah].sort((a, b) => (b[metrik] ?? -Infinity) - (a[metrik] ?? -Infinity));
   const rows = urut.map((w) => `<tr class="pijd-row" data-kode="${w.kode}" data-nama="${escapeHtml(w.nama)}">
       <td>${escapeHtml(w.nama)}${w.ada_poligon ? "" : ' <span class="pijd-pill" title="Tidak ada poligon di layer batas wilayah">tanpa peta</span>'}
         ${w.fiskal ? `<div class="hint">Fiskal ${escapeHtml(w.fiskal)}</div>` : ""}</td>
       <td class="num">${w.n_kegiatan ? pijdRp(w.alokasi_m) : "–"}</td>
       <td class="num">${w.n_kegiatan ? biayaFmt(w.panjang_km) : "–"}</td>
       <td class="num">${w.n_kegiatan || "–"}</td>
-      <td class="num">${biayaFmt(w.rp_per_km_semua)}</td></tr>`).join("");
+      <td class="num">${kolomAkhir(w)}</td></tr>`).join("");
   const tp = d.tingkat_provinsi;
   const tpRow = tp ? `<tr class="pijd-row" data-kode="" data-nama="Kegiatan usulan provinsi">
       <td><i>Kegiatan usulan provinsi</i><div class="hint">tanpa kab/kota, tidak diwarnai di peta</div></td>
@@ -219,7 +306,7 @@ function pijdRenderSide(batas, metrik) {
     <div class="laporan-chart-sub">${pijd.level === "provinsi" ? "Klik provinsi (peta atau tabel) untuk turun ke kab/kota."
       : "Klik kab/kota untuk melihat daftar kegiatannya."}</div>
     <div id="pijdSideBody"><table class="pijd-table"><thead><tr><th>${pijd.level === "provinsi" ? "Provinsi" : "Kab/Kota"}</th>
-      <th class="num">Alokasi</th><th class="num">km</th><th class="num">Keg.</th><th class="num" title="Σ alokasi ÷ Σ panjang jalan, termasuk alokasi jembatan">Rp M/km</th></tr></thead>
+      <th class="num">Alokasi</th><th class="num">km</th><th class="num">Keg.</th>${mInd ? `<th class="num" title="${escapeHtml(mInd.label)}">${escapeHtml(mInd.kolom)}</th>` : '<th class="num" title="Σ alokasi ÷ Σ panjang jalan, termasuk alokasi jembatan">Rp M/km</th>'}</tr></thead>
       <tbody>${tpRow}${rows}</tbody></table></div>
     <p class="hint">${escapeHtml(d.catatan)}</p>`;
   document.getElementById("pijdKeIndonesia")?.addEventListener("click", pijdKeIndonesia);

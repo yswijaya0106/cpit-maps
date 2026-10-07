@@ -1019,6 +1019,78 @@ function applyArusFilter() {
   });
 }
 
+/* ---------- Hierarki jalan (deck 20261007 slide 3) ----------
+   Tol merah, Nasional hijau, Provinsi biru, Kab/Kota kuning, Desa/Lingkungan
+   abu-abu; garis jalan diberi zIndex DI ATAS poligon overlay (batas
+   kecamatan dsb.), yg dulu menenggelamkan jaringan jalan (slide 2). zIndex
+   tetap di bawah garis usulan (20-30) & rute (10), jadi keduanya tetap di atas.
+   Layer jalan kab/kota (203 layer, atribut beragam) diklasifikasi per ruas:
+   kolom status (Status/STATUS_JAL/...) dulu, lalu kolom fungsi RBI
+   (REMARK/Fungsi/...) utk memisahkan jalan desa/lingkungan/setapak; sisanya
+   dianggap jalan kab/kota (layer itu memang layer jalan kab/kota). */
+const JALAN_KELAS = {
+  tol: { warna: "#dc2626", lebar: 4, z: 7, teks: "Jalan Tol" },
+  nasional: { warna: "#16a34a", lebar: 3.4, z: 6, teks: "Jalan Nasional" },
+  provinsi: { warna: "#2563eb", lebar: 2.8, z: 5, teks: "Jalan Provinsi" },
+  kabkota: { warna: "#eab308", lebar: 2.2, z: 4, teks: "Jalan Kabupaten/Kota" },
+  desa: { warna: "#9ca3af", lebar: 1.4, z: 3, teks: "Jalan Desa/Lingkungan" },
+};
+const JALAN_KELAS_URUT = ["tol", "nasional", "provinsi", "kabkota", "desa"];
+// "Koridor hasil analisis" (layer PETA KORIDOR) -- ungu/magenta. Deck meminta
+// garis putus-putus, tetapi google.maps.Data tidak mendukung pola garis.
+const KORIDOR_GAYA = { warna: "#c026d3", lebar: 2.8, z: 8, teks: "Koridor hasil analisis (PETA KORIDOR)" };
+
+function jalanLayerJenis(key) {
+  const meta = state.mapLayers.meta[key] || {};
+  const raw = mapLayerRawName(key);
+  if (meta.provinsi === "JALAN TOL") return "tol";
+  if (meta.provinsi === "JALAN NASIONAL") return "nasional";
+  if (meta.provinsi === "JALAN PROVINSI") return "provinsi";
+  if (/^JALAN/i.test(raw) && raw !== "JARINGAN JALAN RTRW") return "kab";
+  return null;
+}
+
+const _JALAN_KOLOM_STATUS = /^(status|sts|status_?jal\w*|wewenang|kewenangan)$/i;
+const _JALAN_KOLOM_FUNGSI = /^(remark|fungsi\w*|klas\w*|kelas_?fungsi)$/i;
+function jalanKelasDariStatus(v) {
+  const t = String(v).trim().toLowerCase();
+  if (!t || t === "-" || t === "0") return null;
+  if (/\btol\b/.test(t)) return "tol";
+  if (/nasional|negara/.test(t) || t === "n") return "nasional";
+  if (/prov|prop/.test(t) || t === "p") return "provinsi";
+  if (/non ?sk|lingkungan|desa|perum|setapak/.test(t)) return "desa";
+  if (/kab|kota/.test(t) || t === "k") return "kabkota";
+  return null;
+}
+const _jalanKelasCache = new WeakMap();
+function jalanKelasFitur(feature, jenisLayer) {
+  if (jenisLayer !== "kab") return jenisLayer;
+  if (_jalanKelasCache.has(feature)) return _jalanKelasCache.get(feature);
+  let kelas = null;
+  let desaDariFungsi = false;
+  feature.forEachProperty((v, k) => {
+    if (kelas || v === null || v === undefined || typeof v === "object") return;
+    if (_JALAN_KOLOM_STATUS.test(k)) kelas = jalanKelasDariStatus(v);
+    else if (_JALAN_KOLOM_FUNGSI.test(k) && /setapak|jalan lain|^lain|lingkungan|desa/i.test(String(v))) desaDariFungsi = true;
+  });
+  kelas = kelas || (desaDariFungsi ? "desa" : "kabkota");
+  _jalanKelasCache.set(feature, kelas);
+  return kelas;
+}
+
+// Kelas jalan yang benar-benar ada di layer aktif (urut hierarki) -- utk legenda layar & cetak.
+function jalanKelasDiLayer(key) {
+  const jenis = jalanLayerJenis(key);
+  const data = state.mapLayers.active[key];
+  if (!jenis || !data) return [];
+  const ada = new Set();
+  data.forEach((f) => {
+    const t = f.getGeometry()?.getType() || "";
+    if (/LineString/.test(t)) ada.add(jalanKelasFitur(f, jenis));
+  });
+  return JALAN_KELAS_URUT.filter((k) => ada.has(k));
+}
+
 function applyLayerStyle(key) {
   const data = state.mapLayers.active[key];
   if (!data) return;
@@ -1027,12 +1099,15 @@ function applyLayerStyle(key) {
   const isArus = mapLayerRawName(key).startsWith(ARUS_LAYER_PREFIX);
   const layerGlyph = pointGlyphFor(key);
   const glyphPerJenis = state.mapLayers.meta[key]?.provinsi === "RTRW";
+  const jenisJalan = jalanLayerJenis(key);
+  const isKoridor = mapLayerRawName(key) === "PETA KORIDOR";
   data.setStyle((feature) => {
     if (isArus && !arusFeatureVisible(feature)) return { visible: false };
     if (feature.getProperty("DILINTASI_RUTE") === "YA") {
       return {
         fillColor: KEC_LINTAS_COLOR, fillOpacity: 0.28 * opacity,
-        strokeColor: KEC_LINTAS_COLOR, strokeWeight: 2.6, strokeOpacity: opacity, zIndex: 20,
+        // zIndex 1: di atas poligon biasa (0), di bawah garis jalan (3-8) supaya jaringan jalan tetap terbaca
+        strokeColor: KEC_LINTAS_COLOR, strokeWeight: 2.6, strokeOpacity: opacity, zIndex: 1,
       };
     }
     const type = feature.getGeometry().getType();
@@ -1068,6 +1143,13 @@ function applyLayerStyle(key) {
     // ketebalan garis sudah dihitung server-side (skala log rupiah/ton) di
     // properti "Ketebalan garis (px)"; garis tipis digambar di atas yang tebal.
     const warnaGaris = feature.getProperty("_warna");
+    if (jenisJalan && !warnaGaris) {
+      const k = JALAN_KELAS[jalanKelasFitur(feature, jenisJalan)];
+      return { strokeColor: k.warna, strokeWeight: k.lebar, strokeOpacity: 0.95 * opacity, zIndex: k.z };
+    }
+    if (isKoridor && !warnaGaris) {
+      return { strokeColor: KORIDOR_GAYA.warna, strokeWeight: KORIDOR_GAYA.lebar, strokeOpacity: 0.95 * opacity, zIndex: KORIDOR_GAYA.z };
+    }
     if (warnaGaris) {
       // Koridor Utama = "selubung" lebar semi-transparan DI BAWAH garis petak, supaya warna
       // utilisasi petak tetap terlihat & mudah diklik (klik -> popup atribut petak).
@@ -1084,7 +1166,8 @@ function applyLayerStyle(key) {
         zIndex: Math.round(100 - lebarGaris * 5),
       };
     }
-    return { strokeColor: color, strokeWeight: 1.6, strokeOpacity: 0.9 * opacity };
+    // garis lain (rel, alur, ...): tetap di atas poligon overlay (zIndex 0)
+    return { strokeColor: color, strokeWeight: 1.6, strokeOpacity: 0.9 * opacity, zIndex: 2 };
   });
 }
 

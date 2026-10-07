@@ -622,6 +622,12 @@
               <option value="alokasi_m">Total alokasi (Rp miliar)</option>
               <option value="panjang_km">Panjang jalan (km)</option>
               <option value="n_kegiatan">Jumlah kegiatan</option>
+              <optgroup label="Indikator jaringan jalan">
+                <option value="kemantapan_pct">Kemantapan jalan (%, 2026)</option>
+                <option value="alokasi_tipikal">Alokasi tipikal (Rp M/km)</option>
+                <option value="kepadatan_jalan">Kepadatan jalan (km/km²)</option>
+                <option value="kerapatan_jalan">Kerapatan jalan (km/1.000 jiwa)</option>
+              </optgroup>
             </select></label>
         </div>
         <div class="biaya-filter-row" id="pijdRekapFilter" hidden>
@@ -1197,6 +1203,8 @@
         <div class="chat-panel" id="chatPanel" hidden>
           <div class="map-panel-header">
             <span><i class="bi bi-stars"></i> Asisten The Next - SiJalan</span>
+            <button type="button" class="maplayer-close" id="chatStatusBtn" hidden
+              title="Status provider AI (admin)" aria-label="Status provider AI"><i class="bi bi-activity"></i></button>
             <button type="button" class="maplayer-close chat-wide-btn" id="chatWide" title="Perlebar / perkecil panel"
               aria-label="Perlebar panel asisten"><i class="bi bi-arrows-fullscreen"></i></button>
             <button type="button" class="maplayer-close" id="chatClose" aria-label="Tutup asisten"><i

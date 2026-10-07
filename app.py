@@ -5441,6 +5441,47 @@ def _compute_npr(row: dict, ctx: dict = None) -> dict:
     }
 
 
+def _npr_benchmark_kabupaten(row: dict, npr_usulan) -> dict:
+    """NPR weighted average (NPRwa) semua usulan di kab/kota yang sama -- benchmark
+    per ruas (deck 20261007 slide 2: "NPR 33,3 vs NPRwa 30 -> di atas benchmark").
+    Bobot = panjang_penanganan_pemda (km): ruas yg ditangani lebih panjang lebih
+    berpengaruh. Deck tidak menyebut bobotnya; ini asumsi, ditulis di `dasar`.
+    Usulan tanpa NPR (SI/SC tak lengkap) atau tanpa panjang dikecualikan & dihitung."""
+    with db_cursor() as cur:
+        cur.execute("SELECT * FROM usulan_inpres WHERE provinsi = %s AND kabupaten_kota = %s",
+                    (row.get("provinsi"), row.get("kabupaten_kota")))
+        rows = cur.fetchall()
+    ctx = _npr_bulk_ctx(rows) if rows else {}
+    pasangan, tanpa_npr, tanpa_panjang = [], 0, 0
+    for r in rows:
+        n = _compute_npr(r, ctx)["npr"]
+        if n is None:
+            tanpa_npr += 1
+            continue
+        w = float(r.get("panjang_penanganan_pemda") or 0)
+        if w <= 0:
+            tanpa_panjang += 1
+            continue
+        pasangan.append((n, w))
+    total_w = sum(w for _, w in pasangan)
+    npr_wa = round(sum(n * w for n, w in pasangan) / total_w, 1) if total_w > 0 else None
+    posisi = None
+    if npr_wa is not None and npr_usulan is not None:
+        selisih = round(npr_usulan - npr_wa, 1)
+        posisi = "setara benchmark" if abs(selisih) < 0.05 else ("di atas benchmark" if selisih > 0 else "di bawah benchmark")
+    return {
+        "kabupaten_kota": row.get("kabupaten_kota"),
+        "npr_wa": npr_wa,
+        "npr_rata_rata": round(sum(n for n, _ in pasangan) / len(pasangan), 1) if pasangan else None,
+        "n_usulan_kabupaten": len(rows),
+        "n_dipakai": len(pasangan),
+        "n_tanpa_npr": tanpa_npr,
+        "n_tanpa_panjang": tanpa_panjang,
+        "posisi": posisi,
+        "dasar": "rata-rata NPR tertimbang panjang penanganan Pemda (km) seluruh usulan IJD 2026 di kab/kota ini",
+    }
+
+
 @app.get("/api/usulan-inpres/{usulan_id}/npr")
 def usulan_inpres_npr(usulan_id: int):
     with db_cursor() as cur:
@@ -5448,7 +5489,9 @@ def usulan_inpres_npr(usulan_id: int):
         row = cur.fetchone()
     if not row:
         raise HTTPException(404, "Usulan tidak ditemukan")
-    return _compute_npr(row)
+    hasil = _compute_npr(row)
+    hasil["benchmark_kabupaten"] = _npr_benchmark_kabupaten(row, hasil["npr"])
+    return hasil
 
 
 def _npr_bulk_ctx(rows: list) -> dict:
@@ -9368,6 +9411,95 @@ def _program_geom_query(cur, level: str, kode_provinsi: Optional[int]):
     return fitur
 
 
+_INDIKATOR_JALAN_CACHE = {"waktu": 0.0, "data": None}
+
+
+def _program_indikator_jalan(cur) -> dict:
+    """Indikator jaringan jalan per wilayah utk peta Program IJD (deck 20261007
+    slide 4): kemantapan, kepadatan (km/km²) & kerapatan (km per 1.000 jiwa).
+    - Panjang & mantap: kemantapan_ijd_2026 (jalan DAERAH; provinsi = jalan
+      provinsi + seluruh jalan kab/kota di provinsi itu). Satu-satunya sumber
+      resmi per wilayah, dan HANYA tahun 2026.
+    - Luas: poligon BATAS KABUPATEN (ST_Area geografi; 514/514 kab/kota).
+    - Penduduk: penduduk_kecamatan 2025.
+    Kode 98xx (Papua Barat Daya) di kemantapan_ijd_2026 dipetakan ke kode master
+    lewat jenis + nama kab/kota, bukan ditebak. Cache 10 menit."""
+    if _INDIKATOR_JALAN_CACHE["data"] and time.time() - _INDIKATOR_JALAN_CACHE["waktu"] < 600:
+        return _INDIKATOR_JALAN_CACHE["data"]
+    cur.execute("SELECT kode_kabupaten, kode_provinsi, jenis_kabupaten, nama_kabupaten_kota FROM ref_wilayah_kabupaten")
+    ref = cur.fetchall()
+    ref_kode = {r["kode_kabupaten"]: r["kode_provinsi"] for r in ref}
+
+    def _kunci(jenis, nama):
+        jenis = "KOTA" if str(jenis).upper().startswith("KOTA") else "KAB"
+        return jenis, re.sub(r"[^A-Z0-9]", "", re.sub(r"^(KAB\.?|KABUPATEN|KOTA)\s+", "", str(nama).upper()))
+
+    ref_nama = {}
+    for r in ref:
+        ref_nama.setdefault(_kunci(r["jenis_kabupaten"], r["nama_kabupaten_kota"]), []).append(r["kode_kabupaten"])
+    cur.execute("SELECT kode_provinsi, kode_wilayah, jenis_adm, kabupaten_kota, panjang_km, mantap_km FROM kemantapan_ijd_2026")
+    kab, prov = {}, {}
+    for r in cur.fetchall():
+        km, mantap = float(r["panjang_km"] or 0), float(r["mantap_km"] or 0)
+        if r["jenis_adm"] == "Prov":
+            kode_prov = r["kode_provinsi"]
+        else:
+            kode = r["kode_wilayah"] if r["kode_wilayah"] in ref_kode else None
+            if kode is None:
+                kandidat = ref_nama.get(_kunci(r["jenis_adm"], r["kabupaten_kota"]), [])
+                kode = kandidat[0] if len(kandidat) == 1 else None
+            if kode is None:
+                continue
+            kode_prov = ref_kode[kode]
+            d = kab.setdefault(kode, {"panjang_jalan_km": 0.0, "mantap_km": 0.0})
+            d["panjang_jalan_km"] += km
+            d["mantap_km"] += mantap
+        if kode_prov == 98:  # PBD versi lama di sumber -> master 92
+            kode_prov = 92
+        d = prov.setdefault(kode_prov, {"panjang_jalan_km": 0.0, "mantap_km": 0.0})
+        d["panjang_jalan_km"] += km
+        d["mantap_km"] += mantap
+    cur.execute("""SELECT (attrs->>'KODE_KABUPATEN')::int AS kode, SUM(ST_Area(geom::geography)) / 1e6 AS luas
+                   FROM map_layers WHERE provinsi = 'BATAS KABUPATEN' AND attrs->>'KODE_KABUPATEN' ~ '^[0-9]+$'
+                   GROUP BY 1""")
+    luas = {r["kode"]: float(r["luas"]) for r in cur.fetchall()}
+    cur.execute("SELECT kode_kabupaten AS kode, SUM(jumlah_penduduk) AS n FROM penduduk_kecamatan GROUP BY 1")
+    penduduk = {int(r["kode"]): float(r["n"] or 0) for r in cur.fetchall()}
+
+    def _isi(d, l, p):
+        km = d.get("panjang_jalan_km") or 0
+        d["luas_km2"] = round(l, 1) if l else None
+        d["penduduk"] = int(p) if p else None
+        d["kemantapan_pct"] = round(d["mantap_km"] / km * 100, 1) if km else None
+        d["kepadatan_jalan"] = round(km / l, 4) if km and l else None
+        d["kerapatan_jalan"] = round(km / p * 1000, 4) if km and p else None
+        d["panjang_jalan_km"] = round(km, 1)
+        return d
+
+    luas_prov, penduduk_prov = {}, {}
+    for kode, v in luas.items():
+        kp = ref_kode.get(kode)
+        if kp:
+            luas_prov[kp] = luas_prov.get(kp, 0) + v
+    for kode, v in penduduk.items():
+        kp = ref_kode.get(kode)
+        if kp:
+            penduduk_prov[kp] = penduduk_prov.get(kp, 0) + v
+    nas_km = sum(d["panjang_jalan_km"] for d in prov.values())
+    nas_mantap = sum(d["mantap_km"] for d in prov.values())
+    data = {
+        "kab": {k: _isi(d, luas.get(k), penduduk.get(k)) for k, d in kab.items()},
+        "prov": {k: _isi(d, luas_prov.get(k), penduduk_prov.get(k)) for k, d in prov.items()},
+        "nasional": {
+            "kemantapan_pct": round(nas_mantap / nas_km * 100, 1) if nas_km else None,
+            "kepadatan_jalan": round(nas_km / sum(luas.values()), 4) if luas else None,
+            "kerapatan_jalan": round(nas_km / sum(penduduk.values()) * 1000, 4) if penduduk else None,
+        },
+    }
+    _INDIKATOR_JALAN_CACHE.update(waktu=time.time(), data=data)
+    return data
+
+
 @app.get("/api/program-ijd/peta")
 def program_ijd_peta(level: str = "provinsi", kode_provinsi: Optional[int] = None,
                      tahun: str = "semua", kategori: str = "semua"):
@@ -9402,13 +9534,21 @@ def program_ijd_peta(level: str = "provinsi", kode_provinsi: Optional[int] = Non
                         params + [kode_provinsi])
         nilai = {r["kode"]: r for r in cur.fetchall()}
         fiskal_kab, fiskal_prov = _program_fiskal(cur)
+        indikator = _program_indikator_jalan(cur)
+        # Alokasi tipikal nasional pada filter yg sama (pembanding indeks).
+        cur.execute(f"SELECT SUM(alokasi_rp) / 1e9 AS m, SUM(panjang_jalan_km) AS km FROM program_ijd_riwayat WHERE {where}", params)
+        nas_prog = cur.fetchone()
+    nasional = dict(indikator["nasional"])
+    nasional["alokasi_tipikal"] = (round(float(nas_prog["m"]) / float(nas_prog["km"]), 2)
+                                   if nas_prog and nas_prog["km"] else None)
+    ind_wil = indikator["prov"] if level == "provinsi" else indikator["kab"]
 
     def _baris(kode, nama):
         v = nilai.get(kode) or {}
         km = float(v.get("panjang_km") or 0)
         alok = float(v.get("alokasi_m") or 0)
         alok_jalan = float(v.get("alokasi_jalan_m") or 0)
-        return {
+        b = {
             "kode": kode, "nama": nama,
             "fiskal": (fiskal_prov if level == "provinsi" else fiskal_kab).get(kode),
             "n_kegiatan": v.get("n_kegiatan") or 0, "n_kab": v.get("n_kab"),
@@ -9418,6 +9558,14 @@ def program_ijd_peta(level: str = "provinsi", kode_provinsi: Optional[int] = Non
             "rp_per_km_jalan": round(alok_jalan / km, 2) if km else None,
             "tahun_list": v.get("tahun_list") or [],
         }
+        # Indikator deck 20261007 slide 4 + indeks = nilai wilayah ÷ nilai nasional (1,0 = setara).
+        b["alokasi_tipikal"] = b["rp_per_km_semua"]
+        ij = ind_wil.get(kode) or {}
+        for k in ("kemantapan_pct", "kepadatan_jalan", "kerapatan_jalan", "panjang_jalan_km", "luas_km2", "penduduk"):
+            b[k] = ij.get(k)
+        for k in ("alokasi_tipikal", "kemantapan_pct", "kepadatan_jalan", "kerapatan_jalan"):
+            b[f"indeks_{k}"] = round(b[k] / nasional[k], 2) if b[k] is not None and nasional.get(k) else None
+        return b
 
     poligon = {f["kode"] for f in geom}
     semua_kode = set(nama_ref) | set(nilai)
@@ -9446,12 +9594,15 @@ def program_ijd_peta(level: str = "provinsi", kode_provinsi: Optional[int] = Non
     payload = jsonable_encoder({
         "level": level, "kode_provinsi": kode_provinsi, "tahun": tahun, "kategori": kategori,
         "type": "FeatureCollection", "wilayah": wilayah,
-        "tingkat_provinsi": tp, "total": total,
+        "tingkat_provinsi": tp, "total": total, "nasional": nasional,
         "tanpa_poligon": [b["nama"] for b in wilayah if not b["ada_poligon"] and b["n_kegiatan"]],
         "catatan": ("Sumber: Riwayat Program IJD 2023-2026 (DPP final, Revisi R1). Nilai nominal. "
                     "Rp/km (semua) = Σ alokasi ÷ Σ panjang jalan, termasuk alokasi jembatan (rumus deck hal. 26); "
                     "Rp/km (jalan) = hanya kegiatan dengan panjang jalan > 0. Kegiatan usulan provinsi tidak "
-                    "punya kab/kota, ditampilkan terpisah di level kabupaten. Fiskal = kategori SITIA."),
+                    "punya kab/kota, ditampilkan terpisah di level kabupaten. Fiskal = kategori SITIA. "
+                    "Kemantapan/kepadatan/kerapatan: jalan daerah dari data kemantapan IJD 2026 (hanya tahun "
+                    "2026, tidak ikut filter tahun), luas dari poligon batas kab/kota, penduduk 2025; "
+                    "indeks = nilai wilayah ÷ nilai nasional."),
     })
     body = json.dumps(payload, ensure_ascii=False)[:-1] + ',"features":[' + features + "]}"
     return Response(content=body.encode("utf-8"), media_type="application/json")
@@ -10118,14 +10269,83 @@ def usulan_inpres_export_shp(usulan_id: int):
         )
 
 
+_CHAT_LOG_SCHEMA_PATH = Path(__file__).resolve().parent / "scripts" / "schema_chat_log.sql"
+_CHAT_LOG_RETENSI_HARI = 180
+_chat_log_siap = False
+
+
+def _catat_chat_log(pengguna, peran, pertanyaan, meta=None, actions=None, galat=None):
+    """Satu baris chat_log per pertanyaan (scripts/schema_chat_log.sql).
+    Kegagalan mencatat TIDAK boleh menggagalkan jawaban chat -- diredam
+    dan cukup dicetak ke log server. Return id baris atau None."""
+    global _chat_log_siap
+    meta = meta or {}
+    try:
+        with db_cursor() as cur:
+            if not _chat_log_siap:
+                cur.execute(_CHAT_LOG_SCHEMA_PATH.read_text(encoding="utf-8"))
+                _chat_log_siap = True
+            cur.execute(
+                "INSERT INTO chat_log (pengguna, peran, pertanyaan, provider, model, cadangan, gagal_sebelumnya, "
+                "durasi_detik, token_masuk, token_keluar, tools, sql_dijalankan, dataset_ids, galat) "
+                "VALUES (%s, %s, %s, %s, %s, %s, %s::jsonb, %s, %s, %s, %s, %s, %s, %s) RETURNING id",
+                (
+                    pengguna, peran, (pertanyaan or "")[:4000], meta.get("provider"), meta.get("model"),
+                    meta.get("cadangan"), json.dumps(meta.get("gagal_sebelumnya") or []),
+                    meta.get("durasi_detik"), meta.get("token_masuk"), meta.get("token_keluar"),
+                    meta.get("tools") or [], meta.get("sql") or [],
+                    [a["argumen"]["dataset_id"] for a in (actions or [])
+                     if a.get("nama") == "dataset_tersedia" and (a.get("argumen") or {}).get("dataset_id")],
+                    galat,
+                ),
+            )
+            return cur.fetchone()["id"]
+    except Exception as e:
+        print(f"  [chat] gagal mencatat chat_log: {e}")
+        return None
+
+
+@app.on_event("startup")
+async def _bersihkan_chat_log_lama():
+    """Retensi chat_log (disk staging terbatas). Diredam bila tabel belum ada."""
+    try:
+        with db_cursor() as cur:
+            cur.execute("SELECT to_regclass('public.chat_log') AS t")
+            if cur.fetchone()["t"]:
+                cur.execute("DELETE FROM chat_log WHERE waktu < now() - make_interval(days => %s)",
+                            (_CHAT_LOG_RETENSI_HARI,))
+    except Exception as e:
+        print(f"  [chat] retensi chat_log dilewati: {e}")
+
+
 @app.post("/api/chat")
 def chat(payload: ChatRequest, request: Request):
     if not payload.messages:
         raise HTTPException(400, "Tidak ada pesan")
     ident = _resolve_identity(request) or {}
-    reply, actions = chat_providers._call_chat(payload.messages, payload.context, ident.get("username"),
-                                               getattr(request.state, "role", None))
-    return {"reply": reply, "actions": actions}
+    peran = getattr(request.state, "role", None)
+    pertanyaan = next((m.text for m in reversed(payload.messages) if m.role == "user"), "")
+    try:
+        reply, actions, meta = chat_providers._call_chat(payload.messages, payload.context,
+                                                         ident.get("username"), peran)
+    except HTTPException as e:
+        _catat_chat_log(ident.get("username"), peran, pertanyaan, galat=str(e.detail)[:4000])
+        raise
+    log_id = _catat_chat_log(ident.get("username"), peran, pertanyaan, meta, actions)
+    # Ke frontend cukup yg perlu ditampilkan; daftar tool/SQL lengkap ada di chat_log.
+    tampil = {k: meta.get(k) for k in ("provider", "model", "cadangan", "gagal_sebelumnya",
+                                       "durasi_detik", "token_masuk", "token_keluar")}
+    tampil["chat_log_id"] = log_id
+    return {"reply": reply, "actions": actions, "meta": tampil}
+
+
+@app.get("/api/chat/status-provider")
+def chat_status_provider(request: Request, paksa: bool = False):
+    """Status tiap provider LLM yg key-nya diisi (ok / alasan gagal, mis.
+    "saldo/kredit habis"), urut sesuai prioritas chat. Admin saja; di-cache
+    5 menit kecuali paksa=1 (tiap uji = 1 permintaan kecil berbayar)."""
+    _require_admin(request)
+    return chat_providers.status_provider(paksa)
 
 
 # Hasil analisis chat ("dataset", lihat chat_dataset.py): pratinjau tabel,

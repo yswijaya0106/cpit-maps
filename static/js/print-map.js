@@ -115,6 +115,9 @@ function printLegendSubitems(key, raw, meta, jenis) {
   else if (raw === PERLINTASAN_BTP_LAYER) return PERLINTASAN_BTP_LEGEND.map(([warna, teks]) => ({ warna, teks, jenis: "titik" }));
   else if (typeof RTRW_PAPSEL_LEGEND !== "undefined" && RTRW_PAPSEL_LEGEND[raw]) items = RTRW_PAPSEL_LEGEND[raw];
   if (items) return items.map(([warna, teks]) => ({ warna, teks, jenis }));
+  const kelasJalan = jalanKelasDiLayer(key);
+  if (kelasJalan.length) return kelasJalan.map((k) => ({ warna: JALAN_KELAS[k].warna, teks: JALAN_KELAS[k].teks, jenis: "garis" }));
+  if (raw === "PETA KORIDOR") return [{ warna: KORIDOR_GAYA.warna, teks: KORIDOR_GAYA.teks, jenis: "garis" }];
   if (raw === STASIUN_LAYER_NAME) {
     return Object.entries(STASIUN_STATUS_COLORS).map(([teks, warna]) => ({ warna, teks, jenis: "titik" }))
       .concat([{ warna: STASIUN_STATUS_DEFAULT_COLOR, teks: "Lainnya / tanpa data", jenis: "titik" }]);
@@ -126,7 +129,16 @@ function printStyleFromGoogle(st, jenis, fallbackColor) {
   st = st || {};
   if (jenis === "titik") {
     const icon = st.icon && typeof st.icon === "object" ? st.icon : {};
-    return { point_color: icon.fillColor || fallbackColor, point_radius: icon.scale || 4 };
+    const gaya = { point_color: icon.fillColor || fallbackColor, point_radius: icon.scale || 4 };
+    // Ikon gambar (pesawat bandara, jangkar, ...): URL-nya dirasterisasi jadi
+    // PNG oleh printSiapkanIkon() sebelum dikirim, supaya hasil cetak memakai
+    // ikon yang sama dgn di layar, bukan lingkaran (deck 20261007 slide 3).
+    const url = typeof st.icon === "string" ? st.icon : icon.url;
+    if (typeof url === "string" && url.startsWith("data:image/")) {
+      gaya.point_icon_url = url;
+      gaya.point_size = icon.scaledSize?.width || 24;
+    }
+    return gaya;
   }
   return {
     fill: jenis === "poligon" ? (st.fillColor || fallbackColor) : null,
@@ -164,11 +176,14 @@ function printCollectOverlay(key, view, dupRaw) {
     feats.push({ gj, style: printStyleFromGoogle(st, jenis, color) });
   });
   const jenis = Object.entries(jenisCount).sort((a, b) => b[1] - a[1])[0][0];
+  const kelasJalan = jalanKelasDiLayer(key);
   return {
     key,
     nama: mapLayerDisplayLabel(key) + (dupRaw[raw] > 1 ? ` — ${meta.kabupaten || meta.provinsi}` : ""),
     sumber: [meta.provinsi, meta.kabupaten].filter(Boolean).join(" / "),
-    warna: color,
+    warna: kelasJalan.length === 1 ? JALAN_KELAS[kelasJalan[0]].warna
+      : kelasJalan.length > 1 ? JALAN_KELAS.kabkota.warna
+      : raw === "PETA KORIDOR" ? KORIDOR_GAYA.warna : color,
     jenis,
     fields: [...fields],
     legend: printLegendSubitems(key, raw, meta, jenis),
@@ -408,11 +423,68 @@ function printPayloadKey(payload) {
   return JSON.stringify({ ...payload, format: "pdf" });
 }
 
+// URL ikon (SVG data URL) -> PNG data URL lewat canvas. Server tidak bisa
+// merender SVG (Pillow), jadi rasterisasi dilakukan browser. Hasil di-cache.
+const _printIkonPngCache = {};
+function printIkonKePng(url, sisi = 96) {
+  if (!_printIkonPngCache[url]) {
+    _printIkonPngCache[url] = new Promise((resolve) => {
+      const img = new Image();
+      img.onload = () => {
+        const w = img.naturalWidth || sisi, h = img.naturalHeight || sisi;
+        const skala = sisi / Math.max(w, h);
+        const cv = document.createElement("canvas");
+        cv.width = Math.max(1, Math.round(w * skala));
+        cv.height = Math.max(1, Math.round(h * skala));
+        cv.getContext("2d").drawImage(img, 0, 0, cv.width, cv.height);
+        try { resolve(cv.toDataURL("image/png")); } catch (_) { resolve(null); }
+      };
+      img.onerror = () => resolve(null);
+      img.src = url;
+    });
+  }
+  return _printIkonPngCache[url];
+}
+
+// Ganti point_icon_url di setiap fitur dgn kunci ke payload.ikon (satu PNG per
+// ikon unik), lalu isi ikon layer (legenda tunggal) & ikon sub-legenda titik
+// (dicocokkan lewat warna). Ikon yg gagal dirasterisasi -> tetap lingkaran.
+async function printSiapkanIkon(payload) {
+  const kunciUrl = new Map();
+  payload.layers.forEach((l) => l.features.forEach((f) => {
+    const u = f.style && f.style.point_icon_url;
+    if (u && !kunciUrl.has(u)) kunciUrl.set(u, `i${kunciUrl.size}`);
+  }));
+  const ikon = {};
+  const png = await Promise.all([...kunciUrl.keys()].map((u) => printIkonKePng(u)));
+  [...kunciUrl.entries()].forEach(([, k], i) => { if (png[i]) ikon[k] = png[i]; });
+  const layers = payload.layers.map((l) => {
+    const hitung = {};
+    const perWarna = {};
+    const features = l.features.map((f) => {
+      const { point_icon_url: u, ...style } = f.style || {};
+      const k = u && ikon[kunciUrl.get(u)] ? kunciUrl.get(u) : null;
+      if (k) {
+        style.point_icon = k;
+        hitung[k] = (hitung[k] || 0) + 1;
+        if (style.point_color && !perWarna[style.point_color]) perWarna[style.point_color] = k;
+      } else {
+        delete style.point_size;
+      }
+      return { ...f, style };
+    });
+    const dominan = Object.entries(hitung).sort((a, b) => b[1] - a[1])[0];
+    const legend = (l.legend || []).map((x) => (x.jenis === "titik" && perWarna[x.warna] ? { ...x, ikon: perWarna[x.warna] } : x));
+    return { ...l, features, legend, ikon: l.jenis === "titik" && dominan ? dominan[0] : null };
+  });
+  return { ...payload, layers, ikon };
+}
+
 async function requestPrintFile(payload) {
   const res = await fetch("/api/peta/cetak", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
+    body: JSON.stringify(await printSiapkanIkon(payload)),
   });
   if (!res.ok) {
     let msg = await res.text();

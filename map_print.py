@@ -21,6 +21,7 @@ Alur:
    per layer; mode label "nomor" menomori fitur di peta sesuai baris tabel.
 """
 
+import base64
 import io
 import math
 import os
@@ -51,6 +52,10 @@ class CetakGaya(BaseModel):
     stroke_opacity: float = 1.0
     point_color: Optional[str] = None
     point_radius: float = 4.0
+    # Ikon titik spt di layar (pesawat bandara, jangkar pelabuhan, ...): kunci ke
+    # CetakPetaRequest.ikon. Kosong = titik digambar lingkaran point_color.
+    point_icon: Optional[str] = None
+    point_size: float = 24.0  # lebar ikon di layar (px)
 
 
 class CetakFitur(BaseModel):
@@ -64,6 +69,7 @@ class CetakLegenda(BaseModel):
     warna: str
     teks: str
     jenis: str = "poligon"  # poligon | garis | titik
+    ikon: Optional[str] = None  # kunci CetakPetaRequest.ikon (titik ber-ikon)
 
 
 class CetakLayer(BaseModel):
@@ -75,6 +81,7 @@ class CetakLayer(BaseModel):
     tabel: bool = True
     legend: List[CetakLegenda] = Field(default_factory=list)
     features: List[CetakFitur] = Field(default_factory=list)
+    ikon: Optional[str] = None  # ikon titik dominan layer, utk legenda tanpa sub-item
 
 
 class CetakBatas(BaseModel):
@@ -99,6 +106,40 @@ class CetakPetaRequest(BaseModel):
     grid: bool = True
     maks_baris: int = 300
     layers: List[CetakLayer] = Field(default_factory=list)
+    # {kunci: "data:image/png;base64,..."} -- ikon titik yg dirasterisasi
+    # browser (print-map.js) dari SVG ikon layer. Dikirim sekali per ikon unik.
+    ikon: Dict[str, str] = Field(default_factory=dict)
+
+
+_IKON_MAKS = 64
+_IKON_MAKS_BYTE = 300_000
+
+
+def _ikon_gambar(req: "CetakPetaRequest", kunci: Optional[str]) -> Optional[Image.Image]:
+    """PNG ikon -> PIL RGBA (cache per request). None bila tidak ada/rusak,
+    sehingga pemanggil jatuh ke simbol lingkaran lama."""
+    if not kunci:
+        return None
+    cache = req.__dict__.setdefault("_ikon_cache", {})
+    if kunci in cache:
+        return cache[kunci]
+    img = None
+    data = req.ikon.get(kunci) if len(req.ikon) <= _IKON_MAKS else None
+    if data and data.startswith("data:image/png;base64,"):
+        try:
+            raw = base64.b64decode(data.split(",", 1)[1], validate=True)
+            if len(raw) <= _IKON_MAKS_BYTE:
+                img = Image.open(io.BytesIO(raw)).convert("RGBA")
+        except Exception:
+            img = None
+    cache[kunci] = img
+    return img
+
+
+def _ikon_ukuran(img: Image.Image, lebar: float) -> Image.Image:
+    lebar = max(4, int(round(lebar)))
+    tinggi = max(4, int(round(lebar * img.height / img.width)))
+    return img.resize((lebar, tinggi), Image.Resampling.LANCZOS)
 
 
 # ---------------------------------------------------------------------------
@@ -485,8 +526,14 @@ def render_vektor(req: CetakPetaRequest, view: Tampilan, fitur_per_layer, ss: in
                     d.line(c, fill=_rgba(g.stroke or layer.warna, g.stroke_opacity, _rgb(layer.warna)),
                            width=w, joint="curve" if w > 2 else None)
                 elif p.geom_type == "Point":
-                    r = max(2.0, g.point_radius * faktor)
                     x, y = p.x, p.y
+                    ikon = _ikon_gambar(req, g.point_icon)
+                    if ikon is not None:
+                        # ukuran sama dgn di layar (faktor = px layar -> px cetak)
+                        im = _ikon_ukuran(ikon, g.point_size * faktor / 0.75 * 0.8)
+                        ov.paste(im, (int(round(x - im.width / 2)), int(round(y - im.height / 2))), im)
+                        continue
+                    r = max(2.0, g.point_radius * faktor)
                     d.ellipse((x - r, y - r, x + r, y + r),
                               fill=_rgba(g.point_color or layer.warna, 0.95, _rgb(layer.warna)),
                               outline=(20, 24, 34, 255), width=max(1, int(round(ss * dpi / 96 * 0.9))))
@@ -595,6 +642,8 @@ def _tulis_label(img, req, fitur_per_layer, ss, dpi, font, sw):
                 p = bagian[0]
                 x, y = p.x / ss, p.y / ss
                 off = max(3.0, f.gaya.point_radius * dpi / 96 * 0.75) + 3
+                if f.gaya.point_icon:
+                    off = max(off, f.gaya.point_size * dpi / 96 * 0.8 / 2 + 2)
                 calon = [
                     (x + off, y - th / 2, x + off + tw, y + th / 2),
                     (x - off - tw, y - th / 2, x - off, y + th / 2),
@@ -901,8 +950,8 @@ def _legenda(req: CetakPetaRequest, hasil: HasilPeta):
         if not daftar:
             continue
         huruf = _huruf_layer(li) if (banyak_layer and req.label_mode == "nomor") else ""
-        sub = [(x.warna, x.teks, x.jenis) for x in layer.legend]
-        out.append((layer.nama, sub or [(layer.warna, "", layer.jenis)], huruf, layer))
+        sub = [(x.warna, x.teks, x.jenis, _ikon_gambar(req, x.ikon)) for x in layer.legend]
+        out.append((layer.nama, sub or [(layer.warna, "", layer.jenis, _ikon_gambar(req, layer.ikon))], huruf, layer))
     return out
 
 
@@ -951,8 +1000,16 @@ def _ukuran_halaman(req: CetakPetaRequest) -> Tuple[float, float]:
     return (w, h) if req.orientasi == "landscape" else (h, w)
 
 
-def _gambar_simbol(c, jenis, warna, x, y, w, h):
-    """Simbol legenda vektor di kanvas reportlab (x,y = kiri bawah, satuan pt)."""
+def _gambar_simbol(c, jenis, warna, x, y, w, h, ikon=None):
+    """Simbol legenda vektor di kanvas reportlab (x,y = kiri bawah, satuan pt).
+    ikon (PIL RGBA) = ikon titik spt di peta; dipusatkan di kotak simbol."""
+    if ikon is not None:
+        from reportlab.lib.utils import ImageReader
+
+        s = min(w, h) * 1.15
+        c.drawImage(ImageReader(ikon), x + (w - s) / 2, y + (h - s) / 2, s, s,
+                    preserveAspectRatio=True, anchor="c", mask="auto")
+        return
     col = _rl_warna(_rgb(warna))
     if jenis == "garis":
         c.setStrokeColor(col)
@@ -1062,7 +1119,7 @@ def build_pdf(req: CetakPetaRequest, pengguna: Optional[str]) -> bytes:
                 break
             kepala_layer = (f"{huruf}. " if huruf else "") + judul
             if len(sub) == 1 and not sub[0][1]:
-                _gambar_simbol(c, sub[0][2], sub[0][0], x, y - 1.2 * mm, 7 * mm, 3.6 * mm)
+                _gambar_simbol(c, sub[0][2], sub[0][0], x, y - 1.2 * mm, 7 * mm, 3.6 * mm, sub[0][3])
                 c.setFillColorRGB(0.12, 0.16, 0.22)
                 c.setFont(fn, 7.3)
                 baris = simpleSplit(kepala_layer, fn, 7.3, w - 9 * mm)[:2]
@@ -1075,10 +1132,10 @@ def build_pdf(req: CetakPetaRequest, pengguna: Optional[str]) -> bytes:
             for t in simpleSplit(kepala_layer, fb, 7.3, w)[:2]:
                 c.drawString(x, y, t)
                 y -= 3.3 * mm
-            for warna, teks, jenis in sub:
+            for warna, teks, jenis, ikon in sub:
                 if y < y_bawah + 3 * mm:
                     break
-                _gambar_simbol(c, jenis, warna, x + 2 * mm, y - 1 * mm, 6 * mm, 3.2 * mm)
+                _gambar_simbol(c, jenis, warna, x + 2 * mm, y - 1 * mm, 6 * mm, 3.2 * mm, ikon)
                 c.setFillColorRGB(0.2, 0.24, 0.3)
                 c.setFont(fn, 6.8)
                 c.drawString(x + 10 * mm, y, simpleSplit(teks, fn, 6.8, w - 10 * mm)[0] if teks else "")
@@ -1290,11 +1347,16 @@ def _docx_field(run, instr: str):
         run._r.append(el)
 
 
-def _swatch_png(jenis: str, warna: str) -> io.BytesIO:
+def _swatch_png(jenis: str, warna: str, ikon=None) -> io.BytesIO:
     img = Image.new("RGBA", (84, 44), (255, 255, 255, 0))
     d = ImageDraw.Draw(img)
     rgb = _rgb(warna)
-    if jenis == "garis":
+    if ikon is not None:
+        im = _ikon_ukuran(ikon, 40)
+        if im.height > 42:
+            im = _ikon_ukuran(ikon, 40 * 42 / im.height)
+        img.paste(im, ((84 - im.width) // 2, (44 - im.height) // 2), im)
+    elif jenis == "garis":
         d.line([(6, 22), (78, 22)], fill=(*rgb, 255), width=8)
     elif jenis == "titik":
         d.ellipse((28, 8, 56, 36), fill=(*rgb, 255), outline=(20, 24, 34, 255), width=3)
@@ -1414,7 +1476,7 @@ def build_docx(req: CetakPetaRequest, pengguna: Optional[str]) -> bytes:
             if len(sub) == 1 and not sub[0][1]:
                 pl = cell.add_paragraph()
                 pl.paragraph_format.space_after = Pt(2)
-                pl.add_run().add_picture(_swatch_png(sub[0][2], sub[0][0]), width=Mm(7))
+                pl.add_run().add_picture(_swatch_png(sub[0][2], sub[0][0], sub[0][3]), width=Mm(7))
                 rl = pl.add_run("  " + kepala_layer)
                 rl.font.size = Pt(8)
                 continue
@@ -1423,11 +1485,11 @@ def build_docx(req: CetakPetaRequest, pengguna: Optional[str]) -> bytes:
             rl = pl.add_run(kepala_layer)
             rl.bold = True
             rl.font.size = Pt(8)
-            for warna, teks, jenis in sub:
+            for warna, teks, jenis, ikon in sub:
                 ps_ = cell.add_paragraph()
                 ps_.paragraph_format.left_indent = Mm(3)
                 ps_.paragraph_format.space_after = Pt(1)
-                ps_.add_run().add_picture(_swatch_png(jenis, warna), width=Mm(6))
+                ps_.add_run().add_picture(_swatch_png(jenis, warna, ikon), width=Mm(6))
                 r_ = ps_.add_run("  " + (teks or ""))
                 r_.font.size = Pt(7.5)
 

@@ -307,7 +307,7 @@ function renderChatMessages() {
     const actions = m.actions || [];
     const cards = actions.map((a, j) => chatCardHtml(a, i, j)).join("");
     const contoh = m.contoh ? `<div class="chat-examples">${m.contoh.map((t) => `<button type="button" class="chat-example">${escapeHtml(t)}</button>`).join("")}</div>` : "";
-    return `<div class="chat-msg chat-msg-assistant"><div class="chat-md">${renderMarkdown(m.text)}</div>${cards}${chatDataListHtml(actions)}${contoh}</div>`;
+    return `<div class="chat-msg chat-msg-assistant"><div class="chat-md">${renderMarkdown(m.text)}</div>${cards}${chatDataListHtml(actions)}${contoh}${chatMetaHtml(m.meta)}</div>`;
   }).join("");
   if (state.chat.busy) {
     listEl.innerHTML += `<div class="chat-msg chat-msg-assistant chat-msg-loading"><span class="chat-spinner"></span> Menganalisis data… analisis besar bisa perlu 1–2 menit.</div>`;
@@ -317,10 +317,47 @@ function renderChatMessages() {
   listEl.scrollTop = listEl.scrollHeight;
 }
 
+// Baris kecil "dijawab oleh <model>" di bawah jawaban (meta dari /api/chat).
+// Model cadangan = provider di depannya gagal (mis. kredit Claude habis) --
+// dulu terjadi diam-diam, kini terlihat beserta alasannya di tooltip.
+function chatMetaHtml(meta) {
+  if (!meta || !meta.model) return "";
+  const alasan = (meta.gagal_sebelumnya || []).map((g) => `${g.provider}: ${g.alasan}`).join("\n");
+  const cadangan = meta.cadangan
+    ? ` <span class="chat-meta-cadangan" title="${escapeHtml("Provider utama gagal:\n" + alasan)}">model cadangan</span>`
+    : "";
+  const durasi = meta.durasi_detik != null ? ` · ${String(meta.durasi_detik).replace(".", ",")} dtk` : "";
+  return `<div class="chat-meta">dijawab oleh ${escapeHtml(meta.model)}${durasi}${cadangan}</div>`;
+}
+
+// Panel status provider (admin): hasil GET /api/chat/status-provider dirender
+// sebagai pesan lokal (flag `lokal`, tidak dikirim ke model sbg riwayat).
+async function chatTampilkanStatusProvider() {
+  if (state.chat.busy) return;
+  state.chat.busy = true;
+  renderChatMessages();
+  let teks;
+  try {
+    const res = await fetch("/api/chat/status-provider?paksa=1");
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || "Gagal memuat status");
+    const baris = data.providers.map((p, i) =>
+      `| ${i + 1} | ${p.provider} | ${p.model} | ${p.ok ? "✅ aktif" : "❌ " + (p.alasan || "gagal")} |`).join("\n");
+    teks = `**Status provider AI** (urutan prioritas, diuji ${new Date(data.diuji_pada).toLocaleString("id-ID")})\n\n`
+      + `| # | Provider | Model | Status |\n|---|---|---|---|\n${baris}\n\n`
+      + (data.provider_aktif ? `Chat saat ini dijawab oleh **${data.provider_aktif}**.` : "**Tidak ada provider yang aktif.**");
+  } catch (err) {
+    teks = `Gagal memuat status provider: ${err.message || err}`;
+  }
+  state.chat.messages.push({ role: "assistant", text: teks, lokal: true });
+  state.chat.busy = false;
+  renderChatMessages();
+}
+
 // Riwayat yg dikirim ke backend: teks + catatan dataset yang sudah dibuat,
 // supaya model bisa merujuknya lagi ("ekspor hasil tadi ke Word").
 function chatHistoryPayload() {
-  return state.chat.messages.filter((m) => !m.contoh).map((m) => {
+  return state.chat.messages.filter((m) => !m.contoh && !m.lokal).map((m) => {
     const ds = (m.actions || []).filter((a) => a.nama === "dataset_tersedia").map((a) => a.argumen);
     const catatan = ds.length
       ? "\n\n[Dataset dari jawaban ini: " + ds.map((d) => `${d.dataset_id} = "${d.judul}" (${d.jumlah_baris} baris; kolom: ${(d.kolom || []).join(", ")})`).join("; ") + "]"
@@ -342,13 +379,23 @@ async function sendChatMessage(text) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ messages: chatHistoryPayload(), context: buildChatContext() }),
     });
-    if (!res.ok) throw new Error(await res.text());
+    if (!res.ok) {
+      let detail = "";
+      try { detail = (await res.json()).detail || ""; } catch (_) { /* bukan JSON */ }
+      throw new Error(detail || `HTTP ${res.status}`);
+    }
     const data = await res.json();
-    state.chat.messages.push({ role: "assistant", text: data.reply, actions: data.actions || [] });
+    state.chat.messages.push({ role: "assistant", text: data.reply, actions: data.actions || [], meta: data.meta });
     (data.actions || []).forEach(runChatAction);
   } catch (err) {
     console.error(err);
-    state.chat.messages.push({ role: "assistant", text: "Maaf, terjadi kesalahan saat menghubungi asisten. Coba lagi." });
+    const detail = String(err.message || "");
+    state.chat.messages.push({
+      role: "assistant", lokal: true,
+      text: detail.startsWith("Semua provider LLM gagal")
+        ? `Maaf, asisten sedang tidak tersedia. ${detail}`
+        : "Maaf, terjadi kesalahan saat menghubungi asisten. Coba lagi.",
+    });
   } finally {
     state.chat.busy = false;
     renderChatMessages();
@@ -476,9 +523,14 @@ function bindChatPanel() {
   const input = document.getElementById("chatInput");
   const summaryBtn = document.getElementById("btnChatSummary");
 
+  const statusBtn = document.getElementById("chatStatusBtn");
+  statusBtn?.addEventListener("click", chatTampilkanStatusProvider);
+
   toggleBtn.addEventListener("click", () => {
     panel.hidden = !panel.hidden;
     if (!panel.hidden) {
+      // Admin saja (backend _require_admin); dicek saat dibuka krn state.auth bisa berubah (login/logout).
+      if (statusBtn) statusBtn.hidden = state.auth.required && state.auth.role !== "admin";
       refreshChatContoh();
       input.focus();
     }

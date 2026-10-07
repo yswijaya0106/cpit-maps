@@ -743,6 +743,25 @@ Deps: `requirements.txt`, venv at `.venv/` (already gitignored).
   default; assistant messages carry `reasoning_content` and the tool loop
   already sends them back whole. Both models passed the SAR multi-step
   example that gpt-4o-mini failed while Claude/Grok credit was empty.
+  **Transparent gateway (7 Oct 2026, Tahap 1 of
+  `docs/kajian_agentic_workflow_fitur_ai.md`):**
+  - `_chat_providers()` now returns `(nama, model, fn)`.
+  - `_call_chat` returns `(teks, actions, meta)`. `meta` holds the provider and
+    model that answered, `cadangan` (a provider ahead of it failed) and
+    `gagal_sebelumnya` (short reasons from `_ringkas_alasan`, e.g. "saldo/kredit
+    habis"), plus duration, tokens, tools and SQL. The per-request trace lives
+    in ContextVar `_JEJAK`.
+  - Provider failures are printed to the server log instead of being
+    swallowed. The 502 detail uses the short reasons.
+  - `/api/chat` returns `meta` (without tools/SQL). chat.js shows "dijawab
+    oleh <model>" and a "model cadangan" badge.
+  - Every question is logged to `chat_log` (`scripts/schema_chat_log.sql`),
+    which the app creates on first use. Rows are pruned after 180 days at
+    startup. Logging failures never fail the answer. `chat_log` is blocked
+    from the chat SQL tool, like `users`.
+  - `GET /api/chat/status-provider` (admin; `?paksa=1` bypasses the 5-min
+    cache) pings each provider with a tiny request. In chat.js it's the
+    activity icon in the chat header, shown to admin only.
   **Guardrails, all motivated by observed gpt-4o-mini failures while the
   Claude API balance was empty:**
   (1) the system prompt carries a "PETA DATA" cheat-sheet (which table or
@@ -866,6 +885,55 @@ Deps: `requirements.txt`, venv at `.venv/` (already gitignored).
   the `"BATAS KECAMATAN::"` layer-key prefix rather than a `BATASKEC__` raw
   layer name), and the identify popup joins the feature to DB tables via
   `GET /api/kecamatan/{kode}/data?tabel=` (whitelist `KECAMATAN_JOIN_TABLES`).
+
+## Deck "20261007 PENAMBAHAN PENYEMPURNAAN SIJALAN" (7 Oct 2026)
+
+Requests from `docs/07102026/` (deck + downloaded `VfM-koridor-kirim
+bappenas.xlsx`, `Jalan Tol/`). Done and browser-verified:
+- **Legend scroll:** `.map-legend-pilihan` now shrinks/scrolls inside the 70vh
+  legend. It used to overflow the panel with 30 selected usulan.
+- **% mantap per ruas:** `usulanKemantapan()` in usulan-inpres.js mirrors
+  `_ijd_score_kemantapan_v2` exactly ((baik+sedang)/panjang_ruas_km, cap 100,
+  <60 = tidak mantap; 2,068/2,068 match). It appears in the detail panel, the
+  line popup and the print attributes. 91 usulan have all four kondisi = 0;
+  those get a note.
+- **Lulus/tidak lulus palette:** multi-select colors come from
+  `USULAN_MULTI_WARNA_LULUS` (cool) vs `_TIDAK_LULUS` (warm), keyed on
+  `seleksi_sistem`. The legend shows the counts.
+- **Print icons:** point icons (pesawat, jangkar, …) are rasterized to PNG in
+  the browser (`printSiapkanIkon`, print-map.js) and sent once per unique
+  icon in `CetakPetaRequest.ikon`. map_print.py pastes them on the map and in
+  the PDF/DOCX legend. Circles remain the fallback.
+- **Road hierarchy + visibility:** `JALAN_KELAS` in maps-overlay.js colors
+  tol red, nasional green, provinsi blue, kab/kota yellow and desa grey.
+  zIndex is 3–8, above polygons (0) and the crossed-kecamatan highlight (now
+  1), but below usulan lines (20–30). Kab/kota road layers are classified per
+  ruas: status column first, then RBI fungsi (jalan lain/setapak/lingkungan
+  = desa). This was verified against Kota Tasikmalaya attrs. PETA KORIDOR is
+  magenta. Dashed lines are NOT possible: `google.maps.Data` has no line
+  patterns.
+- **NPR vs NPRwa:** `/npr` now returns `benchmark_kabupaten`. It is the NPR
+  weighted by `panjang_penanganan_pemda` across all usulan in the same
+  kab/kota. The deck doesn't name the weight, so this is an assumption,
+  stated in `dasar`. Verified against the bulk path on 3 kab. NPR
+  categories still use the code labels (Menengah, Belum Prioritas), not the
+  deck's (Sedang, Sangat Rendah). Per-year NPR history is not computable:
+  NPR exists for 2026 only.
+- **Program IJD map indicators:** these are `_program_indikator_jalan()`:
+  kemantapan, alokasi tipikal, kepadatan (km/km²) and kerapatan (km/1,000
+  jiwa), each with `indeks_* = nilai ÷ nasional`. The sources are:
+  - road length and mantap: `kemantapan_ijd_2026`, jalan daerah, **2026
+    only**, so the year filter doesn't apply to them;
+  - area: BATAS KABUPATEN polygons;
+  - population: `penduduk_kecamatan`.
+
+  Its 98xx Papua Barat Daya codes map to master by jenis+name (its code order
+  also differs from BPS). Classes are fixed thresholds for kemantapan
+  (40/67/80) and quartiles for the rest.
+Still open (needs data import / owner decisions): CER "Analisis Skoring Jalan
+AWP-1", the national toll master plan `JBHRENCUM_28022023` (362 segments,
+13,078 km planned vs 48 in the DB), Papua Selatan kab road SHPs (Drive), and
+the "Analisis Kabupaten X" chat prompt.
 
 ## Multi-modal transport data (Darat/Laut/Udara)
 

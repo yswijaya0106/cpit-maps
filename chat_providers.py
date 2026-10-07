@@ -43,6 +43,14 @@ CLAUDE_MODEL = os.getenv("CLAUDE_MODEL", "claude-opus-5")
 
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash-lite")
 
+# DeepSeek (api-docs.deepseek.com): Chat Completions kompatibel OpenAI, jadi
+# memakai _call_openai_compatible apa adanya. Model per Okt 2026:
+# deepseek-flash (V4.1-Flash, murah) dan deepseek-v4-pro (lebih kuat utk
+# alur multi-langkah). Mode thinking aktif secara bawaan dan pesan asisten
+# membawa reasoning_content; loop tool sudah mengirim balik pesan itu utuh.
+DEEPSEEK_MODEL = os.getenv("DEEPSEEK_MODEL", "deepseek-v4-pro")
+DEEPSEEK_API_URL = "https://api.deepseek.com/chat/completions"
+
 CHAT_SYSTEM_PROMPT = """Anda adalah asisten analisis rute di aplikasi The Next - SiJalan, sebuah alat perencanaan rute \
 dan analisis GIS untuk jalan di Indonesia. Jawab dalam Bahasa Indonesia, singkat dan langsung ke inti.
 Anda diberi data ringkas tentang rute yang sedang dilihat pengguna (jarak, durasi, wilayah administratif yang \
@@ -996,7 +1004,7 @@ _MAKS_PUTARAN_TOOL = 12
 
 
 def _call_openai_compatible(provider: str, api_url: str, api_key: str, model: str, messages: List, context: Optional[dict]) -> tuple:
-    """Chat Completions-compatible provider tanpa pencarian web (Groq, Grok/xAI).
+    """Chat Completions-compatible provider tanpa pencarian web (Groq, Grok/xAI, DeepSeek).
     Return (teks, actions) -- actions dikumpulkan baru per panggilan (lihat
     _run_tool_call), bukan global module-level."""
     actions: list = []
@@ -1245,6 +1253,10 @@ def _chat_providers() -> list:
     # (mis. kredit habis / kuota), otomatis lanjut ke provider berikutnya seperti biasa.
     if os.getenv("CLOUDE_API_KEY"):
         providers.append(("Claude", lambda msgs, ctx: _call_claude(os.getenv("CLOUDE_API_KEY"), CLAUDE_MODEL, msgs, ctx)))
+    # DeepSeek kedua: model kuat dgn tool calling, cadangan utama bila Claude gagal
+    # (mis. kredit habis), sebelum provider yg lebih lemah di alur multi-langkah.
+    if os.getenv("DEEPSEEK_API_KEY"):
+        providers.append(("DeepSeek", lambda msgs, ctx: _call_openai_compatible("DeepSeek", DEEPSEEK_API_URL, os.getenv("DEEPSEEK_API_KEY"), DEEPSEEK_MODEL, msgs, ctx)))
     if os.getenv("GROQ_API_KEY"):
         providers.append(("Groq", lambda msgs, ctx: _call_openai_compatible("Groq", GROQ_API_URL, os.getenv("GROQ_API_KEY"), GROQ_MODEL, msgs, ctx)))
     if os.getenv("GROK_API_KEY"):
@@ -1330,7 +1342,7 @@ def _call_chat(messages: List, context: Optional[dict], pengguna: Optional[str] 
     if not providers:
         raise HTTPException(
             500,
-            "Tidak ada API key LLM yang diset di .env (GROQ_API_KEY / GROK_API_KEY / OPEN_AI_API_KEY / CLOUDE_API_KEY / GEMINI_API_KEY)",
+            "Tidak ada API key LLM yang diset di .env (GROQ_API_KEY / GROK_API_KEY / OPEN_AI_API_KEY / CLOUDE_API_KEY / DEEPSEEK_API_KEY / GEMINI_API_KEY)",
         )
 
     errors = []

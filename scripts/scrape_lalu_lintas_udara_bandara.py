@@ -19,7 +19,7 @@ kategori), aman dijalankan ulang/parsial (mis. --bandara utk 1 bandara
 saja, atau --bulan-mulai/--bulan-akhir utk rentang lebih sempit).
 
 Usage (venv aktif):
-    python scripts/scrape_lalu_lintas_udara_bandara.py                       # semua bandara, Jan-Agu 2026, kedua kategori
+    python scripts/scrape_lalu_lintas_udara_bandara.py                       # semua bandara, Jan s.d. bulan berjalan 2026, kedua kategori
     python scripts/scrape_lalu_lintas_udara_bandara.py --bandara MLG,CGK
     python scripts/scrape_lalu_lintas_udara_bandara.py --tahun 2026 --bulan-mulai 1 --bulan-akhir 8
     python scripts/scrape_lalu_lintas_udara_bandara.py --kategori domestik  # cuma 1 kategori
@@ -30,6 +30,7 @@ import io
 import re
 import sys
 import time
+from datetime import date
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -117,17 +118,81 @@ def _parse_traffic_table(html):
     return data
 
 
+_UPSERT_SQL = """INSERT INTO lalu_lintas_udara_bandara
+       (kode_bandara, nama_bandara, periode, kategori,
+        pesawat_datang, pesawat_berangkat,
+        penumpang_datang, penumpang_berangkat,
+        penumpang_transit_datang, penumpang_transit_berangkat,
+        kargo_kg_datang, kargo_kg_berangkat,
+        bagasi_kg_datang, bagasi_kg_berangkat,
+        pos_kg_datang, pos_kg_berangkat)
+   VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+   ON CONFLICT (kode_bandara, periode, kategori) DO UPDATE SET
+       nama_bandara=EXCLUDED.nama_bandara,
+       pesawat_datang=EXCLUDED.pesawat_datang,
+       pesawat_berangkat=EXCLUDED.pesawat_berangkat,
+       penumpang_datang=EXCLUDED.penumpang_datang,
+       penumpang_berangkat=EXCLUDED.penumpang_berangkat,
+       penumpang_transit_datang=EXCLUDED.penumpang_transit_datang,
+       penumpang_transit_berangkat=EXCLUDED.penumpang_transit_berangkat,
+       kargo_kg_datang=EXCLUDED.kargo_kg_datang,
+       kargo_kg_berangkat=EXCLUDED.kargo_kg_berangkat,
+       bagasi_kg_datang=EXCLUDED.bagasi_kg_datang,
+       bagasi_kg_berangkat=EXCLUDED.bagasi_kg_berangkat,
+       pos_kg_datang=EXCLUDED.pos_kg_datang,
+       pos_kg_berangkat=EXCLUDED.pos_kg_berangkat,
+       scraped_at=now()"""
+
+
+def simpan_baris(cur, kode, nama, periode, kategori, data):
+    """UPSERT satu (bandara, periode 'YYYY-MM', kategori)."""
+    cur.execute(_UPSERT_SQL, (
+        kode, nama, f"{periode}-01", kategori,
+        data.get("pesawat_datang"), data.get("pesawat_berangkat"),
+        data.get("penumpang_datang"), data.get("penumpang_berangkat"),
+        data.get("penumpang_transit_datang"), data.get("penumpang_transit_berangkat"),
+        data.get("kargo_kg_datang"), data.get("kargo_kg_berangkat"),
+        data.get("bagasi_kg_datang"), data.get("bagasi_kg_berangkat"),
+        data.get("pos_kg_datang"), data.get("pos_kg_berangkat"),
+    ))
+
+
+def scrape_bandara(kode, nama, periode_list, kategori_list=("domestik", "internasional")):
+    """Scrape + UPSERT satu bandara utk daftar periode 'YYYY-MM'. Dipakai
+    tombol "Perbarui dari Hubud" di dialog Lalu Lintas Udara Bulanan
+    (app.py). Kembalikan (jumlah tersimpan, daftar kegagalan)."""
+    tersimpan, gagal = 0, []
+    for periode in periode_list:
+        for kategori in kategori_list:
+            try:
+                data = _parse_traffic_table(_fetch({"bandara": kode, "period": periode, "category": kategori}))
+            except Exception as e:  # noqa: BLE001 -- 1 halaman gagal jangan hentikan sisanya
+                gagal.append(f"{periode} {kategori}: {e}")
+                data = None
+            time.sleep(REQUEST_DELAY)
+            if not data:
+                continue
+            with pg_cursor() as cur:
+                simpan_baris(cur, kode, nama, periode, kategori, data)
+            tersimpan += 1
+    return tersimpan, gagal
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--bandara", help="daftar kode bandara dipisah koma (default: semua dari dropdown situs)")
     ap.add_argument("--tahun", type=int, default=2026)
     ap.add_argument("--bulan-mulai", type=int, default=1)
-    ap.add_argument("--bulan-akhir", type=int, default=8)
+    ap.add_argument("--bulan-akhir", type=int, default=None,
+                    help="default: bulan berjalan (bila --tahun = tahun ini), selain itu 12")
     ap.add_argument("--kategori", choices=["domestik", "internasional", "semua"], default="semua")
     ap.add_argument("--resume", action="store_true",
                      help="lewati kombinasi (bandara, periode, kategori) yang sudah ada di tabel -- "
                           "dipakai utk melanjutkan run yang terputus tanpa mengulang dari awal")
     args = ap.parse_args()
+    if args.bulan_akhir is None:
+        hari_ini = date.today()
+        args.bulan_akhir = hari_ini.month if args.tahun == hari_ini.year else 12
 
     with pg_cursor() as cur:
         cur.execute(SCHEMA_PATH.read_text(encoding="utf-8"))
@@ -177,41 +242,7 @@ def main():
                     continue
 
                 with pg_cursor() as cur:
-                    cur.execute(
-                        """INSERT INTO lalu_lintas_udara_bandara
-                               (kode_bandara, nama_bandara, periode, kategori,
-                                pesawat_datang, pesawat_berangkat,
-                                penumpang_datang, penumpang_berangkat,
-                                penumpang_transit_datang, penumpang_transit_berangkat,
-                                kargo_kg_datang, kargo_kg_berangkat,
-                                bagasi_kg_datang, bagasi_kg_berangkat,
-                                pos_kg_datang, pos_kg_berangkat)
-                           VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                           ON CONFLICT (kode_bandara, periode, kategori) DO UPDATE SET
-                               nama_bandara=EXCLUDED.nama_bandara,
-                               pesawat_datang=EXCLUDED.pesawat_datang,
-                               pesawat_berangkat=EXCLUDED.pesawat_berangkat,
-                               penumpang_datang=EXCLUDED.penumpang_datang,
-                               penumpang_berangkat=EXCLUDED.penumpang_berangkat,
-                               penumpang_transit_datang=EXCLUDED.penumpang_transit_datang,
-                               penumpang_transit_berangkat=EXCLUDED.penumpang_transit_berangkat,
-                               kargo_kg_datang=EXCLUDED.kargo_kg_datang,
-                               kargo_kg_berangkat=EXCLUDED.kargo_kg_berangkat,
-                               bagasi_kg_datang=EXCLUDED.bagasi_kg_datang,
-                               bagasi_kg_berangkat=EXCLUDED.bagasi_kg_berangkat,
-                               pos_kg_datang=EXCLUDED.pos_kg_datang,
-                               pos_kg_berangkat=EXCLUDED.pos_kg_berangkat,
-                               scraped_at=now()""",
-                        (
-                            kode, nama, f"{periode}-01", kategori,
-                            data.get("pesawat_datang"), data.get("pesawat_berangkat"),
-                            data.get("penumpang_datang"), data.get("penumpang_berangkat"),
-                            data.get("penumpang_transit_datang"), data.get("penumpang_transit_berangkat"),
-                            data.get("kargo_kg_datang"), data.get("kargo_kg_berangkat"),
-                            data.get("bagasi_kg_datang"), data.get("bagasi_kg_berangkat"),
-                            data.get("pos_kg_datang"), data.get("pos_kg_berangkat"),
-                        ),
-                    )
+                    simpan_baris(cur, kode, nama, periode, kategori, data)
                 saved += 1
 
     print(f"\nSelesai: {saved}/{total_jobs} baris di-upsert ke lalu_lintas_udara_bandara.")

@@ -2275,10 +2275,15 @@ document.addEventListener("DOMContentLoaded", bindUsulanModaDashboard);
 // dirender berulang kali di tempat berbeda (panel "Jelajahi" & popup
 // identify peta, lihat renderBandaraKemenhubEnrichment) -- pakai event
 // delegation di document supaya tidak perlu bind ulang tiap render.
+let bandaraLaluLintasAktif = null;
+
 async function openBandaraLaluLintasDialog(bandaraId, namaBandara) {
   const overlay = document.getElementById("bandaraLaluLintasOverlay");
   const view = document.getElementById("bandaraLaluLintasView");
   document.getElementById("bandaraLaluLintasMeta").textContent = namaBandara || "";
+  bandaraLaluLintasAktif = { id: bandaraId, nama: namaBandara };
+  const btnScrape = document.getElementById("bandaraLaluLintasScrape");
+  btnScrape.hidden = true;
   overlay.hidden = false;
   view.innerHTML = `<div class="laporan-distribusi-empty">
     <i class="bi bi-hourglass-split"></i> Memuat...
@@ -2289,8 +2294,35 @@ async function openBandaraLaluLintasDialog(bandaraId, namaBandara) {
     const data = await res.json();
     if (!res.ok) throw new Error(data.detail || "Gagal memuat");
     renderBandaraLaluLintasDialog(view, data);
+    // Menulis ke DB -> admin saja (sama dgn _require_admin di backend).
+    btnScrape.hidden = !data.iata || (state.auth.required && state.auth.role !== "admin");
   } catch (err) {
     view.innerHTML = `<div class="laporan-distribusi-empty">${escapeHtml(String(err.message || err))}</div>`;
+  }
+}
+
+async function scrapeBandaraLaluLintas() {
+  if (!bandaraLaluLintasAktif) return;
+  const { id, nama } = bandaraLaluLintasAktif;
+  const btn = document.getElementById("bandaraLaluLintasScrape");
+  const isiAsli = btn.innerHTML;
+  btn.disabled = true;
+  btn.innerHTML = `<i class="bi bi-hourglass-split"></i> Mengambil dari Hubud...`;
+  try {
+    const res = await fetch(`/api/bandara-kemenhub/${id}/lalu-lintas/scrape`, { method: "POST" });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || "Gagal mengambil data");
+    const rentang = data.periode.length
+      ? `${formatPeriodeBulan(data.periode[0])} – ${formatPeriodeBulan(data.periode[data.periode.length - 1])}`
+      : "-";
+    toast(`${data.tersimpan} baris diperbarui (${rentang})`
+      + (data.gagal.length ? `, ${data.gagal.length} gagal` : ""), data.gagal.length > 0);
+    await openBandaraLaluLintasDialog(id, nama);
+  } catch (err) {
+    toast(String(err.message || err), true);
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = isiAsli;
   }
 }
 
@@ -2324,8 +2356,9 @@ function renderBandaraLaluLintasDialog(view, data) {
     ${laporanKpiTile("Total Kargo", `${totalKargo.toLocaleString("id-ID")} kg`, "datang + berangkat")}
   </div>`;
 
+  const berjalan = (r) => String(r.periode).slice(0, 7) === data.bulan_berjalan;
   const rows = data.rows.map((r) => `<tr>
-    <td>${escapeHtml(formatPeriodeBulan(r.periode))}</td>
+    <td>${escapeHtml(formatPeriodeBulan(r.periode))}${berjalan(r) ? ' <span class="hint">(berjalan)</span>' : ""}</td>
     <td>${escapeHtml(r.kategori)}</td>
     <td>${dv(r.pesawat_datang, r.pesawat_berangkat)}</td>
     <td>${dv(r.penumpang_datang, r.penumpang_berangkat)}</td>
@@ -2345,12 +2378,15 @@ function renderBandaraLaluLintasDialog(view, data) {
       </tr></thead>
       <tbody>${rows}</tbody>
     </table></div>
-    <p class="hint">Sumber: hubud.kemenhub.go.id, lepas dari skor IJD/usulan_inpres.</p>`;
+    <p class="hint">Sumber: hubud.kemenhub.go.id, lepas dari skor IJD/usulan_inpres.`
+      + (data.scraped_at ? ` Data terakhir diambil ${escapeHtml(new Date(data.scraped_at).toLocaleString("id-ID"))}.` : "")
+      + ` Bulan berjalan belum lengkap.</p>`;
 }
 
 function bindBandaraLaluLintasDialog() {
   const overlay = document.getElementById("bandaraLaluLintasOverlay");
   document.getElementById("bandaraLaluLintasClose").addEventListener("click", () => (overlay.hidden = true));
+  document.getElementById("bandaraLaluLintasScrape").addEventListener("click", scrapeBandaraLaluLintas);
   overlay.addEventListener("click", (e) => {
     if (e.target === overlay) overlay.hidden = true;
   });

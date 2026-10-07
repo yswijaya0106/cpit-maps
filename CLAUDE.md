@@ -99,9 +99,10 @@ Requires `.env` (copy from `.env.example`):
 - Chat provider keys, all optional: `GROQ_API_KEY`, `GROK_API_KEY`,
   `OPEN_AI_API_KEY`, `CLOUDE_API_KEY` (Anthropic — yes, spelled with OU;
   don't "fix" the name without migrating existing `.env` files),
-  `GEMINI_API_KEY`. `/api/chat` tries providers in that order until one
-  succeeds (see `_call_chat`); with zero keys the chat panel is dead but the
-  rest of the app works.
+  `DEEPSEEK_API_KEY` (+ optional `DEEPSEEK_MODEL`), `GEMINI_API_KEY`.
+  `/api/chat` tries them in the `_chat_providers` order until one succeeds
+  (see `_call_chat`); with zero keys the chat panel is dead but the rest of
+  the app works.
 
 Deps: `requirements.txt`, venv at `.venv/` (already gitignored).
 
@@ -625,7 +626,9 @@ Deps: `requirements.txt`, venv at `.venv/` (already gitignored).
 - `POST /api/chat` — chat assistant, logic lives in `chat_providers.py`
   (route/dispatch stays in app.py, `chat()` returns `{"reply", "actions"}` —
   see below for `actions`). Providers are tried in order
-  Groq → Grok → OpenAI → Claude → Gemini depending on which API keys exist.
+  Claude → DeepSeek → Groq → Grok → OpenAI → Gemini depending on which API
+  keys exist (`_llm_plain` in app.py has its own order: Groq → Grok →
+  OpenAI → Claude → DeepSeek → Gemini).
   The model gets a compact context of the currently viewed route plus
   `CHAT_TOOLS`: three original fixed read-only helpers (search/detail/
   KML-geometry of usulan, calling existing parameterized-query functions)
@@ -734,6 +737,12 @@ Deps: `requirements.txt`, venv at `.venv/` (already gitignored).
   and `/api/chat/file/{id}`. Chat replies are rendered with marked +
   DOMPurify (CDN), with `renderMarkdownLite` as the fallback. Claude is now
   **first** in `_chat_providers` (default `claude-opus-5`).
+  **DeepSeek (7 Oct 2026)** is second: OpenAI-compatible
+  (`api.deepseek.com/chat/completions`) via `_call_openai_compatible`, default
+  `deepseek-v4-pro` (`deepseek-flash` is cheaper). Thinking mode is on by
+  default; assistant messages carry `reasoning_content` and the tool loop
+  already sends them back whole. Both models passed the SAR multi-step
+  example that gpt-4o-mini failed while Claude/Grok credit was empty.
   **Guardrails, all motivated by observed gpt-4o-mini failures while the
   Claude API balance was empty:**
   (1) the system prompt carries a "PETA DATA" cheat-sheet (which table or

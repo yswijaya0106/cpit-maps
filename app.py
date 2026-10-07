@@ -44,6 +44,7 @@ sys.path.insert(0, str(BASE_DIR / "scripts"))
 import import_usulan_inpres as usulan_xlsx  # noqa: E402
 import import_penduduk_kecamatan as penduduk_xlsx  # noqa: E402
 import import_bappenas_lokus_a as bappenas_lokus_xlsx  # noqa: E402
+import scrape_lalu_lintas_udara_bandara as lalu_lintas_udara_scraper  # noqa: E402
 
 from db import db_cursor  # noqa: E402
 import psycopg.errors  # noqa: E402  (LockNotAvailable di data_tables)
@@ -62,7 +63,7 @@ import map_print  # noqa: E402
 # Fase 2 — tanpa import ini semua fitur AI Bappenas NameError.
 from chat_providers import (  # noqa: E402
     GROQ_MODEL, GROQ_API_URL, GROK_MODEL, GROK_API_URL,
-    OPENAI_MODEL, CLAUDE_MODEL, GEMINI_MODEL,
+    OPENAI_MODEL, CLAUDE_MODEL, GEMINI_MODEL, DEEPSEEK_MODEL, DEEPSEEK_API_URL,
 )
 
 app = FastAPI(title="Route to SHP Converter")
@@ -6597,6 +6598,8 @@ def _llm_plain(system: str, user: str, max_tokens: int = 2048) -> tuple:
         attempts.append(("OpenAI", OPENAI_MODEL, lambda: _plain_openai_compatible("https://api.openai.com/v1/chat/completions", os.getenv("OPEN_AI_API_KEY"), OPENAI_MODEL, system, user, max_tokens)))
     if os.getenv("CLOUDE_API_KEY"):
         attempts.append(("Claude", CLAUDE_MODEL, lambda: _plain_claude(os.getenv("CLOUDE_API_KEY"), system, user, max_tokens)))
+    if os.getenv("DEEPSEEK_API_KEY"):
+        attempts.append(("DeepSeek", DEEPSEEK_MODEL, lambda: _plain_openai_compatible(DEEPSEEK_API_URL, os.getenv("DEEPSEEK_API_KEY"), DEEPSEEK_MODEL, system, user, max_tokens)))
     if os.getenv("GEMINI_API_KEY"):
         attempts.append(("Gemini", GEMINI_MODEL, lambda: _plain_gemini(os.getenv("GEMINI_API_KEY"), system, user, max_tokens)))
     if not attempts:
@@ -8432,7 +8435,7 @@ def bandara_kemenhub_lalu_lintas(bandara_id: int):
             "SELECT periode, kategori, pesawat_datang, pesawat_berangkat, "
             "penumpang_datang, penumpang_berangkat, penumpang_transit_datang, penumpang_transit_berangkat, "
             "kargo_kg_datang, kargo_kg_berangkat, bagasi_kg_datang, bagasi_kg_berangkat, "
-            "pos_kg_datang, pos_kg_berangkat "
+            "pos_kg_datang, pos_kg_berangkat, scraped_at "
             "FROM lalu_lintas_udara_bandara WHERE kode_bandara = %s ORDER BY periode, kategori",
             (bandara["iata"],),
         )
@@ -8440,8 +8443,66 @@ def bandara_kemenhub_lalu_lintas(bandara_id: int):
     return {
         "nama_bandara": bandara["nama_bandara"],
         "iata": bandara["iata"],
+        "bulan_berjalan": datetime.now().strftime("%Y-%m"),
+        "scraped_at": jsonable_encoder(max((r["scraped_at"] for r in rows), default=None)),
         "rows": [jsonable_encoder(dict(r)) for r in rows],
     }
+
+
+def _tambah_bulan(d, n):
+    m = d.month - 1 + n
+    return d.replace(year=d.year + m // 12, month=m % 12 + 1, day=1)
+
+
+@app.post("/api/bandara-kemenhub/{bandara_id}/lalu-lintas/scrape")
+def bandara_kemenhub_lalu_lintas_scrape(bandara_id: int, request: Request):
+    """Tombol "Perbarui dari Hubud" di dialog Lalu Lintas Udara Bulanan:
+    scrape ulang SATU bandara dari hubud.kemenhub.go.id dan UPSERT ke
+    lalu_lintas_udara_bandara (logika scraper di
+    scripts/scrape_lalu_lintas_udara_bandara.py, bukan diduplikasi).
+
+    Rentang bulan: mulai dari bulan tersimpan paling awal yang di-scrape
+    sebelum bulan itu "matang" (scraped_at < awal bulan ke-2 sesudahnya --
+    angka Hubud masih bertambah selama bulan berjalan, contoh: Agu 2026 CGK
+    diambil 20 Agu, tercatat 7.182 pesawat datang padahal final 8.982),
+    atau bulan sesudah periode terakhir; sampai bulan berjalan. Bandara
+    belum pernah di-scrape: Jan tahun ini. Admin saja (menulis ke DB)."""
+    _require_admin(request)
+    with db_cursor() as cur:
+        cur.execute("SELECT nama_bandara, iata FROM bandara_kemenhub WHERE bandara_id = %s", (bandara_id,))
+        bandara = cur.fetchone()
+        if not bandara:
+            raise HTTPException(404, "Bandara tidak ditemukan")
+        iata = bandara["iata"]
+        if not iata or iata == "-":
+            raise HTTPException(400, "Bandara ini tidak punya kode IATA, sumber Hubud dikunci per IATA")
+        cur.execute(
+            "SELECT periode, MIN(scraped_at) AS scraped_at, MAX(nama_bandara) AS nama "
+            "FROM lalu_lintas_udara_bandara WHERE kode_bandara = %s GROUP BY periode ORDER BY periode",
+            (iata,),
+        )
+        tersimpan = cur.fetchall()
+
+    akhir = datetime.now().date().replace(day=1)
+    belum_matang = [
+        r["periode"] for r in tersimpan
+        if r["scraped_at"].date() < _tambah_bulan(r["periode"], 2)
+    ]
+    if belum_matang:
+        mulai = belum_matang[0]
+    elif tersimpan:
+        mulai = _tambah_bulan(tersimpan[-1]["periode"], 1)
+    else:
+        mulai = akhir.replace(month=1)
+    periode_list = []
+    p = min(mulai, akhir)
+    while p <= akhir:
+        periode_list.append(p.strftime("%Y-%m"))
+        p = _tambah_bulan(p, 1)
+
+    nama = (tersimpan[0]["nama"] if tersimpan else None) or bandara["nama_bandara"]
+    jumlah, gagal = lalu_lintas_udara_scraper.scrape_bandara(iata, nama, periode_list)
+    return {"iata": iata, "periode": periode_list, "tersimpan": jumlah, "gagal": gagal}
 
 
 def _fetch_usulan_geometry(usulan_id: int) -> dict:

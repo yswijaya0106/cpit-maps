@@ -26,6 +26,14 @@ const KAWASAN_TEMATIK_WARNA = {
   "Kawasan Transmigrasi": "#ef6c00",
   "Kawasan Industri Prioritas": "#6a1b9a",
   "Lokus PKPN 3T": "#c62828",
+  // Tutupan lahan OSM (scripts/import_tutupan_lahan_osm.py), nama layer berakhiran "(OSM)"
+  "Kelapa Sawit (OSM)": "#e65100",
+  "Karet (OSM)": "#5d4037",
+  "Kelapa (OSM)": "#9e9d24",
+  "Kebun & Perkebunan Lainnya (OSM)": "#43a047",
+  "Sawah (OSM)": "#fdd835",
+  "Lahan Pertanian Lainnya (OSM)": "#c0ca33",
+  "Tambak & Tambak Garam (OSM)": "#00acc1",
 };
 
 function mapLayerColor(layerName) {
@@ -202,6 +210,10 @@ const MAP_LAYER_CATEGORIES = [
     match: (p) => p === "KORIDOR AWP-1" },
   { id: "kawasan-bappenas", label: "Kawasan Tematik (Bappenas)", icon: "bi-pin-map",
     match: (p) => p === "KAWASAN TEMATIK BAPPENAS" },
+  // Tutupan lahan pertanian/perkebunan dari OpenStreetMap (scripts/import_tutupan_lahan_osm.py):
+  // indikatif, cakupan OSM tidak merata -- tidak ada poligon != tidak ada kebun.
+  { id: "tutupan-osm", label: "Tutupan Lahan (OSM, indikatif)", icon: "bi-tree",
+    match: (p) => p === "TUTUPAN LAHAN OSM" },
   { id: "jalan", label: "Jalan", icon: "bi-signpost-2", match: () => true }, // catch-all, HARUS terakhir
 ];
 

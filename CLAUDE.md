@@ -1726,6 +1726,22 @@ upsert, so they're safe to re-run:
     split works without `build_map_layer_wilayah.py`.
   - DB-only and DELETE+INSERT. Rerun after `import_kawasan_tematik.py` or a
     boundary reimport.
+- `import_tutupan_lahan_osm.py` (7 Oct 2026) — OSM farm/plantation polygons
+  (kelapa sawit, karet, kelapa, kebun lain, sawah, pertanian lain, tambak),
+  which until now only showed as basemap pixels, become bucket `TUTUPAN LAHAN
+  OSM` (96,094 polygons, 2,717 sawit), one layer per kategori named "… (OSM)".
+  The tree category is "Tutupan Lahan (OSM, indikatif)", with colours in
+  `KAWASAN_TEMATIK_WARNA`.
+  - Source is the openstreetmap.fr Indonesia `.osm.pbf` (~2 GB) in
+    `Maps/OSM/`. Overpass (all mirrors 504) and Geofabrik (too slow) failed.
+  - `--ekstrak` filters the PBF with GDAL into `Maps/OSM/tutupan_lahan_osm.gpkg`
+    (~18 min, several GB of temp space), so run it locally, never on staging.
+    Without `--ekstrak` it imports that gpkg; staging was loaded this way
+    through the SSH tunnel to its DB.
+  - It's indicative only: OSM coverage is very uneven (Kalsel has 77 sawit
+    polygons), so a missing polygon doesn't mean there's no kebun. It's never
+    used in scoring, and every feature carries the ODbL attribution.
+  - DELETE+INSERT; it sets `wilayah_provinsi` itself.
 - `scripts/wilayah_cocok.py` (`PencocokKabupaten`) — shared source-name →
   BPS kabupaten matcher used by both lokus importers (29 Sep 2026, from the
   tester bug "Fakfak tidak terbaca"). Names are compared on letters/digits

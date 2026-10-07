@@ -161,3 +161,12 @@
   aksi_wajib: [tampilkan_tabel]
   teks_wajib: [Jawa Tengah]
   angka: [{nilai: 395}]
+
+# Tahap 4b, dari jawaban chat staging 8 Okt 2026 ("data ijd provinsi banten"): SUM(panjang_ruas_km)
+# per kab menghitung ganda ruas yg diusulkan >1 paket. Lebak: 16 usulan, 14 ruas unik = 291,20 km
+# (SUM polos 341,80), panjang ditangani Pemda 104,24 km.
+- id: q25
+  kategori: sederhana
+  pertanyaan: Berapa total panjang ruas jalan yang diusulkan IJD 2026 di Kabupaten Lebak, dan berapa km yang diusulkan ditangani?
+  harus_memakai: [usulan_inpres]
+  angka: [{nilai: 291.2, rel: 0.01}, {nilai: 104.24, rel: 0.01}]

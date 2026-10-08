@@ -1858,6 +1858,10 @@ html::-webkit-scrollbar, body::-webkit-scrollbar, .sidebar::-webkit-scrollbar, .
 .chat-card-inline { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; padding: 7px 9px; font-size: 12px; }
 .chat-card-inline > i { color: var(--primary); font-size: 15px; }
 .chat-card-inline > span { flex: 1 1 160px; min-width: 0; }
+.chat-rute-item { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; padding: 5px 9px; font-size: 12px; border-bottom: 1px solid var(--border, rgba(148,163,196,.2)); }
+.chat-rute-item:last-child { border-bottom: none; }
+.chat-rute-item > span { flex: 1 1 180px; min-width: 0; }
+.chat-rute-item small { opacity: .7; }
 .chat-dl {
   display: inline-flex; align-items: center; gap: 4px; padding: 3px 8px; border-radius: 6px; font-size: 11.5px;
   border: 1px solid var(--border); background: rgba(var(--tint),.04); color: var(--text); text-decoration: none; cursor: pointer; font-family: inherit;

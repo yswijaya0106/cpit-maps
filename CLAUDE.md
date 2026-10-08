@@ -813,6 +813,23 @@ Deps: `requirements.txt`, venv at `.venv/` (already gitignored).
   (3) `_rapikan_jawaban` strips invented image/link markdown and auto-adds a
   table card when the model forgets `tampilkan_tabel`;
   (4) `users` / `psc119_layanan` are blocked in SQL.
+  **Road routing in chat (8 Oct 2026):** hybrid tool `rute_jalan(asal, tujuan[≤5])`.
+  - The server gets road km and minutes (car, no traffic) from the public OSRM demo
+    server (`_OSRM_RUTE`), plus the straight-line distance. Those numbers go to the
+    model.
+  - It emits `tampilkan_rute_jalan`, which carries the OSRM geometry. chat.js
+    `chatTampilkanRuteJalan` draws it with Google Directions (`directionsRequest`,
+    routing.js) and falls back to the OSRM line. So the popup's numbers (Google)
+    can differ slightly from the answer's (OSRM).
+  - The result is a chat layer, so it shows in the legend and print. The card
+    links to Google Maps and OSM directions.
+  - System prompt point 5 no longer says "no routing engine".
+    `_periksa_jawaban` asks for a revision when a route question gets no
+    `tampilkan_rute_jalan`.
+  - Chat points (routes and `tampilkan_di_peta`) use the overlay glyph icons
+    (`chatGlyphTeks` → `POINT_GLYPH_RULES`), picked from the label value, then the
+    label column name, then the title. Points get permanent labels when there are
+    ≤80 of them.
 - `GET /api/maps/provinces` / `GET /api/maps/kabupaten` / `GET /api/maps/layers`
   / `GET /api/maps/layer` — drive the topbar reference-map overlay. **As of
   24 Jul 2026 these query PostGIS (`map_layers`/`map_layer_meta` tables,

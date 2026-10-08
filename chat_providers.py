@@ -89,7 +89,7 @@ MODE ANALITIK (untuk permintaan analisis/laporan lintas data):
 2. Layer peta tersimpan di tabel map_layers(provinsi, kabupaten, layer, attrs JSONB, geom geometry 4326). "provinsi" di tabel ini adalah KELOMPOK layer (mis. 'KERETA API', 'BASARNAS', 'BANDARA', 'PELABUHAN', 'PETA KORIDOR', 'JALAN NASIONAL', 'KAPASITAS LINTAS KA', atau nama provinsi utk layer RBI per kabupaten); atribut fitur ada di attrs (akses attrs->>'NAMA KOLOM'). Analisis spasial dikerjakan LANGSUNG dengan PostGIS di jalankan_query_sql: jarak meter pakai geom::geography (ST_Distance, ST_DWithin), terdekat pakai ORDER BY a.geom <-> b.geom LIMIT n (LATERAL JOIN), cakupan pakai ST_Intersects/ST_Contains. Sertakan ST_AsGeoJSON(geom) AS geojson (atau kolom lat/lon) SEJAK QUERY PERTAMA bila pengguna menyebut peta/lokasi, supaya dataset yang sama bisa langsung ditampilkan di peta.
 3. Setiap jalankan_query_sql menyimpan hasil LENGKAP sebagai dataset (dataset_id) di server; Anda hanya menerima pratinjau. Untuk hasil utama yang disajikan ke pengguna, WAJIB panggil tampilkan_tabel(dataset_id) supaya pengguna bisa melihat & mengunduh (Excel/CSV/GeoJSON). Pakai buat_grafik untuk perbandingan/tren, tampilkan_di_peta untuk hasil berlokasi, dan buat_laporan bila pengguna minta laporan/dokumen Word.
 4. Jawaban akhir dalam MARKDOWN: judul singkat (##), ringkasan temuan utama berupa poin, tabel markdown ringkas (maks ~10 baris; tabel lengkap lewat tampilkan_tabel), lalu bagian "Catatan data" berisi keterbatasan/asumsi. Semua angka HARUS berasal dari hasil tool — jangan mengarang.
-5. Batas kemampuan saat ini: TIDAK ada data lalu lintas/kemacetan real-time Google Maps dan TIDAK ada mesin rute jalan (rute/alternatif jalan). Bila diminta, katakan terus terang, lalu tawarkan pendekatan dari data yang ADA: jarak garis lurus (PostGIS), VCR/LHR ruas nasional (bps_lhr_ruas_nasional), kondisi IRI (iri_ruas_nasional), utilisasi kapasitas lintas KA (layer 'KAPASITAS LINTAS KA'), wilayah tanggung jawab Kantor SAR (layer 'WILAYAH TANGGUNG JAWAB SAR' di kelompok 'BASARNAS'), koridor terdekat simpul (koridor_simpul_terdekat).
+5. RUTE JALAN: untuk rute/jarak tempuh/waktu tempuh antar titik (mis. bandara -> pelabuhan), ambil koordinatnya dulu lalu panggil rute_jalan(asal, tujuan) -- rute jalan sungguhan (OSRM/OpenStreetMap utk angka, Google Directions utk gambar di peta, berlabel). Sebut jarak garis lurus DAN jarak jalan bila keduanya ada; "terdekat" menurut garis lurus belum tentu terdekat menurut jalan. Batas kemampuan: TIDAK ada data lalu lintas/kemacetan real-time (waktu tempuh = tanpa macet). Untuk kepadatan/kondisi pakai data yang ADA: jarak garis lurus (PostGIS), VCR/LHR ruas nasional (bps_lhr_ruas_nasional), kondisi IRI (iri_ruas_nasional), utilisasi kapasitas lintas KA (layer 'KAPASITAS LINTAS KA'), wilayah tanggung jawab Kantor SAR (layer 'WILAYAH TANGGUNG JAWAB SAR' di kelompok 'BASARNAS'), koridor terdekat simpul (koridor_simpul_terdekat).
 6. Query berat: batasi dengan filter wilayah bila memungkinkan; hasil disimpan maks 20.000 baris.
 7. Filter nama wilayah/objek: pakai ILIKE '%kata%', bukan '=' -- penulisan di data beragam (mis. provinsi \
 'Provinsi Maluku Utara', kabupaten 'Kab. Halmahera Utara'). Kalau hasil 0 baris, periksa dulu nilai yang ada \
@@ -480,7 +480,7 @@ CLIENT_ACTION_TOOLS = {"tampilkan_usulan_di_peta"}
 # modelnya sendiri yang disuruh panggil daftar_layer_peta_overlay dulu.
 _TOOLS_NEED_ACTIONS_PARAM = {
     "tampilkan_layer_batas_administratif_usulan", "jalankan_query_sql",
-    "tampilkan_tabel", "buat_grafik", "tampilkan_di_peta", "buat_laporan", "analisis_kabupaten",
+    "tampilkan_tabel", "buat_grafik", "tampilkan_di_peta", "buat_laporan", "analisis_kabupaten", "rute_jalan",
 }
 
 # Pengguna yg sedang chat (dicatat di dataset/laporan). ContextVar, bukan
@@ -1101,6 +1101,70 @@ def _tool_buat_laporan(judul=None, isi_markdown=None, dataset_ids=None, actions=
     return {"status": "laporan Word siap diunduh dari chat", **hasil}
 
 
+# Rute jalan sungguhan (bukan garis lurus). Angka utk model dari OSRM (server demo
+# publik, data OpenStreetMap -- pola sama dgn scripts/build_analisis_klaster_subklaster.py);
+# peta menggambar rute Google Directions di browser (kunci Maps JS yg sudah ada),
+# geometri OSRM jadi cadangan bila Google gagal.
+_OSRM_RUTE = "https://router.project-osrm.org/route/v1/driving"
+_MAKS_TUJUAN_RUTE = 5
+_GEOD = Geod(ellps="WGS84")
+
+
+def _titik_rute(t, peran: str):
+    if not isinstance(t, dict):
+        return None, f"{peran} harus objek {{nama, lat, lon}}"
+    try:
+        lat, lon = float(t.get("lat")), float(t.get("lon"))
+    except (TypeError, ValueError):
+        return None, f"{peran} '{t.get('nama')}' tidak punya lat/lon angka -- ambil koordinatnya dulu lewat jalankan_query_sql"
+    if not (-90 <= lat <= 90 and -180 <= lon <= 180):
+        return None, f"{peran} '{t.get('nama')}': koordinat di luar rentang (lat {lat}, lon {lon}) -- lat/lon tertukar?"
+    return {"nama": str(t.get("nama") or peran), "lat": lat, "lon": lon}, None
+
+
+def _tool_rute_jalan(asal=None, tujuan=None, actions=None) -> dict:
+    a, err = _titik_rute(asal, "asal")
+    if err:
+        return {"error": err}
+    daftar = tujuan if isinstance(tujuan, list) else [tujuan]
+    if len(daftar) > _MAKS_TUJUAN_RUTE:
+        return {"error": f"Maksimal {_MAKS_TUJUAN_RUTE} tujuan per panggilan -- pilih yang terdekat dulu."}
+    titik = []
+    for t in daftar:
+        b, err = _titik_rute(t, "tujuan")
+        if err:
+            return {"error": err}
+        titik.append(b)
+    if not titik:
+        return {"error": "tujuan kosong"}
+    hasil = []
+    for b in titik:
+        garis_lurus_km = round(_GEOD.inv(a["lon"], a["lat"], b["lon"], b["lat"])[2] / 1000, 2)
+        baris = {"tujuan": b["nama"], "jarak_garis_lurus_km": garis_lurus_km}
+        try:
+            r = requests.get(f"{_OSRM_RUTE}/{a['lon']},{a['lat']};{b['lon']},{b['lat']}",
+                             params={"overview": "full", "geometries": "geojson"}, timeout=8)
+            d = r.json()
+            if d.get("code") != "Ok":
+                raise ValueError(d.get("message") or d.get("code"))
+            rt = d["routes"][0]
+            baris.update(jarak_jalan_km=round(rt["distance"] / 1000, 2), waktu_tempuh_menit=round(rt["duration"] / 60),
+                         geometri_osrm=rt["geometry"]["coordinates"])
+        except Exception as e:
+            baris.update(jarak_jalan_km=None, waktu_tempuh_menit=None, geometri_osrm=None,
+                         catatan=f"rute jalan OSRM tidak ditemukan/terjangkau ({str(e)[:80]})")
+        hasil.append({**b, **baris})
+    actions.append({"nama": "tampilkan_rute_jalan", "argumen": {
+        "id": f"rute-{int(time.time() * 1000)}", "asal": a, "tujuan": hasil}})
+    return {
+        "status": "rute digambar di peta (berlabel); tombol 'Buka di Google Maps' tersedia per tujuan",
+        "asal": a["nama"],
+        "rute": [{k: v for k, v in h.items() if k not in ("geometri_osrm", "lat", "lon", "nama")} for h in hasil],
+        "sumber_angka": "OSRM (OpenStreetMap), mobil, tanpa lalu lintas. Garis di peta digambar dari Google "
+                        "Directions bila tersedia, sehingga angka di popup peta bisa sedikit berbeda.",
+    }
+
+
 def _kunci_nama(s) -> str:
     return re.sub(r"[^a-z0-9]", "", str(s or "").lower())
 
@@ -1236,6 +1300,29 @@ def _tool_analisis_kabupaten(nama=None, provinsi=None, actions=None) -> dict:
 CHAT_TOOLS += [{
     "type": "function",
     "function": {
+        "name": "rute_jalan",
+        "description": (
+            "Menghitung & menggambar RUTE JALAN sungguhan (bukan garis lurus) dari satu titik asal ke 1-5 titik "
+            "tujuan: jarak tempuh jalan (km) dan waktu tempuh mobil (menit, tanpa lalu lintas) dari OSRM/"
+            "OpenStreetMap, lalu rute digambar di peta lewat Google Directions beserta label & tombol buka di "
+            "Google Maps. Ambil koordinat asal/tujuan dulu (mis. jalankan_query_sql ST_Y(geom) lat, ST_X(geom) lon)."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "asal": {"type": "object", "properties": {
+                    "nama": {"type": "string"}, "lat": {"type": "number"}, "lon": {"type": "number"}},
+                    "required": ["nama", "lat", "lon"]},
+                "tujuan": {"type": "array", "items":{"type": "object", "properties": {
+                    "nama": {"type": "string"}, "lat": {"type": "number"}, "lon": {"type": "number"}},
+                    "required": ["nama", "lat", "lon"]}},
+            },
+            "required": ["asal", "tujuan"],
+        },
+    },
+}, {
+    "type": "function",
+    "function": {
         "name": "baca_catatan_pengetahuan",
         "description": (
             "Membaca satu CATATAN SUMBER DATA (tabel/kolom/layer yang benar utk satu topik, sudah diverifikasi). "
@@ -1267,6 +1354,7 @@ CHAT_TOOL_DISPATCH = {
     "buat_laporan": _tool_buat_laporan,
     "analisis_kabupaten": _tool_analisis_kabupaten,
     "baca_catatan_pengetahuan": _tool_baca_catatan_pengetahuan,
+    "rute_jalan": _tool_rute_jalan,
     # "tampilkan_usulan_di_peta" SENGAJA tidak didaftarkan di sini -- ada di
     # CLIENT_ACTION_TOOLS, diteruskan ke frontend lewat _run_tool_call, bukan
     # dieksekusi di server.
@@ -1627,7 +1715,7 @@ _POLA_NIHIL = re.compile(r"\btidak ada\b|\btidak ditemukan\b|\bbelum ada data\b|
                          r"(?<![\d.,])0(?:[.,]0+)? ?(%|persen|usulan|baris|data|kegiatan)\b", re.I)
 _POLA_PENOLAKAN = re.compile(r"tidak (boleh|diizinkan|diperbolehkan)|tidak dapat (menghapus|mengubah|menampilkan data pribadi)|"
                              r"read.?only|hanya (dapat )?membaca|privasi|kerahasiaan", re.I)
-_AKSI_PETA = {"tampilkan_di_peta", "tampilkan_usulan_di_peta", "tampilkan_layer_peta_overlay"}
+_AKSI_PETA = {"tampilkan_di_peta", "tampilkan_usulan_di_peta", "tampilkan_layer_peta_overlay", "tampilkan_rute_jalan"}
 
 
 def _periksa_jawaban(pertanyaan: str, teks: str, actions: list, jejak: dict) -> Optional[str]:
@@ -1666,6 +1754,11 @@ def _periksa_jawaban(pertanyaan: str, teks: str, actions: list, jejak: dict) -> 
     if re.search(r"\b(di|ke) peta\b|tampilkan .{0,60}peta", p) and not (aksi & _AKSI_PETA):
         return ("Pengguna meminta ditampilkan di peta, tapi belum ada aksi peta. Panggil tampilkan_di_peta "
                 "(dataset berkolom koordinat/geometri) atau tool peta yang sesuai.")
+    if re.search(r"\brute\b.{0,50}\b(dari|ke|menuju|google|openstreet\w*|osm)\b|\bjarak tempuh\b|\bwaktu tempuh\b", p) \
+            and "tampilkan_rute_jalan" not in aksi and not re.search(r"usulan|ruas|rute ini", p):
+        return ("Pengguna meminta rute jalan / jarak tempuh. Aplikasi PUNYA mesin rute: ambil koordinat asal & tujuan "
+                "(jalankan_query_sql, ST_Y(geom) lat, ST_X(geom) lon), lalu panggil rute_jalan(asal, tujuan). Jangan "
+                "bilang tidak bisa.")
     if re.search(r"\blaporan\b|\bword\b|\bdocx\b", p) and "unduh_laporan" not in aksi:
         return "Pengguna meminta laporan Word, tapi buat_laporan belum dipanggil. Susun isinya lalu panggil buat_laporan."
     if "Peringatan sistem" in teks:

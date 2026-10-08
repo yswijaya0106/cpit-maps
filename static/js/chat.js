@@ -195,6 +195,25 @@ function chatCardHtml(action, msgIdx, actIdx) {
       <button type="button" class="chat-dl" data-act="toggle"><i class="bi bi-eye-slash"></i> <span>Sembunyikan</span></button>
     </div>`;
   }
+  if (action.nama === "tampilkan_rute_jalan") {
+    const asal = a.asal || {};
+    const baris = (a.tujuan || []).map((t) => {
+      const gm = `https://www.google.com/maps/dir/?api=1&origin=${asal.lat},${asal.lon}&destination=${t.lat},${t.lon}&travelmode=driving`;
+      const osm = `https://www.openstreetmap.org/directions?engine=fossgis_osrm_car&route=${asal.lat},${asal.lon};${t.lat},${t.lon}`;
+      const jarak = t.jarak_jalan_km != null ? `${chatFmt(t.jarak_jalan_km)} km · ${t.waktu_tempuh_menit} mnt` : "rute jalan tidak ditemukan";
+      return `<div class="chat-rute-item"><span><strong>${escapeHtml(t.nama)}</strong> — ${escapeHtml(jarak)}
+        <small>(garis lurus ${chatFmt(t.jarak_garis_lurus_km)} km)</small></span>
+        <a class="chat-dl" href="${gm}" target="_blank" rel="noopener"><i class="bi bi-google"></i> Google Maps</a>
+        <a class="chat-dl" href="${osm}" target="_blank" rel="noopener"><i class="bi bi-map"></i> OSM</a></div>`;
+    }).join("");
+    return `<div class="chat-card" data-card="peta" data-key="${key}" data-id="${escapeHtml(a.id || "")}">
+      <div class="chat-card-head"><i class="bi bi-signpost-split"></i> <span>Rute jalan dari ${escapeHtml(asal.nama || "asal")}</span></div>
+      <div class="chat-card-body">${baris}</div>
+      <div class="chat-card-foot">
+        <button type="button" class="chat-dl" data-act="zoom"><i class="bi bi-zoom-in"></i> Zoom</button>
+        <button type="button" class="chat-dl" data-act="toggle"><i class="bi bi-eye-slash"></i> <span>Sembunyikan</span></button></div>
+    </div>`;
+  }
   if (action.nama === "unduh_laporan") {
     return `<div class="chat-card chat-card-inline">
       <i class="bi bi-file-earmark-word"></i> <span><strong>${escapeHtml(a.nama_berkas || "Laporan.docx")}</strong>${a.lampiran ? ` · ${a.lampiran} lampiran tabel` : ""}</span>
@@ -324,11 +343,17 @@ async function chatTampilkanDiPeta(a) {
     if (!(k in warnaKat)) warnaKat[k] = CHAT_LAYER_PALET[Object.keys(warnaKat).length % CHAT_LAYER_PALET.length];
     return warnaKat[k];
   };
+  // Label nama tetap tampil di atas titik bila sedikit (banyak titik -> label saling tumpuk, cukup popup)
+  let nTitik = 0;
+  data.forEach((f) => { if (f.getGeometry()?.getType() === "Point") nTitik++; });
+  const pakaiLabel = a.kolom_label && nTitik <= 80;
   data.setStyle((f) => {
     const c = warnaOf(f);
     const t = f.getGeometry().getType();
     if (t === "Point" || t === "MultiPoint") {
-      return { icon: { path: google.maps.SymbolPath.CIRCLE, scale: 6, fillColor: c, fillOpacity: 0.95, strokeColor: "#fff", strokeWeight: 1.5 }, zIndex: 60 };
+      return { icon: chatIkonTitik(chatGlyphFitur(f, a.kolom_label, a.judul), c, { path: google.maps.SymbolPath.CIRCLE, scale: 6, fillColor: c,
+        fillOpacity: 0.95, strokeColor: "#fff", strokeWeight: 1.5, labelOrigin: new google.maps.Point(0, -2.8) }),
+        label: pakaiLabel && t === "Point" && f.getProperty(a.kolom_label) != null ? chatLabelTitik(chatFmt(f.getProperty(a.kolom_label))) : null, zIndex: 60 };
     }
     return { strokeColor: c, strokeWeight: 3, strokeOpacity: 0.95, fillColor: c, fillOpacity: 0.25, zIndex: 55 };
   });
@@ -356,6 +381,100 @@ async function chatTampilkanDiPeta(a) {
     data, bounds, judul: a.judul || "Hasil analisis asisten", kolomWarna: a.kolom_warna || null,
     kolomLabel: a.kolom_label || null, warnaKat, warna: CHAT_LAYER_PALET[0],
     jenis: Object.entries(jenisN).sort((x, y) => y[1] - x[1])[0][0], jumlah: fc.features.length,
+  };
+  renderChatMessages();
+  chatLayerBerubah();
+}
+
+// Ikon titik hasil chat = ikon jenis yg sama dgn layer overlay (pesawat utk bandara, jangkar utk pelabuhan, ...;
+// POINT_GLYPH_RULES di maps-overlay.js), ditebak dari nama/kolom fitur. Tak dikenali -> lingkaran biasa.
+function chatGlyphTeks(teks) {
+  if (teks == null || typeof POINT_GLYPH_RULES === "undefined") return null;
+  const t = String(teks).toUpperCase().replace(/_/g, " ");
+  const hit = [...RTRW_JENIS_GLYPH_RULES, ...POINT_GLYPH_RULES].find(([re]) => re.test(t));
+  return hit && hit[1] !== "jalan" ? hit[1] : null;
+}
+
+// Urutan: nilai kolom label -> nama kolom label (mis. "nama_pelabuhan") -> judul layer.
+// Nilai kolom lain sengaja tidak dipakai: baris "pelabuhan terdekat dari bandara X" memuat nama bandara juga.
+function chatGlyphFitur(f, kolomLabel, judul) {
+  return (kolomLabel && (chatGlyphTeks(f.getProperty(kolomLabel)) || chatGlyphTeks(kolomLabel))) || chatGlyphTeks(judul);
+}
+
+function chatIkonTitik(glyph, warna, cadangan) {
+  if (!glyph || typeof pointIcon !== "function") return cadangan;
+  return pointIcon(glyph, warna, 1, 26);
+}
+
+// Label teks di atas titik (Data style `label` + icon.labelOrigin); dipakai layer hasil chat & rute jalan.
+function chatLabelTitik(teks) {
+  if (teks == null || teks === "") return null;
+  return { text: String(teks), fontSize: "11px", fontWeight: "600", color: "#111827", className: "layer-label-teks" };
+}
+
+/* Rute jalan dari tool rute_jalan (chat_providers.py): digambar dari Google
+   Directions (directionsRequest, routing.js); bila Google gagal, geometri OSRM
+   kiriman server dipakai. Disimpan sbg layer hasil chat -> ikut legenda & cetak peta. */
+async function chatTampilkanRuteJalan(a) {
+  if (!state.map || !a.asal || !Array.isArray(a.tujuan)) return;
+  state.chatLayers = state.chatLayers || {};
+  Object.values(state.chatLayers).forEach((l) => l.data.setMap(null));
+  const asal = { lat: a.asal.lat, lng: a.asal.lon };
+  const data = new google.maps.Data();
+  const warnaKat = {};
+  const bounds = new google.maps.LatLngBounds(asal);
+  data.add({ geometry: new google.maps.Data.Point(asal), properties: { Nama: a.asal.nama, Peran: "Asal", _warna: "#dc2626" } });
+
+  for (const [i, t] of a.tujuan.entries()) {
+    const warna = CHAT_LAYER_PALET[(i + 1) % CHAT_LAYER_PALET.length];
+    const tujuan = { lat: t.lat, lng: t.lon };
+    let path = null, km = t.jarak_jalan_km, menit = t.waktu_tempuh_menit, sumber = "OSRM (OpenStreetMap)";
+    try {
+      const res = await directionsRequest(asal, tujuan, [], google.maps.TravelMode.DRIVING, false, false);
+      const r = res.routes[0];
+      path = r.overview_path;
+      km = Math.round(r.legs[0].distance.value / 10) / 100;
+      menit = Math.round(r.legs[0].duration.value / 60);
+      sumber = "Google Directions";
+    } catch (err) {
+      if (t.geometri_osrm) path = t.geometri_osrm.map(([lon, lat]) => ({ lat, lng: lon }));
+    }
+    const ringkas = km != null ? `${chatFmt(km)} km · ${menit} mnt` : "tanpa rute jalan";
+    warnaKat[`${t.nama} (${ringkas})`] = warna;
+    if (path) {
+      data.add({
+        geometry: new google.maps.Data.LineString(path),
+        properties: { Nama: `${a.asal.nama} → ${t.nama}`, "Jarak jalan (km)": km, "Waktu tempuh (menit)": menit,
+          "Jarak garis lurus (km)": t.jarak_garis_lurus_km, "Sumber rute": sumber, _warna: warna },
+      });
+      path.forEach((p) => bounds.extend(p));
+    }
+    data.add({ geometry: new google.maps.Data.Point(tujuan), properties: { Nama: t.nama, Peran: "Tujuan", Rute: ringkas, _warna: warna } });
+    bounds.extend(tujuan);
+  }
+
+  data.setStyle((f) => {
+    const c = f.getProperty("_warna") || CHAT_LAYER_PALET[0];
+    if (f.getGeometry().getType() === "Point") {
+      const teks = f.getProperty("Peran") === "Tujuan" ? `${f.getProperty("Nama")} — ${f.getProperty("Rute")}` : f.getProperty("Nama");
+      return { icon: chatIkonTitik(chatGlyphTeks(f.getProperty("Nama")), c, { path: google.maps.SymbolPath.CIRCLE, scale: 7, fillColor: c,
+        fillOpacity: 1, strokeColor: "#fff", strokeWeight: 2, labelOrigin: new google.maps.Point(0, -2.6) }), label: chatLabelTitik(teks), zIndex: 62 };
+    }
+    return { strokeColor: c, strokeWeight: 5, strokeOpacity: 0.85, zIndex: 58 };
+  });
+  const info = new google.maps.InfoWindow();
+  data.addListener("click", (e) => {
+    const rows = [];
+    e.feature.forEachProperty((v, k) => { if (!k.startsWith("_")) rows.push(`<tr><th>${escapeHtml(k)}</th><td>${escapeHtml(chatFmt(v))}</td></tr>`); });
+    info.setContent(`<div class="chat-map-info"><table>${rows.join("")}</table></div>`);
+    info.setPosition(e.latLng);
+    info.open(state.map);
+  });
+  data.setMap(state.map);
+  state.map.fitBounds(bounds, 60);
+  state.chatLayers[a.id || `rute-${Date.now()}`] = {
+    data, bounds, judul: `Rute jalan dari ${a.asal.nama}`, kolomWarna: null, kolomLabel: "Nama",
+    warnaKat, warna: CHAT_LAYER_PALET[1], jenis: "garis", jumlah: a.tujuan.length,
   };
   renderChatMessages();
   chatLayerBerubah();
@@ -572,6 +691,7 @@ const CHAT_CLIENT_ACTIONS = {
     showMapLayer(args.provinsi, args.kabupaten ?? "", args.layer);
   },
   tampilkan_di_peta: (args) => { chatTampilkanDiPeta(args || {}).catch((e) => console.error(e)); },
+  tampilkan_rute_jalan: (args) => { chatTampilkanRuteJalan(args || {}).catch((e) => console.error(e)); },
   // analisis_kabupaten (chat_providers.py): ruas usulan IJD kab/kota itu dipilih (multi-select) & peta di-zoom.
   tampilkan_usulan_kabupaten: (args) => { chatTampilkanUsulanKabupaten(args || {}).catch((e) => console.error(e)); },
   zoom_ke_bbox: (args) => {
@@ -629,6 +749,7 @@ const CHAT_CONTOH_POOL = [
   "Bandingkan tren penumpang dan bongkar muat barang pelabuhan di {prov} beberapa tahun terakhir",
   "Kabupaten/kota mana di {prov} yang tidak dilalui koridor IJD sama sekali?",
   "Rangkum data kecelakaan lalu lintas di {prov} 2020-2025 dalam grafik tren",
+  "Rute jalan dari bandara utama di {prov} ke pelabuhan terdekat: berapa jarak dan waktu tempuhnya? Tampilkan di peta",
 ];
 
 function chatAcak(arr) {

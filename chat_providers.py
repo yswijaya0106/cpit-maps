@@ -99,6 +99,18 @@ menulis gambar markdown, tautan, atau URL untuk grafik/peta/unduhan (tautan buat
 9. DILARANG KERAS membuat tabel/angka contoh atau placeholder (mis. "Pelabuhan 1", "Lokasi 1", "Jarak 1 km"). \
 Kalau data gagal diambil, katakan apa adanya tanpa tabel. Sistem memeriksa isi tabel jawaban terhadap hasil \
 tool dan menandai tabel yang isinya tidak ditemukan di data.
+
+PERCAKAPAN & KONTEKS:
+- Jawaban Anda sebelumnya di riwayat bisa diakhiri blok <memori>...</memori>, berisi ringkasan langkah yang \
+Anda jalankan saat itu (tool, SQL, jumlah baris, beberapa baris hasil). Itu hasil tool ASLI dari giliran itu: \
+pakai untuk pertanyaan lanjutan ("yang nomor 3 tadi", "kenapa angkanya begitu", "filter hasil tadi") -- \
+lanjutkan dari SQL/hasil itu, jangan mulai dari nol, dan jalankan query baru bila butuh baris di luar \
+cuplikan. JANGAN pernah menulis blok <memori> sendiri di jawaban.
+- Bila pertanyaan baru jelas berganti topik dari riwayat, jawab topik baru saja; jangan bawa wilayah/filter \
+lama kecuali pengguna merujuknya.
+- "Konteks aplikasi saat ini" (rute, usulan yang sedang dibuka, layer peta aktif) adalah apa yang sedang \
+dilihat pengguna di layar. Pakai bila pertanyaannya merujuk ke sana ("rute ini", "usulan ini", "layer yang \
+aktif", "di sini"); abaikan bila pertanyaannya tidak terkait.
 """
 
 CHAT_SEARCH_AVAILABLE_NOTE = (
@@ -579,7 +591,45 @@ def _tool_baca_catatan_pengetahuan(nama=None) -> dict:
 
 
 def _jejak_baru() -> dict:
-    return {"token_masuk": 0, "token_keluar": 0, "tools": [], "sql": [], "hasil": [], "catatan_dibaca": []}
+    return {"token_masuk": 0, "token_keluar": 0, "tools": [], "sql": [], "hasil": [], "catatan_dibaca": [],
+            "langkah": []}
+
+
+# Memori antar-giliran: dulu model hanya melihat teks jawabannya sendiri di
+# riwayat, SQL & hasil tool giliran sebelumnya hilang -> pertanyaan lanjutan
+# ("yang nomor 3 tadi") ditebak atau di-query ulang dari nol. Ringkasan ini
+# dikirim ke frontend (meta.memori), disimpan pada pesan, lalu ikut dikirim
+# balik di riwayat sebagai blok <memori> (lihat chatHistoryPayload di chat.js).
+_TOOLS_TANPA_MEMORI = {"daftar_tabel_database", "baca_catatan_pengetahuan", "tampilkan_tabel", "buat_grafik",
+                       "tampilkan_di_peta", "buat_laporan", "daftar_layer_peta_overlay"}
+_MAKS_MEMORI = 4000
+_POLA_MEMORI = re.compile(r"<memori>(.*?)</memori>", re.DOTALL)
+
+
+def _langkah_ringkas(name: str, args: dict, hasil) -> Optional[str]:
+    if name in _TOOLS_TANPA_MEMORI:
+        return None
+    args = args or {}
+    masukan = (" ".join(str(args["sql"]).split())[:800] if args.get("sql")
+               else json.dumps(args, ensure_ascii=False, default=str)[:200])
+    if not isinstance(hasil, dict):
+        keluaran = json.dumps(jsonable_encoder(hasil), ensure_ascii=False, default=str)[:600]
+    elif hasil.get("error"):
+        keluaran = "galat: " + str(hasil["error"])[:300]
+    elif "pratinjau_baris" in hasil:
+        n = hasil.get("jumlah_baris")
+        ds = f", dataset {hasil['dataset_id']}" if hasil.get("dataset_id") else ""
+        cuplik = json.dumps(jsonable_encoder((hasil.get("pratinjau_baris") or [])[:5]), ensure_ascii=False,
+                            default=str)[:1200]
+        keluaran = f"{n} baris{ds}; 5 baris pertama: {cuplik}"
+    else:
+        keluaran = json.dumps(jsonable_encoder(hasil), ensure_ascii=False, default=str)[:800]
+    return f"- {name}({masukan}) -> {keluaran}"
+
+
+def _memori_jawaban(jejak: dict) -> str:
+    teks = "\n".join(jejak.get("langkah") or [])
+    return teks if len(teks) <= _MAKS_MEMORI else teks[:_MAKS_MEMORI] + "\n- …(dipotong)"
 
 
 def _catat_token(masuk, keluar):
@@ -1226,8 +1276,12 @@ def _chat_system_text(context: Optional[dict], has_search: bool = False, dengan_
     if dengan_catatan:
         system_text += _CATATAN.get()
     if context:
-        system_text += "\n\nData rute saat ini (JSON):\n" + json.dumps(context, ensure_ascii=False)
+        system_text += "\n\n" + _teks_konteks(context)
     return system_text
+
+
+def _teks_konteks(context: dict) -> str:
+    return "Konteks aplikasi saat ini (JSON):\n" + json.dumps(context, ensure_ascii=False)
 
 
 def _run_tool_call(name: str, args: dict, actions: list) -> dict:
@@ -1254,6 +1308,10 @@ def _run_tool_call(name: str, args: dict, actions: list) -> dict:
                 and any(not isinstance(v, str) for v in prat[0].values()):
             n = 0
         jejak["hasil"].append({"tool": name, "n": n, "error": hasil.get("error")})
+    if jejak is not None:
+        langkah = _langkah_ringkas(name, args, hasil)
+        if langkah:
+            jejak["langkah"].append(langkah)
     rekam = _HASIL_TOOL.get()
     if rekam is not None:
         rekam.append(json.dumps(jsonable_encoder(hasil), ensure_ascii=False, default=str)[:200000])
@@ -1494,7 +1552,7 @@ def _call_claude(api_key: str, model: str, messages: List, context: Optional[dic
             if _CATATAN.get():  # catatan topik berbeda per pertanyaan -> di LUAR blok yg di-cache
                 system_blocks.append({"type": "text", "text": _CATATAN.get().strip()})
             if context:  # konteks rute berubah-ubah -> di LUAR blok yg di-cache
-                system_blocks.append({"type": "text", "text": "Data rute saat ini (JSON):\n" + json.dumps(context, ensure_ascii=False)})
+                system_blocks.append({"type": "text", "text": _teks_konteks(context)})
             response = client.messages.create(
                 model=model,
                 max_tokens=16000,
@@ -1804,8 +1862,11 @@ def _call_chat(messages: List, context: Optional[dict], pengguna: Optional[str] 
     errors = []
     gagal = []
     mulai = time.time()
+    # Blok <memori> di riwayat = hasil tool ASLI giliran sebelumnya: ikut jadi sumber
+    # _periksa_tabel_karangan supaya angka yg dipakai ulang tidak ditandai karangan.
+    memori_lama = [b for m in messages if m.role == "assistant" for b in _POLA_MEMORI.findall(m.text or "")]
     for name, model, call in providers:
-        _HASIL_TOOL.set([])  # direset per provider: hasil tool provider yg gagal tidak ikut dihitung
+        _HASIL_TOOL.set(list(memori_lama))  # direset per provider: hasil tool provider yg gagal tidak ikut dihitung
         jejak = _jejak_baru()
         _JEJAK.set(jejak)
         try:
@@ -1845,7 +1906,9 @@ def _call_chat(messages: List, context: Optional[dict], pengguna: Optional[str] 
             "catatan": list(dict.fromkeys(list(_CATATAN_NAMA.get()) + jejak["catatan_dibaca"])),
             "sql_galat": [h["error"] for h in jejak["hasil"]
                           if h["tool"] == "jalankan_query_sql" and h["error"]][:10],
+            "memori": _memori_jawaban(jejak),
         }
+        teks = _POLA_MEMORI.sub("", teks).strip()  # model meniru blok <memori> dari riwayat
         return teks, actions, meta
 
     # Pesan ringkas utk pengguna (alasan per provider); pesan asli sudah di log server.

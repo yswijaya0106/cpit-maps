@@ -1196,14 +1196,34 @@
         </div>
 
         <div class="map-fab-group">
-          <button id="btnChatToggle" class="fab" title="Asisten The Next - SiJalan (Gemini)"><i
+          <button id="btnChatToggle" class="fab" title="Asisten AI The Next - SiJalan"><i
               class="bi bi-stars"></i></button>
           <button id="btnClearAll" class="fab" title="Reset semua"><i class="bi bi-trash-fill"></i></button>
+        </div>
+
+        <!-- Pengumuman fitur Asisten AI, sekali per pengguna (chatTampilkanInfoAi di chat.js) -->
+        <div class="chat-info-ai" id="chatInfoAi" role="dialog" aria-labelledby="chatInfoAiJudul" hidden>
+          <button type="button" class="chat-info-ai-tutup" id="chatInfoAiTutup" aria-label="Tutup"><i
+              class="bi bi-x-lg"></i></button>
+          <div class="chat-info-ai-judul" id="chatInfoAiJudul"><i class="bi bi-stars"></i> Baru: Asisten AI</div>
+          <p>Tanyakan apa saja tentang data di aplikasi ini dengan bahasa sehari-hari. Asisten bisa:</p>
+          <ul>
+            <li>mencari dan menganalisis usulan IJD, data BPS, pelabuhan, bandara, KA, dan layer peta;</li>
+            <li>menyajikan hasil sebagai tabel, grafik, atau peta;</li>
+            <li>membuat unduhan Excel dan laporan Word.</li>
+          </ul>
+          <p class="chat-info-ai-catatan">Jawaban dibuat AI. Periksa angka penting sebelum dipakai.</p>
+          <div class="chat-info-ai-aksi">
+            <button type="button" class="btn btn-primary btn-sm" id="chatInfoAiCoba"><i class="bi bi-chat-dots"></i>
+              Coba sekarang</button>
+          </div>
         </div>
 
         <div class="chat-panel" id="chatPanel" hidden>
           <div class="map-panel-header">
             <span><i class="bi bi-stars"></i> Asisten The Next - SiJalan</span>
+            <button type="button" class="maplayer-close" id="chatBaru" title="Percakapan baru (hapus riwayat & konteks)"
+              aria-label="Percakapan baru"><i class="bi bi-pencil-square"></i></button>
             <button type="button" class="maplayer-close" id="chatStatusBtn" hidden
               title="Status provider AI (admin)" aria-label="Status provider AI"><i class="bi bi-activity"></i></button>
             <button type="button" class="maplayer-close chat-wide-btn" id="chatWide" title="Perlebar / perkecil panel"
@@ -1214,6 +1234,7 @@
           <div class="chat-messages" id="chatMessages"></div>
           <button type="button" class="btn btn-ghost btn-block btn-sm" id="btnChatSummary"><i class="bi bi-magic"></i>
             Ringkasan Rute</button>
+          <div class="chat-konteks" id="chatKonteks" hidden></div>
           <form id="chatForm" class="chat-form">
             <textarea id="chatInput" rows="1" placeholder="Tanya atau minta analisis data… (Shift+Enter = baris baru)"
               autocomplete="off"></textarea>

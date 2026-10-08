@@ -2,22 +2,71 @@
    grafik/peta/laporan dari dataset hasil analisis (chat_dataset.py), unduhan
    Excel/CSV/GeoJSON/Word. Konteks rute aktif tetap dikirim spt sebelumnya. */
 
-function buildChatContext() {
-  const route = state.routes[state.selectedIndex];
-  if (!route) return null;
+/* ---------- Konteks aplikasi (chip di atas kotak input) ----------
+   Dulu konteks rute dikirim diam-diam setiap pertanyaan. Sekarang tiap bagian
+   (rute, usulan yg dibuka, layer aktif) tampil sbg chip yg bisa dilepas (✕);
+   yg dilepas tidak dikirim. Kunci chip memuat identitasnya (mis. usulan:123),
+   jadi membuka usulan lain memunculkan chip baru lagi. */
 
-  const context = {
-    rute: {
-      nama: route.route_name,
-      mode_transportasi: route.transport_mode,
-      jarak_km: route.distance_km,
-      durasi_menit: route.duration_min,
-    },
-  };
-  if (state.lastAdminRegions) context.wilayah_administratif_dilalui = state.lastAdminRegions;
-  if (state.lastRoadClass) context.klasifikasi_jalan_osm = state.lastRoadClass;
-  if (state.lastUsulanNearby) context.usulan_inpres_di_sekitar_rute = state.lastUsulanNearby;
-  return context;
+function chatKonteksBagian() {
+  const bagian = [];
+  const route = state.routes[state.selectedIndex];
+  if (route) {
+    const data = {
+      rute: { nama: route.route_name, mode_transportasi: route.transport_mode, jarak_km: route.distance_km, durasi_menit: route.duration_min },
+    };
+    if (state.lastAdminRegions) data.wilayah_administratif_dilalui = state.lastAdminRegions;
+    if (state.lastRoadClass) data.klasifikasi_jalan_osm = state.lastRoadClass;
+    if (state.lastUsulanNearby) data.usulan_inpres_di_sekitar_rute = state.lastUsulanNearby;
+    bagian.push({ kunci: `rute:${route.route_name || ""}:${route.distance_km}`, ikon: "bi-signpost-split",
+      label: `Rute ${route.distance_km != null ? `${route.distance_km} km` : "aktif"}`, data });
+  }
+  const u = state.usulanDilihat;
+  if (u?.id != null && document.getElementById("usulanBrowseDetail")?.innerHTML.trim()) {
+    bagian.push({ kunci: `usulan:${u.id}`, ikon: "bi-geo-alt", label: `Usulan #${u.id}${u.nama ? ` ${u.nama}` : ""}`,
+      data: { usulan_dibuka: { id: u.id, nama: u.nama, provinsi: u.provinsi, kabupaten_kota: u.kabupaten } } });
+  }
+  const aktif = Object.keys(state.mapLayers?.active || {});
+  if (aktif.length) {
+    const layer = aktif.slice(-8).map((k) => {
+      const m = state.mapLayers.meta[k] || {};
+      return { nama: typeof mapLayerDisplayLabel === "function" ? mapLayerDisplayLabel(k) : m.layer,
+        kelompok: m.provinsi, kabupaten: m.kabupaten, layer: m.layer };
+    });
+    bagian.push({ kunci: `layer:${aktif.join("|")}`, ikon: "bi-layers",
+      label: aktif.length === 1 ? `Layer: ${layer[0].nama}` : `${aktif.length} layer aktif`,
+      judul: layer.map((l) => l.nama).join("\n"), data: { layer_peta_aktif: layer } });
+  }
+  return bagian;
+}
+
+function buildChatContext() {
+  const mati = state.chat.konteksMati || new Set();
+  const bagian = chatKonteksBagian().filter((b) => !mati.has(b.kunci));
+  if (!bagian.length) return null;
+  return Object.assign({}, ...bagian.map((b) => b.data));
+}
+
+function renderChatKonteks() {
+  const el = document.getElementById("chatKonteks");
+  if (!el) return;
+  const mati = state.chat.konteksMati || new Set();
+  const bagian = chatKonteksBagian();
+  el.hidden = !bagian.length;
+  el.innerHTML = bagian.length
+    ? `<span class="chat-konteks-label" title="Yang sedang Anda lihat di layar dan ikut dikirim ke asisten. Klik chip untuk melepas / menyertakan lagi.">Konteks:</span>`
+      + bagian.map((b) => `<button type="button" class="chat-konteks-chip${mati.has(b.kunci) ? " mati" : ""}" data-kunci="${escapeHtml(b.kunci)}"
+          title="${escapeHtml((b.judul || b.label) + (mati.has(b.kunci) ? "\n(tidak dikirim — klik untuk menyertakan)" : "\n(klik untuk tidak mengirim)"))}">
+          <i class="bi ${b.ikon}"></i><span>${escapeHtml(b.label)}</span><i class="bi ${mati.has(b.kunci) ? "bi-plus" : "bi-x"}"></i></button>`).join("")
+    : "";
+  el.querySelectorAll(".chat-konteks-chip").forEach((c) => {
+    c.onclick = () => {
+      const k = c.dataset.kunci;
+      if (mati.has(k)) mati.delete(k); else mati.add(k);
+      state.chat.konteksMati = mati;
+      renderChatKonteks();
+    };
+  });
 }
 
 /* ---------- Markdown ---------- */
@@ -318,6 +367,7 @@ function renderChatMessages() {
     b.onclick = () => chatKirimNilai(Number(b.dataset.msg), Number(b.dataset.nilai));
   });
   listEl.scrollTop = listEl.scrollHeight;
+  renderChatKonteks();
 }
 
 // Baris kecil "dijawab oleh <model>" di bawah jawaban (meta dari /api/chat).
@@ -357,6 +407,7 @@ async function chatKirimNilai(idx, nilai) {
     if (!res.ok) throw new Error((await res.json()).detail || res.statusText);
     m.meta.nilai = nilai || null;
     renderChatMessages();
+    chatSimpan();
     if (nilai === -1) toast("Terima kasih, masukan dicatat untuk perbaikan asisten.");
   } catch (err) {
     toast(`Gagal mengirim penilaian: ${err.message || err}`, true);
@@ -388,15 +439,43 @@ async function chatTampilkanStatusProvider() {
 }
 
 // Riwayat yg dikirim ke backend: teks + catatan dataset yang sudah dibuat,
-// supaya model bisa merujuknya lagi ("ekspor hasil tadi ke Word").
+// supaya model bisa merujuknya lagi ("ekspor hasil tadi ke Word"), + blok
+// <memori> (tool/SQL/cuplikan hasil, dari backend) utk CHAT_MEMORI_GILIRAN
+// jawaban terakhir. Percakapan panjang dipotong ke CHAT_MAKS_RIWAYAT pesan
+// terakhir supaya model tetap fokus & token tidak membengkak.
+const CHAT_MAKS_RIWAYAT = 20;
+const CHAT_MEMORI_GILIRAN = 3;
 function chatHistoryPayload() {
-  return state.chat.messages.filter((m) => !m.contoh && !m.lokal).map((m) => {
+  let msgs = state.chat.messages.filter((m) => !m.contoh && !m.lokal).slice(-CHAT_MAKS_RIWAYAT);
+  while (msgs.length && msgs[0].role !== "user") msgs = msgs.slice(1); // API Claude: pesan pertama harus user
+  const asisten = msgs.filter((m) => m.role === "assistant");
+  const denganMemori = new Set(asisten.slice(-CHAT_MEMORI_GILIRAN));
+  return msgs.map((m) => {
     const ds = (m.actions || []).filter((a) => a.nama === "dataset_tersedia").map((a) => a.argumen);
     const catatan = ds.length
       ? "\n\n[Dataset dari jawaban ini: " + ds.map((d) => `${d.dataset_id} = "${d.judul}" (${d.jumlah_baris} baris; kolom: ${(d.kolom || []).join(", ")})`).join("; ") + "]"
       : "";
-    return { role: m.role, text: (m.text || "") + catatan };
+    const memori = m.memori && denganMemori.has(m) ? `\n\n<memori>\n${m.memori}\n</memori>` : "";
+    return { role: m.role, text: (m.text || "") + catatan + memori };
   });
+}
+
+// Percakapan disimpan per tab (sessionStorage): tidak hilang saat reload
+// (mis. setelah login), hilang saat tab ditutup / "Percakapan baru".
+const CHAT_SIMPAN_KUNCI = "chatPercakapan";
+function chatSimpan() {
+  try {
+    const msgs = state.chat.messages.filter((m) => !m.contoh);
+    if (!msgs.length) { sessionStorage.removeItem(CHAT_SIMPAN_KUNCI); return; }
+    const json = JSON.stringify(msgs);
+    if (json.length < 2_000_000) sessionStorage.setItem(CHAT_SIMPAN_KUNCI, json);
+  } catch (e) { /* storage penuh/diblokir: percakapan berlaku sampai reload */ }
+}
+function chatMuat() {
+  try {
+    const msgs = JSON.parse(sessionStorage.getItem(CHAT_SIMPAN_KUNCI) || "null");
+    return Array.isArray(msgs) && msgs.length ? msgs : null;
+  } catch (e) { return null; }
 }
 
 async function sendChatMessage(text) {
@@ -418,7 +497,7 @@ async function sendChatMessage(text) {
       throw new Error(detail || `HTTP ${res.status}`);
     }
     const data = await res.json();
-    state.chat.messages.push({ role: "assistant", text: data.reply, actions: data.actions || [], meta: data.meta });
+    state.chat.messages.push({ role: "assistant", text: data.reply, actions: data.actions || [], meta: data.meta, memori: data.memori || "" });
     (data.actions || []).forEach(runChatAction);
   } catch (err) {
     console.error(err);
@@ -432,6 +511,7 @@ async function sendChatMessage(text) {
   } finally {
     state.chat.busy = false;
     renderChatMessages();
+    chatSimpan();
   }
 }
 
@@ -561,9 +641,21 @@ function refreshChatContoh() {
 function resetChat() {
   state.chat.messages = [{ role: "assistant", text: CHAT_GREETING, contoh: chatContohDinamis() }];
   state.chat.busy = false;
+  state.chat.konteksMati = new Set();
   Object.values(state.chatLayers || {}).forEach((l) => l.data.setMap(null));
   state.chatLayers = {};
   renderChatMessages();
+  chatSimpan();
+}
+
+// Tombol "Percakapan baru": riwayat & layer hasil chat dibersihkan, asisten
+// mulai dari nol (tidak membawa topik/wilayah percakapan sebelumnya).
+function chatPercakapanBaru() {
+  if (state.chat.busy) return;
+  const adaIsi = state.chat.messages.some((m) => m.role === "user");
+  resetChat();
+  if (adaIsi) toast("Percakapan baru dimulai — asisten tidak lagi membawa konteks percakapan sebelumnya.");
+  document.getElementById("chatInput")?.focus();
 }
 
 function bindChatPanel() {
@@ -577,10 +669,13 @@ function bindChatPanel() {
 
   const statusBtn = document.getElementById("chatStatusBtn");
   statusBtn?.addEventListener("click", chatTampilkanStatusProvider);
+  document.getElementById("chatBaru")?.addEventListener("click", chatPercakapanBaru);
+  input.addEventListener("focus", renderChatKonteks); // konteks bisa berubah selama panel terbuka
 
   toggleBtn.addEventListener("click", () => {
     panel.hidden = !panel.hidden;
     if (!panel.hidden) {
+      chatSembunyikanInfoAi(true);
       // Admin saja (backend _require_admin); dicek saat dibuka krn state.auth bisa berubah (login/logout).
       if (statusBtn) statusBtn.hidden = state.auth.required && state.auth.role !== "admin";
       refreshChatContoh();
@@ -621,5 +716,45 @@ function bindChatPanel() {
     sendChatMessage("Tolong buatkan ringkasan singkat mengenai rute ini berdasarkan data yang tersedia.");
   });
 
-  resetChat();
+  const tersimpan = chatMuat();
+  if (tersimpan) {
+    // Kartu tabel/grafik dimuat ulang dari dataset server; layer peta hasil chat tidak dipulihkan.
+    state.chat.messages = [{ role: "assistant", text: CHAT_GREETING, contoh: [] }, ...tersimpan];
+    state.chat.konteksMati = new Set();
+    renderChatMessages();
+  } else {
+    resetChat();
+  }
+}
+
+/* ---------- Pengumuman fitur Asisten AI (sekali per pengguna per browser) ----------
+   Dipanggil setAppMode() (state.js) saat pengguna masuk ke aplikasi -- jadi
+   tampil setelah login pertama, bukan di halaman pembuka/form login. */
+function chatInfoAiKunci() {
+  return `infoAsistenAi:${state.auth.username || "_"}`;
+}
+
+function chatTampilkanInfoAi() {
+  const el = document.getElementById("chatInfoAi");
+  if (!el || !document.getElementById("chatPanel")?.hidden) return;
+  try { if (localStorage.getItem(chatInfoAiKunci())) return; } catch (e) { /* storage diblokir: tetap tampilkan */ }
+  el.hidden = false;
+  document.getElementById("btnChatToggle")?.classList.add("fab-sorot");
+}
+
+function chatSembunyikanInfoAi(simpan) {
+  const el = document.getElementById("chatInfoAi");
+  if (!el || el.hidden) return;
+  el.hidden = true;
+  document.getElementById("btnChatToggle")?.classList.remove("fab-sorot");
+  if (simpan) { try { localStorage.setItem(chatInfoAiKunci(), "1"); } catch (e) { /* abaikan */ } }
+}
+
+function bindChatInfoAi() {
+  document.getElementById("chatInfoAiCoba")?.addEventListener("click", () => {
+    chatSembunyikanInfoAi(true);
+    const panel = document.getElementById("chatPanel");
+    if (panel?.hidden) document.getElementById("btnChatToggle")?.click();
+  });
+  document.getElementById("chatInfoAiTutup")?.addEventListener("click", () => chatSembunyikanInfoAi(true));
 }

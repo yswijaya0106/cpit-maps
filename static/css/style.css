@@ -1898,6 +1898,44 @@ html::-webkit-scrollbar, body::-webkit-scrollbar, .sidebar::-webkit-scrollbar, .
 @media (max-width: 720px) {
   .chat-panel.is-wide { width: calc(100vw - 28px); height: calc(100vh - 130px); }
 }
+/* Chip konteks (chat.js renderChatKonteks): apa yg ikut dikirim ke asisten */
+.chat-konteks { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; padding: 6px 10px 0; }
+.chat-konteks[hidden] { display: none; }
+.chat-konteks-label { font-size: 11px; color: var(--text-dim); cursor: help; }
+.chat-konteks-chip {
+  display: inline-flex; align-items: center; gap: 4px; max-width: 100%; padding: 2px 6px 2px 8px; border-radius: 999px;
+  border: 1px solid var(--primary); background: rgba(79,124,255,.10); color: var(--text); font-size: 11px;
+  cursor: pointer; font-family: inherit;
+}
+.chat-konteks-chip span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 190px; }
+.chat-konteks-chip > i:first-child { color: var(--primary); }
+.chat-konteks-chip > i:last-child { color: var(--text-dim); }
+.chat-konteks-chip.mati { border-style: dashed; border-color: var(--border); background: none; color: var(--text-dim); }
+.chat-konteks-chip.mati span { text-decoration: line-through; }
+.chat-konteks-chip.mati > i:first-child { color: var(--text-dim); }
+
+/* Pengumuman fitur Asisten AI (chatTampilkanInfoAi), di atas tombol FAB */
+.chat-info-ai {
+  position: absolute; right: 70px; bottom: 74px; z-index: 16; width: min(300px, calc(100vw - 100px));
+  background: var(--panel); color: var(--text); border: 1px solid var(--primary); border-radius: 12px;
+  box-shadow: var(--shadow); padding: 12px 14px; font-size: 12.5px; line-height: 1.45;
+}
+.chat-info-ai[hidden] { display: none; }
+.chat-info-ai::after {
+  content: ""; position: absolute; right: -7px; bottom: 18px; width: 12px; height: 12px; background: var(--panel);
+  border-right: 1px solid var(--primary); border-top: 1px solid var(--primary); transform: rotate(45deg);
+}
+.chat-info-ai-judul { font-weight: 700; font-size: 14px; margin: 0 22px 6px 0; color: var(--primary); }
+.chat-info-ai p { margin: 0 0 6px; }
+.chat-info-ai ul { margin: 0 0 6px; padding-left: 18px; }
+.chat-info-ai-catatan { font-size: 11px; color: var(--text-dim); }
+.chat-info-ai-aksi { display: flex; justify-content: flex-end; }
+.chat-info-ai-tutup {
+  position: absolute; top: 8px; right: 8px; border: 0; background: none; color: var(--text-dim); cursor: pointer; font-size: 12px;
+}
+.fab.fab-sorot { border-color: var(--primary); color: var(--primary); animation: fab-sorot 1.6s ease-in-out infinite; }
+@keyframes fab-sorot { 0%, 100% { box-shadow: var(--shadow), 0 0 0 0 rgba(79,124,255,.45); } 50% { box-shadow: var(--shadow), 0 0 0 8px rgba(79,124,255,0); } }
+@media (prefers-reduced-motion: reduce) { .fab.fab-sorot { animation: none; } }
 
 /* --- Tren Biaya Konstruksi (usulan-inpres.js biayaKonstruksi*) --- */
 .biaya-filter-row { display: flex; flex-wrap: wrap; gap: 10px 16px; padding: 10px 18px; border-bottom: 1px solid var(--border); }

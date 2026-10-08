@@ -75,4 +75,5 @@ function bindUI() {
   bindExportButtons();
   bindUsulanBrowse();
   bindChatPanel();
+  bindChatInfoAi();
 }

@@ -10343,7 +10343,9 @@ def chat(payload: ChatRequest, request: Request):
                                        "durasi_detik", "token_masuk", "token_keluar")}
     tampil["direvisi"] = bool(meta.get("direvisi"))  # Tahap 3: jawaban diperiksa & diperbaiki otomatis
     tampil["chat_log_id"] = log_id
-    return {"reply": reply, "actions": actions, "meta": tampil}
+    # Memori langkah (tool/SQL/cuplikan hasil): disimpan frontend di pesan & dikirim
+    # balik di riwayat supaya pertanyaan lanjutan bisa meneruskan, bukan menebak.
+    return {"reply": reply, "actions": actions, "meta": tampil, "memori": meta.get("memori") or ""}
 
 
 class ChatUmpanBalik(BaseModel):

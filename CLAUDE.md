@@ -786,6 +786,21 @@ Deps: `requirements.txt`, venv at `.venv/` (already gitignored).
     drafts to `chat_pengetahuan/_usulan/` with `status: usulan`, which chat
     never reads. Evidence SQL is re-run by the script into `.bukti.md`.
   - A human promotes a draft with `--terima <draf>`, then reruns uji_chat;
+  **Conversation context (8 Oct 2026):**
+  - Each answer gets a `memori` (tool + SQL + 5 preview rows per step, ≤4,000
+    chars, built by `_langkah_ringkas` from `_JEJAK["langkah"]`). `/api/chat`
+    returns it top-level.
+  - chat.js stores it on the message and sends it back as a `<memori>` block
+    for the last 3 answers only. History is capped at 20 messages.
+  - `_call_chat` seeds `_HASIL_TOOL` with those blocks, so reused numbers
+    aren't flagged as a fabricated table. It also strips any `<memori>` the
+    model echoes.
+  - The header button `#chatBaru` starts a new conversation. The
+    conversation is kept per tab in `sessionStorage`.
+  - Context chips (`#chatKonteks`, `chatKonteksBagian`) show what is sent:
+    rute, the opened usulan and active layers. A clicked chip is not sent.
+  - The one-time "Asisten AI" callout (`#chatInfoAi`) shows after entering
+    the app, per username in `localStorage` (`infoAsistenAi:<user>`).
   (2) `_periksa_tabel_karangan` flags markdown tables whose text cells don't
   appear in any tool result from that request (a fabricated "Pelabuhan 1 |
   Lokasi 1" table was observed);

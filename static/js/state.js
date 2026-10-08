@@ -72,6 +72,8 @@ function setAppMode(mode) {
   if (detail) detail.innerHTML = "";
   if (typeof usulanAppModeChanged === "function") usulanAppModeChanged();
   applyAuthRestrictions();
+  // Pengumuman fitur Asisten AI: sekali per pengguna (chat.js, localStorage)
+  if (typeof chatTampilkanInfoAi === "function") setTimeout(chatTampilkanInfoAi, 800);
 }
 
 function perluLogin() {

@@ -1844,7 +1844,12 @@ html::-webkit-scrollbar, body::-webkit-scrollbar, .sidebar::-webkit-scrollbar, .
 .chat-card-body { padding: 6px 8px; }
 .chat-table-wrap { max-height: 280px; overflow: auto; padding: 0; }
 .chat-table-wrap .chat-table { margin: 0; }
-.chat-table-wrap .chat-table th { position: sticky; top: 0; background: #22305a; }
+/* Kartu tabel: kolom teks dibatasi lebarnya & judul boleh dibungkus, angka tidak
+   dipatah -- supaya kolom angka di kanan tetap terlihat di panel 340px. */
+.chat-table-wrap .chat-table th { white-space: normal; min-width: 56px; max-width: 140px; line-height: 1.25; }
+.chat-table-wrap .chat-table td { max-width: 160px; overflow-wrap: anywhere; }
+.chat-table-wrap .chat-table td.num { white-space: nowrap; max-width: none; }
+.chat-table-wrap .chat-table th { position: sticky; top: 0; background: #22305a; color: #fff; }
 .chat-table-note { padding: 5px 8px; font-size: 11px; color: var(--text-dim); }
 .chat-chart-wrap { height: 240px; position: relative; }
 .chat-panel.is-wide .chat-chart-wrap { height: 340px; }

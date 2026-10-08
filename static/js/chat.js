@@ -223,7 +223,9 @@ function chatHydrateCards(listEl) {
     try {
       const d = await chatFetchDataset(card.dataset.id, 100);
       const lebih = d.total > d.rows.length ? `<div class="chat-table-note">Menampilkan ${d.rows.length} dari ${d.total.toLocaleString("id-ID")} baris — unduh Excel untuk data lengkap.</div>` : "";
-      body.innerHTML = `<table class="chat-table"><thead><tr>${d.columns.map((c) => `<th>${escapeHtml(c)}</th>`).join("")}</tr></thead>
+      // Judul kolom: "_" jadi spasi supaya bisa dibungkus (nama asli di tooltip) -- dulu
+      // "frekuensi_per_minggu" yg tak bisa patah mendorong kolom angka keluar layar.
+      body.innerHTML = `<table class="chat-table"><thead><tr>${d.columns.map((c) => `<th title="${escapeHtml(c)}">${escapeHtml(String(c).replaceAll("_", " "))}</th>`).join("")}</tr></thead>
         <tbody>${d.rows.map((r) => `<tr>${r.map((v) => `<td class="${typeof v === "number" ? "num" : ""}">${escapeHtml(chatFmt(v))}</td>`).join("")}</tr>`).join("")}</tbody></table>${lebih}`;
     } catch (err) {
       body.innerHTML = `<div class="chat-card-loading">${escapeHtml(err.message)}</div>`;

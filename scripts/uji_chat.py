@@ -106,7 +106,8 @@ def periksa(butir, teks, actions, meta, db_sebelum):
     angka = angka_dalam(teks)
     for t in butir.get("angka", []):
         if not cocok_angka(t, angka):
-            gagal.append(f"angka {t['nilai']:g} tidak ada di jawaban")
+            # float(): YAML membaca "13.13e12" (tanpa tanda +) sbg teks, bukan angka
+            gagal.append(f"angka {float(t['nilai']):g} tidak ada di jawaban")
     for t in butir.get("teks_wajib", []):
         alternatif = t if isinstance(t, list) else [t]   # daftar = salah satu cukup
         if not any(x.lower() in teks.lower() for x in alternatif):

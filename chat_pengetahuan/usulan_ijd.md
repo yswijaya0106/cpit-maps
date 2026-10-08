@@ -1,8 +1,9 @@
 ---
 judul: Usulan Inpres / IJD
-kata_kunci: [usulan, inpres, ijd, ruas, sitia, lulus, tidak lulus, seleksi, seleksi sistem, penanganan]
+kata_kunci: [usulan, inpres, ijd, ruas, sitia, lulus, tidak lulus, seleksi, seleksi sistem, penanganan, dpp, diprogramkan, didanai, program ijd, alokasi]
 ---
 - Usulan Inpres/IJD: tabel usulan_inpres = usulan SITIA 2026 (tahun_usulan smallint; provinsi HURUF BESAR mis. 'MALUKU UTARA'; kabupaten_kota, nama_ruas, kode_koridor, panjang_ruas_km; geometri di geom_geojson TEKS GeoJSON -> ST_GeomFromGeoJSON(geom_geojson)).
 - Status lulus seleksi = kolom `seleksi_sistem`, nilai 'LULUS'/'TIDAK LULUS'; TIDAK ADA kolom `status`. Contoh: `WHERE tahun_usulan=2026 AND provinsi='PAPUA SELATAN' AND seleksi_sistem='TIDAK LULUS'`.
 - Panjang: `panjang_ruas_km` = panjang SELURUH ruas, `panjang_penanganan_pemda` = panjang yg diusulkan ditangani (jauh lebih kecil). Satu ruas (kode_ruas) bisa diusulkan >1 paket, jadi SUM(panjang_ruas_km) per wilayah menghitung ganda (Banten: Lebak 341,8 km vs 291,2 km ruas unik). Utk "panjang ruas" pakai ruas unik (MAX per kode_ruas lalu SUM); utk "panjang ditangani" SUM(panjang_penanganan_pemda). Sebut kolom mana yg dipakai.
-- Riwayat lintas tahun 2023-2026: usulan_inpres_riwayat (kolom `tahun`, BUKAN tahun_usulan; provinsi HURUF BESAR; `seleksi_sistem` bisa NULL utk 2024; `diprogramkan`).
+- Riwayat lintas tahun 2023-2026: usulan_inpres_riwayat (kolom `tahun`, BUKAN tahun_usulan; provinsi HURUF BESAR; `seleksi_sistem` bisa NULL utk 2024; `diprogramkan` hanya terisi 'YA' utk 2024 (420) & 2025 (6), KOSONG utk 2023 & 2026 -> JANGAN dipakai utk "diprogramkan 2026").
+- PROGRAM IJD yg didanai (DPP final, BUKAN usulan): program_ijd_riwayat (tahun 2023-2026, alokasi_rp, panjang_jalan_km, panjang_jembatan_m, jenis_kegiatan, kode_kabupaten). "Usulan 2026 yg diprogramkan" = `WHERE tahun=2026 AND usulan_inpres_id IS NOT NULL` -> 617 usulan unik, alokasi tertaut Rp13,13 T; seluruh DPP 2026 = 659 kegiatan Rp14,63 T (42 tanpa tautan usulan). Tahun 2023-2025 tidak punya usulan_inpres_id. Langsung query tabel ini, tidak perlu menjelajah tabel lain.

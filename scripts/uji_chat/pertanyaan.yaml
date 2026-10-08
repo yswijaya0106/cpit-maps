@@ -209,7 +209,7 @@
 
 - id: q31
   kategori: lintas-tabel
-  pertanyaan: Kabupaten/kota mana yang jumlah penumpang domestik bandaranya per penduduk paling tinggi?
+  pertanyaan: Kabupaten/kota mana yang jumlah penumpang domestik bandaranya per jiwa penduduk paling tinggi, dan berapa penumpang per jiwanya?
   harus_memakai: [lalu_lintas_udara_bandara]
   teks_wajib: [Tangerang]
   angka: [{nilai: 12.35, abs: 0.02}]
@@ -245,6 +245,7 @@
 
 - id: q36
   kategori: lintas-tabel
-  pertanyaan: Berapa usulan IJD 2026 yang sudah diprogramkan dalam DPP final 2026, dan berapa total alokasinya?
+  pertanyaan: Berapa usulan IJD 2026 yang sudah diprogramkan dalam DPP final 2026, dan berapa total alokasi kegiatan DPP yang tertaut ke usulan-usulan itu?
   harus_memakai: [program_ijd_riwayat]
-  angka: [{nilai: 617}, {nilai: 13.13e12, rel: 0.003}]
+  # 617 usulan unik / Rp13,13 T tertaut; seluruh DPP 2026 = 659 kegiatan / Rp14,63 T (42 tanpa tautan usulan)
+  angka: [{nilai: 617}, {nilai: 13.13e+12, rel: 0.003}]

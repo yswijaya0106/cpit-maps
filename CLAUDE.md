@@ -801,6 +801,12 @@ Deps: `requirements.txt`, venv at `.venv/` (already gitignored).
     rute, the opened usulan and active layers. A clicked chip is not sent.
   - The one-time "Asisten AI" callout (`#chatInfoAi`) shows after entering
     the app, per username in `localStorage` (`infoAsistenAi:<user>`).
+  - Chat map results (`state.chatLayers`) are NOT in `state.mapLayers.active`
+    (that drives LOD refetch from `/api/maps/layer`). They join the legend via
+    `chatLayerTampil()` in `updateMapLegend` and the print dialog via
+    `printCollectChat`. A new `tampilkan_di_peta` hides earlier chat layers;
+    before, "10 rute teratas" was drawn on top of every route from the
+    previous answer.
   (2) `_periksa_tabel_karangan` flags markdown tables whose text cells don't
   appear in any tool result from that request (a fabricated "Pelabuhan 1 |
   Lokasi 1" table was observed);

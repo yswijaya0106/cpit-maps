@@ -287,12 +287,43 @@ function printCollectMarkers(view) {
   };
 }
 
+// Layer hasil Asisten AI yang sedang tampil (chat.js tampilkan_di_peta) -> 1 layer cetak per dataset,
+// gaya per fitur diambil dari setStyle-nya sendiri (warna kategori ikut).
+function printCollectChat(view) {
+  if (typeof chatLayerTampil !== "function") return [];
+  return chatLayerTampil().map(([id, l]) => {
+    const styleFn = l.data.getStyle();
+    const feats = [];
+    const fields = new Set();
+    let dilewati = 0;
+    l.data.forEach((f) => {
+      const g = f.getGeometry();
+      if (!g || !view.intersects(printGeomBounds(g))) return;
+      if (feats.length >= PRINT_MAX_FEATURES_PER_LAYER) { dilewati++; return; }
+      const geometry = printGeomToGeoJson(g);
+      if (!geometry) return;
+      const properties = printFeatureProps(f);
+      if (l.kolomLabel && properties[l.kolomLabel] != null) properties._label = String(properties[l.kolomLabel]);
+      Object.keys(properties).forEach((k) => fields.add(k));
+      const st = typeof styleFn === "function" ? styleFn(f) : styleFn;
+      feats.push({ gj: { geometry, properties }, style: printStyleFromGoogle(st, printGeomJenis(g.getType()), l.warna) });
+    });
+    const kat = Object.entries(l.warnaKat || {});
+    return {
+      key: `chat:${id}`, nama: l.judul, sumber: "Hasil analisis Asisten AI", warna: kat.length === 1 ? kat[0][1] : l.warna,
+      jenis: l.jenis, fields: [...fields],
+      legend: kat.length > 1 ? kat.map(([teks, warna]) => ({ warna, teks, jenis: l.jenis })) : [],
+      feats, dilewati,
+    };
+  }).filter((x) => x.feats.length);
+}
+
 function printCollectAll() {
   const view = state.map.getBounds();
   const keys = Object.keys(state.mapLayers.active);
   const dupRaw = {};
   keys.forEach((k) => { const r = mapLayerRawName(k); dupRaw[r] = (dupRaw[r] || 0) + 1; });
-  const layers = keys.map((k) => printCollectOverlay(k, view, dupRaw));
+  const layers = keys.map((k) => printCollectOverlay(k, view, dupRaw)).concat(printCollectChat(view));
   [printCollectUsulan(view), printCollectRoutes(view), printCollectMarkers(view)].forEach((l) => l && layers.push(l));
   return layers;
 }

@@ -294,7 +294,7 @@ function chatHydrateCards(listEl) {
       toggle.querySelector("span").textContent = tampil ? "Sembunyikan" : "Tampilkan";
     };
     sync();
-    toggle.onclick = () => { if (!layer) return; layer.data.setMap(layer.data.getMap() ? null : state.map); sync(); };
+    toggle.onclick = () => { if (!layer) return; layer.data.setMap(layer.data.getMap() ? null : state.map); sync(); chatLayerBerubah(); };
     card.querySelector('[data-act="zoom"]').onclick = () => { if (layer && layer.bounds && !layer.bounds.isEmpty()) state.map.fitBounds(layer.bounds, 60); };
   });
 }
@@ -306,7 +306,9 @@ const CHAT_LAYER_PALET = ["#e11d48", "#2563eb", "#16a34a", "#f59e0b", "#9333ea",
 async function chatTampilkanDiPeta(a) {
   if (!state.map || !a.dataset_id) return;
   state.chatLayers = state.chatLayers || {};
-  if (state.chatLayers[a.dataset_id]) state.chatLayers[a.dataset_id].data.setMap(null);
+  // Hasil peta chat sebelumnya disembunyikan (masih bisa ditampilkan lagi dari kartunya):
+  // dulu menumpuk -- "10 rute teratas" tergambar di atas SEMUA rute dari pertanyaan sebelumnya.
+  Object.values(state.chatLayers).forEach((l) => l.data.setMap(null));
   const q = new URLSearchParams({ kolom_geometri: a.kolom_geometri || "", kolom_lat: a.kolom_lat || "", kolom_lon: a.kolom_lon || "" });
   const res = await fetch(`/api/chat/dataset/${encodeURIComponent(a.dataset_id)}/geojson?${q}`);
   if (!res.ok) { toast("Gagal menampilkan hasil analisis di peta", true); return; }
@@ -338,10 +340,40 @@ async function chatTampilkanDiPeta(a) {
     info.open(state.map);
   });
   const bounds = new google.maps.LatLngBounds();
-  data.forEach((f) => f.getGeometry().forEachLatLng((ll) => bounds.extend(ll)));
+  const jenisN = { titik: 0, garis: 0, poligon: 0 };
+  data.forEach((f) => {
+    const g = f.getGeometry();
+    if (!g) return;
+    g.forEachLatLng((ll) => bounds.extend(ll));
+    warnaOf(f); // isi warnaKat utk legenda
+    const t = g.getType();
+    jenisN[/Point/.test(t) ? "titik" : /Polygon/.test(t) ? "poligon" : "garis"]++;
+  });
   if (!bounds.isEmpty()) state.map.fitBounds(bounds, 60);
-  state.chatLayers[a.dataset_id] = { data, bounds, judul: a.judul };
+  state.chatLayers[a.dataset_id] = {
+    data, bounds, judul: a.judul || "Hasil analisis asisten", kolomWarna: a.kolom_warna || null,
+    kolomLabel: a.kolom_label || null, warnaKat, warna: CHAT_LAYER_PALET[0],
+    jenis: Object.entries(jenisN).sort((x, y) => y[1] - x[1])[0][0], jumlah: fc.features.length,
+  };
   renderChatMessages();
+  chatLayerBerubah();
+}
+
+// Layer hasil chat ikut di Legend — Layer Aktif & Cetak Peta (map-tools.js / print-map.js)
+function chatLayerBerubah() {
+  if (typeof updateMapLegend === "function") updateMapLegend();
+}
+
+function chatLayerTampil() {
+  return Object.entries(state.chatLayers || {}).filter(([, l]) => l.data.getMap());
+}
+
+function chatSembunyikanLayer(id) {
+  const l = state.chatLayers?.[id];
+  if (!l) return;
+  l.data.setMap(null);
+  renderChatMessages();
+  chatLayerBerubah();
 }
 
 /* ---------- Render pesan ---------- */
@@ -512,6 +544,11 @@ async function sendChatMessage(text) {
     state.chat.busy = false;
     renderChatMessages();
     chatSimpan();
+    // Setelah jawaban pertama, sorot tombol "Chat baru" sekali: tanda bisa mulai topik baru
+    if (state.chat.messages.filter((m) => m.role === "user").length === 1) {
+      const b = document.getElementById("chatBaru");
+      if (b) { b.classList.remove("sorot"); void b.offsetWidth; b.classList.add("sorot"); }
+    }
   }
 }
 
@@ -646,6 +683,7 @@ function resetChat() {
   state.chatLayers = {};
   renderChatMessages();
   chatSimpan();
+  chatLayerBerubah();
 }
 
 // Tombol "Percakapan baru": riwayat & layer hasil chat dibersihkan, asisten

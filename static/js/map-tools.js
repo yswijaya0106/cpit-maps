@@ -15,12 +15,14 @@ function bindMapToolsToolbar() {
     document.getElementById("mapLegend").hidden = true;
   });
   document.getElementById("mapLegendClearAll").addEventListener("click", () => {
+    if (typeof chatLayerTampil === "function") chatLayerTampil().forEach(([id]) => chatSembunyikanLayer(id));
     clearActiveMapLayers();
   });
   document.getElementById("mapLegendList").addEventListener("click", (e) => {
     const btn = e.target.closest(".map-legend-item-remove");
     if (!btn) return;
-    hideMapLayer(btn.dataset.key);
+    if (btn.dataset.chatId) chatSembunyikanLayer(btn.dataset.chatId);
+    else hideMapLayer(btn.dataset.key);
   });
 
   document.getElementById("btnMeasureFinish").addEventListener("click", finishMeasure);
@@ -765,7 +767,8 @@ function updateMapLegend() {
   const listEl = document.getElementById("mapLegendList");
   if (!listEl) return;
   const keys = Object.keys(state.mapLayers.active);
-  if (!keys.length) {
+  const chatLayers = typeof chatLayerTampil === "function" ? chatLayerTampil() : [];
+  if (!keys.length && !chatLayers.length) {
     listEl.innerHTML = `<div class="maplayer-loading">Belum ada layer overlay aktif</div>`;
     return;
   }
@@ -852,6 +855,30 @@ function updateMapLegend() {
       listEl.appendChild(sub);
     }
   });
+  chatLayers.forEach(([id, l]) => listEl.appendChild(chatLayerLegendHtml(id, l)));
+}
+
+// Simbol legenda sederhana per jenis geometri (layer hasil chat tidak punya ikon jenis)
+function legendSimbolJenis(jenis, warna) {
+  if (jenis === "titik") return `<span style="display:inline-block;width:12px;height:12px;border-radius:50%;background:${warna};border:1.5px solid #fff;box-shadow:0 0 0 1px rgba(0,0,0,.25)"></span>`;
+  if (jenis === "poligon") return `<span class="maplayer-swatch" style="background:${warna}40;border:2px solid ${warna}"></span>`;
+  return `<span style="display:inline-block;width:22px;height:4px;border-radius:2px;background:${warna}"></span>`;
+}
+
+// Layer hasil chat (tampilkan_di_peta, chat.js) di Legend — Layer Aktif; ✕ = sembunyikan
+function chatLayerLegendHtml(id, l) {
+  const wrap = document.createElement("div");
+  const kat = Object.entries(l.warnaKat || {});
+  wrap.innerHTML = `
+    <div class="map-legend-item">
+      ${legendSimbolJenis(l.jenis, kat.length === 1 ? kat[0][1] : l.warna)}
+      <span class="map-legend-item-label" title="Hasil analisis Asisten AI">${escapeHtml(l.judul)} <span class="hint">(asisten AI, ${l.jumlah})</span></span>
+      <button type="button" class="map-legend-item-remove" data-chat-id="${escapeHtml(id)}" title="Sembunyikan hasil ini"><i class="bi bi-x-lg"></i></button>
+    </div>
+    ${kat.length > 1 ? `<div class="map-legend-subitems">${kat.slice(0, 15).map(([t, c]) => `
+      <div class="map-legend-subitem">${legendSimbolJenis(l.jenis, c)}<span class="map-legend-subitem-label">${escapeHtml(t)}</span></div>`).join("")}
+      ${kat.length > 15 ? `<div class="map-legend-subitem"><span class="map-legend-subitem-label">+${kat.length - 15} kategori lain</span></div>` : ""}</div>` : ""}`;
+  return wrap;
 }
 
 

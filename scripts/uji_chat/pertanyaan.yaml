@@ -170,3 +170,81 @@
   pertanyaan: Berapa total panjang ruas jalan yang diusulkan IJD 2026 di Kabupaten Lebak, dan berapa km yang diusulkan ditangani?
   harus_memakai: [usulan_inpres]
   angka: [{nilai: 291.2, rel: 0.01}, {nilai: 104.24, rel: 0.01}]
+
+# ---- Analisis lintas tabel (8 Okt 2026, catatan chat_pengetahuan/analisis_lintas_tabel.md). Kunci join =
+# kode_kabupaten INTEGER (scripts/isi_kode_wilayah.py). Acuan dihitung dari DB staging 8 Okt 2026 dgn SQL resep
+# di catatan itu; perbarui bila tabel sumbernya diimpor ulang.
+- id: q26
+  kategori: lintas-tabel
+  pertanyaan: Kabupaten/kota mana di Jawa Barat yang persentase kemantapan jalannya paling rendah, dan berapa jumlah usulan IJD 2026-nya?
+  harus_memakai: [kemantapan_ijd_2026]
+  teks_wajib: [Sukabumi]
+  angka: [{nilai: 61.5, abs: 0.15}, {nilai: 21}]
+
+- id: q27
+  kategori: lintas-tabel
+  pertanyaan: Tampilkan tabel 5 kabupaten/kota dengan jumlah usulan IJD 2026 per 100 ribu penduduk tertinggi
+  harus_memakai: [penduduk_kecamatan]
+  aksi_wajib: [tampilkan_tabel]
+  teks_wajib: [Bolaang Mongondow Selatan]
+  angka: [{nilai: 22.34, abs: 0.02}]
+
+- id: q28
+  kategori: lintas-tabel
+  pertanyaan: Berapa jumlah usulan IJD 2026 di kabupaten/kota dengan kategori kapasitas fiskal Sangat Rendah, dan berapa yang lulus seleksi sistem?
+  harus_memakai: [kemantapan_ijd_2026]
+  angka: [{nilai: 329}, {nilai: 220}]
+
+- id: q29
+  kategori: lintas-tabel
+  pertanyaan: Berapa usulan IJD 2026 yang berada di kabupaten/kota lokus prioritas perbatasan Bappenas, dan berapa yang lulus seleksi sistem?
+  harus_memakai: [bappenas_lokus_a]
+  angka: [{nilai: 378}, {nilai: 279}]
+
+- id: q30
+  kategori: lintas-tabel
+  pertanyaan: Berapa usulan IJD 2026 yang rutenya melewati kecamatan penghasil kelapa sawit minimal 100 ribu ton per tahun?
+  harus_memakai: [bps_kecamatan_produksi_komoditas]
+  angka: [{nilai: 41}]
+
+- id: q31
+  kategori: lintas-tabel
+  pertanyaan: Kabupaten/kota mana yang jumlah penumpang domestik bandaranya per penduduk paling tinggi?
+  harus_memakai: [lalu_lintas_udara_bandara]
+  teks_wajib: [Tangerang]
+  angka: [{nilai: 12.35, abs: 0.02}]
+
+- id: q32
+  kategori: lintas-tabel
+  pertanyaan: Tampilkan tabel jumlah pelabuhan daerah dan jumlah usulan IJD 2026 per kabupaten/kota di Provinsi Maluku
+  harus_memakai: [pelabuhan_daerah]
+  aksi_wajib: [tampilkan_tabel]
+  teks_wajib: [Maluku Barat Daya]
+  angka: [{nilai: 32}]
+
+- id: q33
+  kategori: lintas-tabel
+  pertanyaan: Ruas jalan nasional mana yang paling padat (rasio volume terhadap kapasitas tertinggi), dan berapa persen kemantapannya menurut survei IRI?
+  harus_memakai: [bps_lhr_ruas_nasional]
+  teks_wajib: [Otista]
+  angka: [{nilai: 5.32, abs: 0.02}]
+
+- id: q34
+  kategori: lintas-tabel
+  pertanyaan: Bandingkan produksi padi 2025 dengan jumlah usulan IJD 2026 untuk 5 kabupaten penghasil padi terbesar di Jawa Tengah
+  harus_memakai: [bps_kabupaten_padi]
+  teks_wajib: [Cilacap, Grobogan]
+  angka: [{nilai: 758568.59, rel: 0.002}, {nilai: 17}]
+
+- id: q35
+  kategori: lintas-tabel
+  pertanyaan: Koridor AWP-1 mana dengan skor CER tertinggi yang juga memiliki usulan IJD 2026?
+  harus_memakai: [cer_awp1_koridor]
+  teks_wajib: [Jatiwangi]
+  angka: [{nilai: 229.0, abs: 0.6}]
+
+- id: q36
+  kategori: lintas-tabel
+  pertanyaan: Berapa usulan IJD 2026 yang sudah diprogramkan dalam DPP final 2026, dan berapa total alokasinya?
+  harus_memakai: [program_ijd_riwayat]
+  angka: [{nilai: 617}, {nilai: 13.13e12, rel: 0.003}]

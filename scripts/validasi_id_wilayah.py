@@ -80,7 +80,9 @@ DIKETAHUI = {
 DIKETAHUI_C = {
     "bps_data_bandara": "kode_provinsi non-BPS (PBD 97, Sulsel 73, Sulteng 74) -- kode_kabupaten yang dipakai, kecuali PBD 98xx",
     "pelabuhan_daerah": "kode_kecamatan berformat desimal 'kab.kec' (1107.05), BUKAN 7 digit BPS; "
-                        "konversi: kab*1000 + kec*10 (745/752 cocok nama)",
+                        "konversi: kab*1000 + kec*10 (745/752 cocok nama) -- versi BPS di kode_*_bps",
+    "bappenas_lokus_a": "LOKPRI_RPJMN: kawasan lintas provinsi (Jabodetabek di bawah 'DKI Jakarta', Morotai di "
+                        "'Papua Barat'); kode_provinsi = provinsi kawasan di sumber, kode_kabupaten benar -> join pakai kode_kabupaten",
 }
 for t, c, tipe in KAB:
     # kolom HARUS dikualifikasi nama tabel: nama seperti kode_kabupaten juga ada di ref_wilayah,
@@ -143,20 +145,34 @@ lapor(r["n"] == 0, f"kabupaten menurut nama pengusul (kode_kabupaten) BEDA denga
 print("              -> scorer memakai kode_kecamatan/1000 bila ada, selain itu nama->kode: sumber kabupaten bisa berbeda antar parameter")
 
 # ---------------------------------------------------------------- E
-print("\nE. Tabel yang HANYA memuat nama wilayah (tanpa kode) -- perlu dipetakan lewat ref_wilayah bila dipakai join")
-NAMA_SAJA = [("dpp_ijd_2025", "provinsi (+ nama kegiatan), sumber Parameter E"), ("psc119_layanan", "provinsi, kabupaten_kota"),
-             ("jpl_prioritas_djka", "provinsi, kota_kab"), ("bps_lhr_ruas_nasional", "provinsi, kabupaten, kecamatan (multi-nilai ';')"),
-             ("angkutan_perintis", "provinsi, wilayah"), ("bps_kinerja_pelabuhan", "provinsi"),
-             ("basarnas_analisis_kantor", "provinsi"), ("list_lokpri_kawasan", "kabupaten"),
-             ("maskapai_organisasi", "geo_provinsi/kabupaten/kecamatan")]
-for t, ket in NAMA_SAJA:
-    n = q(f"SELECT COUNT(*) n FROM {t}")[0]["n"]
-    print(f"  [NAMA SAJA] {t} ({n} baris): {ket}")
-n = q("SELECT COUNT(*) n FROM bps_kecamatan_produksi_komoditas WHERE kode_kecamatan IS NULL")[0]["n"]
-print(f"  [NAMA SAJA] bps_kecamatan_produksi_komoditas.kode_kecamatan kosong di {n} baris (hanya kode_kab + nama kecamatan)")
-tipe = q("""SELECT table_name, data_type FROM information_schema.columns WHERE column_name = 'kode_kab' AND table_schema='public'
-            AND data_type NOT IN ('integer','smallint','bigint') ORDER BY 1""")
-print(f"  [TIPE] kode_kab bertipe teks/CHAR di {len(tipe)} tabel (bps_*, bappenas_koridor) vs INTEGER di tabel lain -- butuh cast ::text/trim saat join")
+# Sejak 8 Okt 2026 tabel yg dulu hanya memuat NAMA wilayah (dan tabel bps_* ber-kode_kab CHAR/98xx)
+# punya kolom ID INTEGER seragam, diisi scripts/isi_kode_wilayah.py. Kolom itu KOSONG lagi setiap
+# tabelnya diimpor ulang (importer DELETE+INSERT) -> cek di sini supaya ketahuan.
+print("\nE. Kolom ID tambahan dari scripts/isi_kode_wilayah.py (kosong = jalankan ulang skrip itu)")
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from isi_kode_wilayah import TABEL, kolom_output  # noqa: E402
+# baris yg memang tak punya kab/kec (tingkat provinsi, lintas wilayah, nama bukan wilayah): tidak boleh 0%
+MIN_TERISI = {"kode_provinsi": 0.85, "kode_provinsi_bps": 0.85, "kode_kabupaten": 0.5, "kode_kabupaten_bps": 0.5,
+              "kode_kecamatan": 0.3, "kode_kecamatan_bps": 0.3}
+REF = {"prov": ("ref_wilayah_provinsi", "kode_provinsi"), "kab": ("ref_wilayah_kabupaten", "kode_kabupaten"),
+       "kec": ("ref_wilayah", "kode_kecamatan")}
+for cfg in TABEL:
+    t = cfg["tabel"]
+    if not q("SELECT to_regclass(%s) AS t", (f"public.{t}",))[0]["t"]:
+        continue
+    cols = {x["column_name"] for x in q("SELECT column_name FROM information_schema.columns WHERE table_name=%s", (t,))}
+    for lv, kol in kolom_output(cfg).items():
+        if kol not in cols:
+            lapor(False, f"{t}.{kol} belum ada -- jalankan scripts/isi_kode_wilayah.py")
+            continue
+        rt, rk = REF[lv]
+        r = q(f"""SELECT COUNT(*) n, COUNT({t}.{kol}) isi, COUNT(*) FILTER (WHERE {t}.{kol} IS NOT NULL AND NOT EXISTS
+                  (SELECT 1 FROM {rt} w WHERE w.{rk} = {t}.{kol})) orphan FROM {t}""")[0]
+        pct = r["isi"] / r["n"] if r["n"] else 1
+        # angkutan_perintis.wilayah umumnya nama KSPN/kota tujuan, bukan kab; maskapai_organisasi
+        # ~40% organisasi luar negeri / tanpa alamat -> ambang longgar
+        ambang = {("angkutan_perintis", "kab"): 0, ("maskapai_organisasi", "prov"): 0.5}.get((t, lv), MIN_TERISI.get(kol, 0.5))
+        lapor(r["orphan"] == 0 and pct >= ambang, f"{t}.{kol}: terisi {r['isi']}/{r['n']} ({pct:.0%}), orphan={r['orphan']}")
 
 print(f"\nRingkasan: {masalah} temuan MASALAH baru" + (" -> exit 1" if masalah else " (semua sesuai/DIKETAHUI)"))
 sys.exit(1 if masalah else 0)

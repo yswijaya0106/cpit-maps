@@ -1361,6 +1361,33 @@ scripts/tables/layers out to staging.
   `ref_wilayah`, kualifikasi nama tabel pada kolom `kode_kabupaten` (nama
   sama di kedua sisi → subquery membandingkan ref dengan dirinya sendiri,
   selalu cocok, orphan tampak 0 padahal ada).
+  **8 Oct 2026, ID columns everywhere:** `scripts/isi_kode_wilayah.py` gives
+  every table that stores provinsi/kab/kec names a uniform INTEGER
+  `kode_provinsi`/`kode_kabupaten`/`kode_kecamatan`. That covers 24 tables:
+  bandara_kemenhub, bps_lhr_ruas_nasional, psc119, the bps_* tables with CHAR
+  `kode_kab`, kemantapan (98xx → 92xx), and others.
+  - Source columns are never changed. Tables whose existing codes aren't BPS
+    get `*_bps` columns instead: `pelabuhan_daerah` (like
+    `bps_data_bandara`).
+  - Matching tries the name first (`PencocokKabupaten`, plus kecamatan inside
+    its kab with number prefixes stripped and a unique ≥0.88 fuzzy match). A
+    source code is used only as a fallback.
+  - LHR ruas spanning several kab have `kode_kabupaten` NULL; the list is in
+    `kode_kabupaten_semua INTEGER[]`.
+  - **Importers DELETE+INSERT and wipe these columns**, so rerun the script
+    after any reimport. `validasi_id_wilayah.py` section E flags empty
+    columns.
+  - The chat assistant's join rule (system prompt point 10, plus note
+    `chat_pengetahuan/analisis_lintas_tabel.md`) depends on them.
+  - One pre-existing column was filled too:
+    `bps_kecamatan_potensi_tematik.kode_kecamatan` went from 12 to 6,291 of
+    6,425 rows. The IJD export column "Temuan Data Quality — Outlier
+    Produksi Kecamatan" and the Aspek B production facts (app.py
+    `potensi_produksi_by_kec`) look rows up by it, so since 8 Oct 2026 they
+    find data for many more usulan. This was approved by the user. Scores
+    A–E and NPR are unaffected (they read `kode_kab`).
+  - The script was run against the staging DB: local `.env` is an SSH
+    tunnel to staging.
 - **Skor Urgensitas Penanganan Pelabuhan (Laut, DRAF) — ruas jalan terdekat**
   (24 Sep 2026): kolom "Ruas IJD Terdekat" di preview/export diganti **ruas jalan
   terdekat dari SEMUA jaringan** (nasional, provinsi, tol, dan 202 layer jalan

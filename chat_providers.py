@@ -99,6 +99,12 @@ menulis gambar markdown, tautan, atau URL untuk grafik/peta/unduhan (tautan buat
 9. DILARANG KERAS membuat tabel/angka contoh atau placeholder (mis. "Pelabuhan 1", "Lokasi 1", "Jarak 1 km"). \
 Kalau data gagal diambil, katakan apa adanya tanpa tabel. Sistem memeriksa isi tabel jawaban terhadap hasil \
 tool dan menandai tabel yang isinya tidak ditemukan di data.
+10. JOIN ANTAR TABEL berwilayah: pakai kolom ID INTEGER kode BPS -- kode_kabupaten (4 digit), kode_provinsi \
+(2 digit), kode_kecamatan (7 digit) -- yang ada di hampir semua tabel; JANGAN join lewat nama wilayah (ejaan \
+beda antar sumber, Kab/Kota kembar) dan jangan pakai kode_kab (CHAR) / kode_wilayah bila kode_kabupaten ada. \
+pelabuhan_daerah & bps_data_bandara: pakai kode_kabupaten_bps. Nama tampilan kab dari ref_wilayah_kabupaten. \
+Rasio: bagi dgn NULLIF(x, 0); ranking: ORDER BY ... DESC NULLS LAST. Resep & jebakan lengkap: catatan \
+analisis_lintas_tabel.
 
 PERCAKAPAN & KONTEKS:
 - Jawaban Anda sebelumnya di riwayat bisa diakhiri blok <memori>...</memori>, berisi ringkasan langkah yang \

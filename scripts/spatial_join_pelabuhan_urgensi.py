@@ -18,7 +18,9 @@ PP/PR/PL (tidak ada PU, lihat checklist).
 "Sehirarki terdekat" dihitung PER GRUP hirarki_kode (PP dibanding PP lain
 saja, dst) via geography::ST_Distance, HANYA di antara baris yang punya
 lat/lon (~66% dari total, lihat checklist "Temuan tambahan") -- baris
-tanpa koordinat dibiarkan NULL, bukan error.
+tanpa koordinat dibiarkan NULL, bukan error. Pembandingnya ikut mencakup
+register pelabuhan nasional (layer PELABUHAN PENUMPANG), lihat
+SQL_SEHIRARKI_TERDEKAT.
 
 Koordinat kosong di sumber diisi dulu dari titik layer peta PELABUHAN /
 PELABUHAN PENUMPANG (cocok nama + provinsi, ditandai di kolom
@@ -56,6 +58,58 @@ SCHEMA_FILE = Path(__file__).resolve().parent / "schema_pelabuhan_urgensi.sql"
 PENDUDUK_RADIUS_KM = {"PP": 93, "PR": 60, "PL": 40}
 PENDUDUK_UNIT = {"PP": "kabupaten", "PR": "kecamatan", "PL": "kecamatan"}
 TAHUN_PENDUDUK = 2025  # satu-satunya tahun yg ada di penduduk_kecamatan saat ini
+
+# Parameter #3: pembanding "sehirarki terdekat" = pelabuhan_daerah + register pelabuhan
+# nasional (layer PELABUHAN PENUMPANG, 546 titik ber-hierarki PU/PP/PR/PL). Sebelum 8 Okt
+# 2026 pembandingnya pelabuhan_daerah saja (cuma 17 PP berkoordinat se-Indonesia), sehingga
+# Meulaboh (PP) mendapat Pulau Tello 522 km padahal Calang (PP, UPP Kemenhub) hanya ~83 km --
+# Calang tidak ada di pelabuhan_daerah. Titik layer yg merupakan pelabuhan itu SENDIRI
+# dikecualikan: <= SAMA_TITIK_KM dari pelabuhan, atau nama sama (huruf/angka saja) dalam
+# SAMA_NAMA_KM (koordinat xlsx sumber bisa meleset beberapa km dari titik register).
+SAMA_TITIK_KM = 2.0  # 1 km masih meloloskan Pulau Balai -> "P. Banyak" (1,0 km, pelabuhan yg sama)
+SAMA_NAMA_KM = 30.0
+SQL_SEHIRARKI_TERDEKAT = f"""
+            kandidat AS MATERIALIZED (
+                SELECT id, hirarki_kode, nama_pelabuhan, lat, lon,
+                       ST_SetSRID(ST_MakePoint(lon, lat), 4326)::geography AS g,
+                       regexp_replace(lower(nama_pelabuhan), '[^a-z0-9]', '', 'g') AS kunci
+                FROM pelabuhan_daerah
+                WHERE hirarki_kode IS NOT NULL AND lat IS NOT NULL AND lon IS NOT NULL
+            ),
+            pembanding AS MATERIALIZED (
+                SELECT id, hirarki_kode, nama_pelabuhan, lat, lon, g, kunci, false AS dari_layer
+                FROM kandidat
+                UNION ALL
+                SELECT NULL::bigint, m.attrs->>'hierarki',
+                       (m.attrs->>'nama_pelabuhan') || ' (register Kemenhub)',
+                       ST_Y(m.geom)::numeric, ST_X(m.geom)::numeric, m.geom::geography,
+                       regexp_replace(lower(m.attrs->>'nama_pelabuhan'), '[^a-z0-9]', '', 'g'), true
+                FROM map_layers m
+                WHERE m.provinsi = 'PELABUHAN PENUMPANG' AND m.layer = 'PELABUHAN PENUMPANG'
+                  AND m.attrs->>'hierarki' IN ('PU', 'PP', 'PR', 'PL')
+                  AND GeometryType(m.geom) = 'POINT'
+            ),
+            terdekat AS (
+                SELECT p.id,
+                       t.id AS terdekat_id,
+                       t.nama_pelabuhan AS terdekat_nama,
+                       ST_Distance(p.g, t.g) / 1000.0 AS jarak_km
+                FROM kandidat p
+                JOIN LATERAL (
+                    SELECT k.id, k.nama_pelabuhan, k.g
+                    FROM pembanding k
+                    WHERE k.hirarki_kode = p.hirarki_kode AND k.id IS DISTINCT FROM p.id
+                      -- koordinat identik = duplikat/salin-tempel di sumber, bukan pelabuhan tetangga
+                      AND (k.lat, k.lon) IS DISTINCT FROM (p.lat, p.lon)
+                      -- titik register yg sebenarnya pelabuhan ini sendiri
+                      AND NOT (k.dari_layer AND (
+                          ST_DWithin(k.g, p.g, {SAMA_TITIK_KM * 1000})
+                          OR (k.kunci = p.kunci AND ST_DWithin(k.g, p.g, {SAMA_NAMA_KM * 1000}))))
+                    ORDER BY k.g <-> p.g
+                    LIMIT 1
+                ) t ON true
+            )
+"""
 
 
 def _run_schema():
@@ -570,28 +624,7 @@ def main():
         )
         cur.execute(
             f"""
-            WITH kandidat AS MATERIALIZED (
-                SELECT id, hirarki_kode, nama_pelabuhan, lat, lon,
-                       ST_SetSRID(ST_MakePoint(lon, lat), 4326)::geography AS g
-                FROM pelabuhan_daerah
-                WHERE hirarki_kode IS NOT NULL AND lat IS NOT NULL AND lon IS NOT NULL
-            ),
-            terdekat AS (
-                SELECT p.id,
-                       t.id AS terdekat_id,
-                       t.nama_pelabuhan AS terdekat_nama,
-                       ST_Distance(p.g, t.g) / 1000.0 AS jarak_km
-                FROM kandidat p
-                JOIN LATERAL (
-                    SELECT k.id, k.nama_pelabuhan, k.g
-                    FROM kandidat k
-                    WHERE k.hirarki_kode = p.hirarki_kode AND k.id <> p.id
-                      -- koordinat identik = duplikat/salin-tempel di sumber, bukan pelabuhan tetangga
-                      AND (k.lat, k.lon) IS DISTINCT FROM (p.lat, p.lon)
-                    ORDER BY k.g <-> p.g
-                    LIMIT 1
-                ) t ON true
-            )
+            WITH {SQL_SEHIRARKI_TERDEKAT}
             UPDATE pelabuhan_daerah p
             SET pelabuhan_sehirarki_terdekat_id = t.terdekat_id,
                 pelabuhan_sehirarki_terdekat_nama = t.terdekat_nama,

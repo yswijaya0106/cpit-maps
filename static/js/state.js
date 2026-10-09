@@ -72,7 +72,7 @@ function setAppMode(mode) {
   if (detail) detail.innerHTML = "";
   if (typeof usulanAppModeChanged === "function") usulanAppModeChanged();
   applyAuthRestrictions();
-  // Pengumuman fitur Asisten AI: sekali per pengguna (chat.js, localStorage)
+  // Hint Asisten AI: tiap kali selesai login (chat.js, flag sessionStorage dari handleLoginSubmit)
   if (typeof chatTampilkanInfoAi === "function") setTimeout(chatTampilkanInfoAi, 800);
 }
 
@@ -205,6 +205,8 @@ async function handleLoginSubmit(e) {
     });
     const data = await res.json();
     if (!res.ok) throw new Error(data.detail || "Login gagal");
+    // Hint Asisten AI tampil sekali setelah login ini (dibaca chatTampilkanInfoAi sesudah reload)
+    try { sessionStorage.setItem(CHAT_INFO_AI_KUNCI, "1"); } catch (e) { /* storage diblokir: hint dilewati */ }
     // Reload paling sederhana & aman drpd re-init manual tiap panel yg
     // sudah terlanjur fetch data (401) sebelum login selesai.
     location.reload();

@@ -799,8 +799,12 @@ Deps: `requirements.txt`, venv at `.venv/` (already gitignored).
     conversation is kept per tab in `sessionStorage`.
   - Context chips (`#chatKonteks`, `chatKonteksBagian`) show what is sent:
     rute, the opened usulan and active layers. A clicked chip is not sent.
-  - The one-time "Asisten AI" callout (`#chatInfoAi`) shows after entering
-    the app, per username in `localStorage` (`infoAsistenAi:<user>`).
+  - The "Asisten AI" callout (`#chatInfoAi`) shows after **every login**
+    (9 Oct 2026; it used to show once per user per browser).
+    `handleLoginSubmit` sets the `sessionStorage` flag `CHAT_INFO_AI_KUNCI`
+    before its reload, and `chatTampilkanInfoAi` consumes it once. Plain
+    reloads and mode switches don't re-show it. With auth disabled, it shows
+    once per tab.
   - Chat map results (`state.chatLayers`) are NOT in `state.mapLayers.active`
     (that drives LOD refetch from `/api/maps/layer`). They join the legend via
     `chatLayerTampil()` in `updateMapLegend` and the print dialog via

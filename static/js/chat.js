@@ -836,7 +836,7 @@ function bindChatPanel() {
   toggleBtn.addEventListener("click", () => {
     panel.hidden = !panel.hidden;
     if (!panel.hidden) {
-      chatSembunyikanInfoAi(true);
+      chatSembunyikanInfoAi();
       // Admin saja (backend _require_admin); dicek saat dibuka krn state.auth bisa berubah (login/logout).
       if (statusBtn) statusBtn.hidden = state.auth.required && state.auth.role !== "admin";
       refreshChatContoh();
@@ -888,34 +888,43 @@ function bindChatPanel() {
   }
 }
 
-/* ---------- Pengumuman fitur Asisten AI (sekali per pengguna per browser) ----------
-   Dipanggil setAppMode() (state.js) saat pengguna masuk ke aplikasi -- jadi
-   tampil setelah login pertama, bukan di halaman pembuka/form login. */
-function chatInfoAiKunci() {
-  return `infoAsistenAi:${state.auth.username || "_"}`;
-}
+/* ---------- Hint Asisten AI: tiap kali selesai login ----------
+   handleLoginSubmit (state.js) memasang flag sessionStorage sebelum reload;
+   setAppMode() memanggil fungsi ini saat pengguna masuk ke aplikasi, flag
+   dipakai sekali lalu dihapus -> reload/ganti mode biasa tidak memunculkannya
+   lagi. Tanpa login (auth nonaktif): sekali per tab. Dulu: sekali per pengguna
+   per browser (localStorage), sehingga pengguna yg sudah pernah menutupnya tak
+   pernah melihatnya lagi. */
+const CHAT_INFO_AI_KUNCI = "infoAsistenAiSetelahLogin";
 
 function chatTampilkanInfoAi() {
   const el = document.getElementById("chatInfoAi");
   if (!el || !document.getElementById("chatPanel")?.hidden) return;
-  try { if (localStorage.getItem(chatInfoAiKunci())) return; } catch (e) { /* storage diblokir: tetap tampilkan */ }
+  try {
+    if (state.auth.required) {
+      if (!sessionStorage.getItem(CHAT_INFO_AI_KUNCI)) return;
+      sessionStorage.removeItem(CHAT_INFO_AI_KUNCI);
+    } else {
+      if (sessionStorage.getItem(CHAT_INFO_AI_KUNCI) === "tampil") return;
+      sessionStorage.setItem(CHAT_INFO_AI_KUNCI, "tampil");
+    }
+  } catch (e) { return; /* storage diblokir: hint dilewati */ }
   el.hidden = false;
   document.getElementById("btnChatToggle")?.classList.add("fab-sorot");
 }
 
-function chatSembunyikanInfoAi(simpan) {
+function chatSembunyikanInfoAi() {
   const el = document.getElementById("chatInfoAi");
   if (!el || el.hidden) return;
   el.hidden = true;
   document.getElementById("btnChatToggle")?.classList.remove("fab-sorot");
-  if (simpan) { try { localStorage.setItem(chatInfoAiKunci(), "1"); } catch (e) { /* abaikan */ } }
 }
 
 function bindChatInfoAi() {
   document.getElementById("chatInfoAiCoba")?.addEventListener("click", () => {
-    chatSembunyikanInfoAi(true);
+    chatSembunyikanInfoAi();
     const panel = document.getElementById("chatPanel");
     if (panel?.hidden) document.getElementById("btnChatToggle")?.click();
   });
-  document.getElementById("chatInfoAiTutup")?.addEventListener("click", () => chatSembunyikanInfoAi(true));
+  document.getElementById("chatInfoAiTutup")?.addEventListener("click", () => chatSembunyikanInfoAi());
 }

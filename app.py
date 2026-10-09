@@ -886,6 +886,7 @@ DATA_TABLES = {
     "ijd_scoring_rules": "Kaidah Skoring IJD",
     "dpp_ijd_2025": "DPP IJD TA 2025 (BA + DPP)",
     "program_ijd_riwayat": "Riwayat Program IJD 2023-2026 (DPP Final, Revisi R1)",
+    "paket_ls_bina_marga": "Paket LS Bina Marga per Provinsi/Satker TA 2021-2025 (DIPA Akhir, Rp)",
     "wilayah_mapping": "Pemetaan Wilayah SITIA ↔ Kode BPS",
     "kecamatan_data_turunan": "Data Turunan Kecamatan (C.A1/C.A3)",
     "penilaian_bappenas_ai": "Draf Penilaian Bappenas (AI)",
@@ -969,6 +970,8 @@ DATA_TABLE_GEO = {
     "koridor_simpul_terdekat": ("kode_provinsi", "kode_kab"),
     "cer_awp1_koridor": ("kode_provinsi", "kode_kabupaten"),
     "program_ijd_riwayat": ("kode_provinsi", "kode_kabupaten"),
+    # level provinsi saja (NOMOR RUAS/LOKASI kosong di sumber), lihat import_paket_ls_bina_marga.py
+    "paket_ls_bina_marga": ("kode_provinsi", "kode_provinsi"),
     # kode dari lokasi titik UPT (bukan "Kode Daerah" sumber), lihat import_bpsdm_perhubungan.py
     **{t: ("kode_provinsi", "kode_kabupaten") for t in (
         "bpsdm_upt", "bpsdm_prodi", "bpsdm_dosen_prodi", "bpsdm_mahasiswa_lulusan",

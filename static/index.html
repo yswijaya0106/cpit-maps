@@ -1196,10 +1196,11 @@
         </div>
 
         <div class="map-fab-group">
-          <button id="btnChatToggle" class="fab" title="Asisten AI The Next - SiJalan"><i
-              class="bi bi-stars"></i></button>
           <button id="btnClearAll" class="fab" title="Reset semua"><i class="bi bi-trash-fill"></i></button>
         </div>
+        <!-- Asisten AI: tombol melayang di pojok kanan bawah layar (position: fixed), panel terbuka di atasnya -->
+        <button id="btnChatToggle" class="fab chat-launcher" title="Asisten AI The Next - SiJalan"
+          aria-controls="chatPanel" aria-expanded="false"><i class="bi bi-stars"></i></button>
 
         <!-- Hint Asisten AI, tampil tiap kali selesai login (chatTampilkanInfoAi di chat.js) -->
         <div class="chat-info-ai" id="chatInfoAi" role="dialog" aria-labelledby="chatInfoAiJudul" hidden>

@@ -844,6 +844,15 @@ function bindChatPanel() {
     }
   });
   closeBtn.addEventListener("click", () => (panel.hidden = true));
+  // Tombol melayang = buka/tutup: ikon ✨ saat tertutup, ✕ saat terbuka. Diamati dari atribut
+  // hidden supaya tetap benar walau panel dibuka/ditutup dari tempat lain (tombol ✕ header, hint).
+  const syncLauncher = () => {
+    toggleBtn.querySelector("i").className = panel.hidden ? "bi bi-stars" : "bi bi-x-lg";
+    toggleBtn.setAttribute("aria-expanded", String(!panel.hidden));
+    toggleBtn.title = panel.hidden ? "Asisten AI The Next - SiJalan" : "Tutup Asisten AI";
+  };
+  new MutationObserver(syncLauncher).observe(panel, { attributes: true, attributeFilter: ["hidden"] });
+  syncLauncher();
   wideBtn?.addEventListener("click", () => {
     const lebar = panel.classList.toggle("is-wide");
     wideBtn.querySelector("i").className = lebar ? "bi bi-fullscreen-exit" : "bi bi-arrows-fullscreen";

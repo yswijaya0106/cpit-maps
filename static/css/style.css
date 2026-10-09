@@ -1533,17 +1533,27 @@ td.checklist-cell .ijd-badge { margin-right: 4px; }
 .btn-export-shp { grid-column: span 2; background: linear-gradient(135deg, var(--accent), #17a889); color: #06231c; }
 
 /* Map floating controls */
-.map-fab-group { position: absolute; right: 14px; bottom: 20px; z-index: 5; display: flex; flex-direction: column; gap: 10px; }
+/* Pojok kanan bawah = tombol Asisten AI (.chat-launcher); tombol lain di atasnya */
+.map-fab-group { position: absolute; right: 18px; bottom: 90px; z-index: 5; display: flex; flex-direction: column; gap: 10px; }
 .fab {
   width: 46px; height: 46px; border-radius: 50%; border: none;
   background: var(--panel); color: var(--text); font-size: 18px; cursor: pointer;
   box-shadow: var(--shadow); border: 1px solid var(--border);
 }
 
-/* Chat panel (asisten Gemini) */
+/* Asisten AI melayang di pojok kanan bawah LAYAR (fixed, bukan relatif area peta) */
+.chat-launcher {
+  position: fixed; right: 18px; bottom: 22px; z-index: 16; width: 56px; height: 56px; font-size: 22px;
+  border: none; color: #fff; background: linear-gradient(135deg, #4f7cff, #1f6fd1);
+  box-shadow: 0 6px 18px rgba(31,111,209,.45); transition: transform .15s ease, box-shadow .15s ease;
+}
+.chat-launcher:hover { transform: translateY(-2px) scale(1.04); box-shadow: 0 8px 22px rgba(31,111,209,.55); }
+.fab.chat-launcher.fab-sorot { color: #fff; border: none; } /* hint aktif: tetap biru, hanya berdenyut */
+
+/* Chat panel: membuka tepat di atas tombol melayang */
 .chat-panel {
-  position: absolute; right: 14px; bottom: 78px; z-index: 15;
-  width: min(340px, calc(100vw - 28px)); height: min(460px, calc(100vh - 180px));
+  position: fixed; right: 18px; bottom: 90px; z-index: 16;
+  width: min(360px, calc(100vw - 28px)); height: min(520px, calc(100vh - 140px));
   background: var(--panel); border: 1px solid var(--border); border-radius: 12px;
   box-shadow: var(--shadow); display: flex; flex-direction: column; overflow: hidden;
 }
@@ -1809,7 +1819,7 @@ html::-webkit-scrollbar, body::-webkit-scrollbar, .sidebar::-webkit-scrollbar, .
 
 /* ---------- Chat analitik (chat.js): markdown, kartu hasil, mode lebar ---------- */
 .chat-panel { transition: width .15s ease, height .15s ease; }
-.chat-panel.is-wide { width: min(900px, calc(100vw - 28px)); height: calc(100vh - 150px); }
+.chat-panel.is-wide { width: min(900px, calc(100vw - 28px)); height: calc(100vh - 130px); }
 .chat-panel .map-panel-header { gap: 4px; }
 .chat-panel .map-panel-header > span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .chat-wide-btn i { font-size: 12px; }
@@ -1940,13 +1950,13 @@ html::-webkit-scrollbar, body::-webkit-scrollbar, .sidebar::-webkit-scrollbar, .
 
 /* Pengumuman fitur Asisten AI (chatTampilkanInfoAi), di atas tombol FAB */
 .chat-info-ai {
-  position: absolute; right: 70px; bottom: 74px; z-index: 16; width: min(300px, calc(100vw - 100px));
+  position: fixed; right: 88px; bottom: 18px; z-index: 16; width: min(300px, calc(100vw - 110px));
   background: var(--panel); color: var(--text); border: 1px solid var(--primary); border-radius: 12px;
   box-shadow: var(--shadow); padding: 12px 14px; font-size: 12.5px; line-height: 1.45;
 }
 .chat-info-ai[hidden] { display: none; }
 .chat-info-ai::after {
-  content: ""; position: absolute; right: -7px; bottom: 18px; width: 12px; height: 12px; background: var(--panel);
+  content: ""; position: absolute; right: -7px; bottom: 26px; width: 12px; height: 12px; background: var(--panel);
   border-right: 1px solid var(--primary); border-top: 1px solid var(--primary); transform: rotate(45deg);
 }
 .chat-info-ai-judul { font-weight: 700; font-size: 14px; margin: 0 22px 6px 0; color: var(--primary); }

@@ -121,6 +121,17 @@ function printLegendSubitems(key, raw, meta, jenis) {
   if (kelasJalan.length) return kelasJalan.map((k) => ({ warna: JALAN_KELAS[k].warna, teks: JALAN_KELAS[k].teks, jenis: "garis" }));
   if (raw === "PETA KORIDOR") return [{ warna: KORIDOR_GAYA.warna, teks: KORIDOR_GAYA.teks, jenis: "garis" }];
   if (raw === AWP1_LAYER) return [{ warna: AWP1_WARNA, teks: "Koridor AWP-1 (skor CER, eksperimental)", jenis: "garis" }];
+  if (meta && meta.provinsi === "BATAS KECAMATAN") {
+    // sorotan kecamatan dilintasi rute usulan (updateKecamatanLintasan, maps-overlay.js)
+    let dilintasi = false;
+    state.mapLayers.active[key]?.forEach((f) => { if (f.getProperty("DILINTASI_RUTE") === "YA") dilintasi = true; });
+    if (dilintasi) {
+      return [
+        { warna: KEC_LINTAS_COLOR, teks: "Kecamatan dilintasi rute usulan", jenis: "poligon" },
+        { warna: mapLayerColor(raw), teks: "Kecamatan lain", jenis: "poligon" },
+      ];
+    }
+  }
   if (raw === STASIUN_LAYER_NAME) {
     return Object.entries(STASIUN_STATUS_COLORS).map(([teks, warna]) => ({ warna, teks, jenis: "titik" }))
       .concat([{ warna: STASIUN_STATUS_DEFAULT_COLOR, teks: "Lainnya / tanpa data", jenis: "titik" }]);
@@ -182,7 +193,10 @@ function printCollectOverlay(key, view, dupRaw) {
   const kelasJalan = jalanKelasDiLayer(key);
   return {
     key,
-    nama: mapLayerDisplayLabel(key) + (dupRaw[raw] > 1 ? ` — ${meta.kabupaten || meta.provinsi}` : ""),
+    // layer BATAS KECAMATAN bernama kab/kota saja ("Kabupaten Lebak") -- beri awalan supaya
+    // di legenda tidak terbaca sebagai batas kabupaten
+    nama: (meta.provinsi === "BATAS KECAMATAN" ? "Batas Kecamatan — " : "")
+      + mapLayerDisplayLabel(key) + (dupRaw[raw] > 1 ? ` — ${meta.kabupaten || meta.provinsi}` : ""),
     sumber: [meta.provinsi, meta.kabupaten].filter(Boolean).join(" / "),
     warna: kelasJalan.length === 1 ? JALAN_KELAS[kelasJalan[0]].warna
       : kelasJalan.length > 1 ? JALAN_KELAS.kabkota.warna
@@ -226,10 +240,16 @@ function printCollectUsulan(view) {
     },
     style: e.style,
   }));
+  // multi-select: tiap usulan punya warna sendiri (lulus/tidak lulus) -> satu baris legenda per usulan
+  const ents = [...byId.values()];
+  const legend = new Set(ents.map((e) => e.style.stroke)).size > 1
+    ? ents.slice(0, 12).map((e) => ({ warna: e.style.stroke, teks: String(e.info.label || e.info.id), jenis: "garis" }))
+      .concat(ents.length > 12 ? [{ warna: "#94a3b8", teks: `… dan ${ents.length - 12} usulan lain`, jenis: "garis" }] : [])
+    : [];
   return {
     key: "__usulan__", nama: "Usulan Inpres (ruas ditampilkan)", sumber: "SITIA — geometri KML usulan",
     warna: feats[0].style.stroke, jenis: "garis", fields: ["_label", ...Object.keys(feats[0].gj.properties).filter((k) => k !== "_label")],
-    legend: [], feats, dilewati: 0,
+    legend, feats, dilewati: 0,
   };
 }
 

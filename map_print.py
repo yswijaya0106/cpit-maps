@@ -1044,6 +1044,7 @@ def build_pdf(req: CetakPetaRequest, pengguna: Optional[str]) -> bytes:
     from reportlab.lib.styles import ParagraphStyle
     from reportlab.lib.units import mm
     from reportlab.lib.utils import ImageReader, simpleSplit
+    from reportlab.pdfbase.pdfmetrics import stringWidth
     from reportlab.platypus import (BaseDocTemplate, Frame, NextPageTemplate, PageBreak, PageTemplate, Paragraph,
                                     Spacer, Table, TableStyle)
 
@@ -1149,8 +1150,10 @@ def build_pdf(req: CetakPetaRequest, pengguna: Optional[str]) -> bytes:
                 _gambar_simbol(c, jenis, warna, x + 2 * mm, y - 1 * mm, 6 * mm, 3.2 * mm, ikon)
                 c.setFillColorRGB(0.2, 0.24, 0.3)
                 c.setFont(fn, 6.8)
-                c.drawString(x + 10 * mm, y, simpleSplit(teks, fn, 6.8, w - 10 * mm)[0] if teks else "")
-                y -= 3.6 * mm
+                baris = simpleSplit(teks, fn, 6.8, w - 10 * mm)[:2] if teks else [""]
+                for i, t in enumerate(baris):
+                    c.drawString(x + 10 * mm, y - i * 2.9 * mm, t)
+                y -= (3.6 + (len(baris) - 1) * 2.9) * mm
             y -= 1.4 * mm
         if sisa:
             c.setFont(fn, 6.5)
@@ -1160,7 +1163,9 @@ def build_pdf(req: CetakPetaRequest, pengguna: Optional[str]) -> bytes:
 
     def gambar_info(c, x, y_atas, w, y_bawah):
         y = judul_bagian(c, x, y_atas, w, "INFORMASI PETA")
-        kunci_w = 24 * mm
+        # lebar kolom kunci mengikuti kunci terpanjang (dulu tetap 24 mm: "Sistem koordinat"
+        # / "Proyeksi tampilan" menabrak nilainya)
+        kunci_w = min(max(stringWidth(k, fb, 6.8) for k, _ in info) + 2.5 * mm, w * 0.45)
         for k, v in info:
             baris = simpleSplit(v, fn, 6.8, w - kunci_w)
             if y - len(baris) * 3 * mm < y_bawah:

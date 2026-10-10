@@ -814,7 +814,8 @@ function updateMapLegend() {
     // polos di atas tidak cukup mewakilinya, jadi tambahkan sub-daftar
     // kategori di bawahnya, meniru legenda sumber Google My Maps-nya.
     const isKlaster = meta && meta.provinsi === KLASTER_BUCKET;
-    const swatchPoligon = isKlaster || !!LEGENDA_PER_LAYER[raw];
+    // swatch kotak utk poligon/titik, garis tipis utk layer garis (mis. Rencana Umum Jalan)
+    const swatchPoligon = isKlaster || (!!LEGENDA_PER_LAYER[raw] && layerJenisSkala(key) !== "garis");
     const kaplinLegend = raw === "KAPLIN PETAK JALAN" ? KAPLIN_UTILISASI_LEGEND
       : raw === "KAPLIN KORIDOR UTAMA" ? KAPLIN_KORIDOR_LEGEND
       : isKlaster ? KLASTER_LEGEND

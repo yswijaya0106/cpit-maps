@@ -1033,6 +1033,7 @@ async function loadUsulanDetail(id) {
     html += `<div class="usulan-ijd-score" id="usulanNpr"></div>`;
   }
   html += `<div class="usulan-ijd-score" id="usulanRiwayatRuas"></div>`;
+  html += `<div class="usulan-ijd-score" id="usulanInfraSekitar"></div>`;
   if (penilaian) {
     html += `<div class="usulan-ijd-score" id="usulanBiayaAcuan"></div>`;
     html += `<div class="usulan-ijd-score" id="usulanPenilaianBappenas"></div>`;
@@ -1050,6 +1051,7 @@ async function loadUsulanDetail(id) {
 
   loadDalamAngka(u.id);
   loadRiwayatRuas(u.id);
+  loadInfraSekitar(u.id);
   if (penilaian) {
     loadIjdScore(u.id);
     loadSkorNasional(u.id);
@@ -1264,6 +1266,43 @@ async function loadRiwayatRuas(id) {
   } catch (err) {
     console.error(err);
     el.innerHTML = `<div class="adv-error">Gagal memuat riwayat pengusulan ruas.</div>`;
+  }
+}
+
+// Infrastruktur di sekitar rute (pasar, pelabuhan, irigasi, listrik, SPAM, rencana jalan) --
+// GET /api/usulan-inpres/{id}/infrastruktur-sekitar, informasi saja (bukan skor).
+async function loadInfraSekitar(id) {
+  const el = document.getElementById("usulanInfraSekitar");
+  if (!el) return;
+  const judul = `<div class="ijd-score-head"><span class="ijd-score-title"><i class="bi bi-geo"></i> Infrastruktur di Sekitar Ruas</span>`;
+  try {
+    const res = await fetch(`/api/usulan-inpres/${id}/infrastruktur-sekitar`);
+    if (!res.ok) throw new Error(await res.text());
+    const data = await res.json();
+    if (!data.tersedia) {
+      el.innerHTML = `${judul}</div><p class="hint">${escapeHtml(data.catatan)}</p>`;
+      return;
+    }
+    const rows = data.items.map((x, i) => `<tr>
+      <td>${escapeHtml(x.label)}</td>
+      <td>${escapeHtml(x.terdekat || "—")}</td>
+      <td class="num">${x.jarak_km != null ? `${x.jarak_km.toLocaleString("id-ID")} km` : "—"}</td>
+      <td class="num">${x.jumlah_dalam_radius ?? 0}</td>
+      <td><button type="button" class="usulan-infra-peta" data-i="${i}" title="Tampilkan layer ini di peta"><i class="bi bi-map"></i></button></td></tr>`).join("");
+    el.innerHTML = `${judul}<span class="ijd-score-total">radius ${data.radius_km} km dari rute</span></div>
+      <div class="usulan-riwayat-scroll"><table class="usulan-riwayat-table"><thead><tr>
+        <th>Jenis</th><th>Terdekat</th><th>Jarak</th><th>Jumlah ≤ ${data.radius_km} km</th><th></th>
+      </tr></thead><tbody>${rows}</tbody></table></div>
+      <p class="hint ijd-score-note">${escapeHtml(data.catatan)}</p>`;
+    el.querySelectorAll(".usulan-infra-peta").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const x = data.items[Number(btn.dataset.i)];
+        showMapLayer(x.bucket, "", x.layer);  // maps-overlay.js, sama dgn checkbox tree Overlay Peta
+      });
+    });
+  } catch (err) {
+    console.error(err);
+    el.innerHTML = `<div class="adv-error">Gagal memuat infrastruktur di sekitar ruas.</div>`;
   }
 }
 

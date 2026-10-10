@@ -220,6 +220,16 @@ const MAP_LAYER_CATEGORIES = [
   // indikatif, cakupan OSM tidak merata -- tidak ada poligon != tidak ada kebun.
   { id: "tutupan-osm", label: "Tutupan Lahan (OSM, indikatif)", icon: "bi-tree",
     match: (p) => p === "TUTUPAN LAHAN OSM" },
+  // SHP Infrastruktur 2026 (scripts/import_infrastruktur_2026.py): 4 bucket nasional flat, tema baru
+  // (bukan duplikat bandara/pelabuhan/KA yg sudah ada). Rencana Umum Jalan non-tol masuk JALAN NASIONAL.
+  { id: "logistik-ekonomi", label: "Logistik & Ekonomi", icon: "bi-shop",
+    match: (p) => p === "LOGISTIK & EKONOMI" },
+  { id: "sumber-daya-air", label: "Sumber Daya Air", icon: "bi-droplet-half",
+    match: (p) => p === "SUMBER DAYA AIR" },
+  { id: "energi", label: "Energi & Kelistrikan", icon: "bi-lightning-charge",
+    match: (p) => p === "ENERGI & KELISTRIKAN" },
+  { id: "permukiman", label: "Permukiman & Layanan Dasar", icon: "bi-house-gear",
+    match: (p) => p === "PERMUKIMAN & LAYANAN DASAR" },
   { id: "jalan", label: "Jalan", icon: "bi-signpost-2", match: () => true }, // catch-all, HARUS terakhir
 ];
 
@@ -1153,6 +1163,10 @@ const LEGENDA_PER_LAYER = {
     ["#2563EB", "PR - Pengumpan Regional"], ["#0D9488", "PL - Pengumpan Lokal"],
   ],
   "Terminal Khusus TERSUS-TUKS (RIPN)": [["#6B7280", "TERSUS"], ["#A16207", "TUKS"]],
+  // import_infrastruktur_2026.py WARNA_RENCUM
+  "Rencana Umum Jalan Nasional Non-Tol (SK 367/2023)": [
+    ["#7C3AED", "Pembangunan (trase indikatif)"], ["#DB2777", "Peningkatan"], ["#0891B2", "Jembatan"],
+  ],
 };
 // garis putus-putus, tetapi google.maps.Data tidak mendukung pola garis.
 const KORIDOR_GAYA = { warna: "#c026d3", lebar: 2.8, z: 8, teks: "Koridor hasil analisis (PETA KORIDOR)" };

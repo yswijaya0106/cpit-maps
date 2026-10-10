@@ -8656,6 +8656,71 @@ def _ruas_nama_kunci(nama) -> str:
     return re.sub(r"[^A-Z0-9]", "", str(nama or "").upper())
 
 
+# Infrastruktur di sekitar rute usulan (panel detail, blok "Infrastruktur di Sekitar Ruas"):
+# (label, bucket map_layers, layer). Semua bucket nasional flat (kabupaten = ''), lihat
+# scripts/import_infrastruktur_2026.py & import_pelabuhan_ripn.py. Informasi saja, bukan skor.
+USULAN_INFRA_SEKITAR = [
+    ("Pelabuhan umum (RIPN)", "PELABUHAN RIPN", "Pelabuhan Umum (RIPN)"),
+    ("Pelabuhan perikanan", "LOGISTIK & EKONOMI", "Pelabuhan Perikanan"),
+    ("Pasar", "LOGISTIK & EKONOMI", "Pasar"),
+    ("Terminal BBM", "LOGISTIK & EKONOMI", "Terminal BBM"),
+    ("Bendungan eksisting", "SUMBER DAYA AIR", "Bendungan Eksisting"),
+    ("Bendungan rencana", "SUMBER DAYA AIR", "Bendungan Rencana"),
+    ("Daerah irigasi rawa (fungsional)", "SUMBER DAYA AIR", "Daerah Irigasi Rawa - Fungsional"),
+    ("Daerah irigasi tambak (fungsional)", "SUMBER DAYA AIR", "Daerah Irigasi Tambak - Fungsional"),
+    ("Gardu induk listrik", "ENERGI & KELISTRIKAN", "Gardu Induk"),
+    ("Pembangkit listrik", "ENERGI & KELISTRIKAN", "Pembangkit Listrik (ESDM)"),
+    ("SPAM (air minum)", "PERMUKIMAN & LAYANAN DASAR", "SPAM (Air Minum)"),
+    ("Rencana umum jalan nasional non-tol", "JALAN NASIONAL", "Rencana Umum Jalan Nasional Non-Tol (SK 367/2023)"),
+]
+
+
+@app.get("/api/usulan-inpres/{usulan_id}/infrastruktur-sekitar")
+def usulan_inpres_infrastruktur_sekitar(usulan_id: int, radius_km: float = 15):
+    radius_km = max(1.0, min(radius_km, 50.0))
+    with db_cursor() as cur:
+        cur.execute("SELECT geom_geojson FROM usulan_inpres WHERE id = %s", (usulan_id,))
+        row = cur.fetchone()
+        if not row:
+            raise HTTPException(404, "Usulan tidak ditemukan")
+        if not row["geom_geojson"]:
+            return {"tersedia": False, "radius_km": radius_km, "items": [],
+                    "catatan": "Usulan ini belum punya geometri rute (KML SITIA belum diambil)."}
+        nilai = ", ".join(["(%s, %s, %s, %s)"] * len(USULAN_INFRA_SEKITAR))
+        params = [v for i, (lbl, b, lay) in enumerate(USULAN_INFRA_SEKITAR) for v in (i, lbl, b, lay)]
+        # Terdekat: 5 kandidat KNN planar (<->, pakai indeks) lalu jarak geodesik terkecil.
+        # Jumlah: prefilter bbox (&& ST_Expand, derajat dilebihkan) lalu ST_DWithin geodesik.
+        cur.execute(f"""
+            WITH t AS (SELECT ST_Simplify(ST_SetSRID(ST_GeomFromGeoJSON(%s), 4326), 0.0002) AS g)
+            SELECT x.label, x.bucket, x.layer, n.nama, n.jarak_m, c.jumlah
+            FROM (VALUES {nilai}) AS x(urut, label, bucket, layer)
+            CROSS JOIN t
+            LEFT JOIN LATERAL (
+                SELECT k.nama, k.jarak_m FROM (
+                    SELECT COALESCE(m.attrs->>'Nama', m.attrs->>'Nama Pelabuhan', m.attrs->>'Nama ruas') AS nama,
+                           ST_Distance(m.geom::geography, t.g::geography) AS jarak_m
+                    FROM map_layers m
+                    WHERE m.provinsi = x.bucket AND m.kabupaten = '' AND m.layer = x.layer
+                    ORDER BY m.geom <-> t.g LIMIT 5) k
+                ORDER BY k.jarak_m LIMIT 1) n ON true
+            LEFT JOIN LATERAL (
+                SELECT COUNT(*) AS jumlah FROM map_layers m
+                WHERE m.provinsi = x.bucket AND m.kabupaten = '' AND m.layer = x.layer
+                  AND m.geom && ST_Expand(t.g, %s)
+                  AND ST_DWithin(m.geom::geography, t.g::geography, %s)) c ON true
+            ORDER BY x.urut""",
+            [row["geom_geojson"], *params, radius_km / 100.0 + 0.05, radius_km * 1000])
+        hasil = cur.fetchall()
+    return {
+        "tersedia": True, "radius_km": radius_km,
+        "items": [{"label": r["label"], "bucket": r["bucket"], "layer": r["layer"], "terdekat": r["nama"],
+                   "jarak_km": round(r["jarak_m"] / 1000, 1) if r["jarak_m"] is not None else None,
+                   "jumlah_dalam_radius": r["jumlah"]} for r in hasil],
+        "catatan": ("Jarak garis lurus dari rute usulan (bukan jarak tempuh). Sumber: SHP Infrastruktur 2026 & "
+                    "daftar pelabuhan RIPN; informasi pendukung, tidak dipakai dalam skor."),
+    }
+
+
 @app.get("/api/usulan-inpres/{usulan_id}/riwayat-ruas")
 def usulan_inpres_riwayat_ruas(usulan_id: int):
     with db_cursor() as cur:

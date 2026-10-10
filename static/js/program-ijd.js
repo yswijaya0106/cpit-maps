@@ -116,20 +116,46 @@ function pijdIndeksKelas(x, batas) {
   return Math.min(i, 4);
 }
 
-// Peta tematik: label basemap selain nama negara dimatikan (nama kota/provinsi
-// negara tetangga beraksara lokal, nama laut, dll. bersaing dgn choropleth), nama
-// negara ditebalkan dgn halo supaya terbaca jelas.
+// Peta tematik: SEMUA label basemap dimatikan (nama kota/provinsi negara tetangga
+// beraksara lokal, nama laut, dll. bersaing dgn choropleth). Nama negara digambar
+// sendiri oleh pijdLabelNegara() di atas poligon -- label basemap Google selalu
+// berada DI BAWAH layer Data, sehingga "Indonesia" tertutup warna provinsi.
 function pijdMapStyle() {
   const gelap = state.mapTheme !== "light";
   return mapStyleForTheme(state.mapTheme).concat([
     { elementType: "labels", stylers: [{ visibility: "off" }] },
-    { featureType: "administrative.country", elementType: "labels.text", stylers: [{ visibility: "on" }] },
-    { featureType: "administrative.country", elementType: "labels.text.fill", stylers: [{ color: gelap ? "#e5ecf8" : "#1f2937" }] },
-    { featureType: "administrative.country", elementType: "labels.text.stroke",
-      stylers: [{ color: gelap ? "#0b1220" : "#ffffff" }, { weight: 4 }] },
     { featureType: "administrative.country", elementType: "geometry.stroke",
       stylers: [{ color: gelap ? "#6b7fa8" : "#94a3b8" }, { weight: 1 }] },
   ]);
+}
+
+// [nama, lat, lng, utama?] -- titik label diletakkan di laut/daratan yg tidak
+// tertutup poligon bila perlu (Indonesia di Laut Jawa).
+const PIJD_LABEL_NEGARA = [
+  ["INDONESIA", -5.2, 111.2, true], ["Malaysia", 4.2, 101.9], ["Malaysia", 5.0, 117.0], ["Singapura", 1.6, 104.3],
+  ["Brunei", 4.9, 114.6], ["Timor Leste", -8.75, 125.9], ["Papua Nugini", -6.4, 144.6], ["Australia", -24, 134],
+  ["Filipina", 12.3, 122.6], ["Thailand", 15.6, 101.0], ["Vietnam", 14.2, 108.3], ["Kamboja", 12.6, 104.9],
+  ["Laos", 19.6, 102.6], ["Myanmar", 21.0, 96.0], ["Sri Lanka", 7.8, 80.7], ["India", 21.0, 78.5],
+  ["Tiongkok", 26.0, 110.0], ["Taiwan", 23.7, 121.0],
+];
+
+function pijdLabelNegara() {
+  class LabelNegara extends google.maps.OverlayView {
+    constructor(teks, pos, utama) {
+      super();
+      this.pos = new google.maps.LatLng(pos[0], pos[1]);
+      this.div = document.createElement("div");
+      this.div.className = `pijd-label-negara${utama ? " utama" : ""}`;
+      this.div.textContent = teks;
+    }
+    onAdd() { this.getPanes().floatPane.appendChild(this.div); } // floatPane: di atas layer Data
+    draw() {
+      const p = this.getProjection().fromLatLngToDivPixel(this.pos);
+      if (p) { this.div.style.left = `${p.x}px`; this.div.style.top = `${p.y}px`; }
+    }
+    onRemove() { this.div.remove(); }
+  }
+  PIJD_LABEL_NEGARA.forEach(([teks, lat, lng, utama]) => new LabelNegara(teks, [lat, lng], utama).setMap(pijd.map));
 }
 
 function pijdInitMap() {
@@ -140,6 +166,7 @@ function pijdInitMap() {
     styles: pijdMapStyle(), disableDefaultUI: true, zoomControl: true,
     gestureHandling: "greedy", clickableIcons: false,
   });
+  pijdLabelNegara();
   pijd.tooltip = document.createElement("div");
   pijd.tooltip.className = "pijd-tooltip";
   pijd.tooltip.hidden = true;

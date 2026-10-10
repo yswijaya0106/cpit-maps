@@ -19,10 +19,11 @@ PP/PR/PL (tidak ada PU, lihat checklist).
 saja, dst) via geography::ST_Distance, HANYA di antara baris yang punya
 lat/lon (~66% dari total, lihat checklist "Temuan tambahan") -- baris
 tanpa koordinat dibiarkan NULL, bukan error. Pembandingnya ikut mencakup
-register pelabuhan nasional (layer PELABUHAN PENUMPANG), lihat
-SQL_SEHIRARKI_TERDEKAT.
+daftar pelabuhan umum RIPN (tabel pelabuhan_ripn, import_pelabuhan_ripn.py, sejak 11 Okt 2026)
++ register lama layer PELABUHAN PENUMPANG yang tak punya padanan RIPN, lihat
+sql_sehirarki_terdekat(). --banding menghitung pembanding lama vs baru TANPA menulis.
 
-Koordinat kosong di sumber diisi dulu dari titik layer peta PELABUHAN /
+Koordinat kosong di sumber diisi dulu dari titik layer peta PELABUHAN RIPN / PELABUHAN /
 PELABUHAN PENUMPANG (cocok nama + provinsi, ditandai di kolom
 koordinat_sumber) -- import_pelabuhan_daerah.py (DELETE+INSERT) menghapusnya
 lagi, jadi selalu jalankan skrip ini setelah reimpor.
@@ -34,6 +35,7 @@ pelabuhan_daerah dgn koordinat baru).
 Usage (venv aktif):
     python scripts/spatial_join_pelabuhan_urgensi.py
     python scripts/spatial_join_pelabuhan_urgensi.py --force
+    python scripts/spatial_join_pelabuhan_urgensi.py --banding   # dampak pembanding RIPN, tanpa menulis
 """
 import argparse
 import io
@@ -68,6 +70,39 @@ TAHUN_PENDUDUK = 2025  # satu-satunya tahun yg ada di penduduk_kecamatan saat in
 # SAMA_NAMA_KM (koordinat xlsx sumber bisa meleset beberapa km dari titik register).
 SAMA_TITIK_KM = 2.0  # 1 km masih meloloskan Pulau Balai -> "P. Banyak" (1,0 km, pelabuhan yg sama)
 SAMA_NAMA_KM = 30.0
+# 11 Okt 2026: daftar RIPN (pelabuhan_ripn, versi resmi Kemenhub 22-09-2026, 634 pelabuhan umum
+# berkoordinat) jadi pembanding utama; hierarkinya dipakai bila beda dgn register lama (60 dari
+# 499 titik register lama beda hierarki dgn RIPN di lokasi yg sama). Titik register lama tetap
+# ikut HANYA bila tak ada pelabuhan RIPN dalam REGISTER_DUPLIKAT_KM (58 titik), supaya cakupan
+# tidak berkurang. ripn=False -> pembanding lama (register saja), utk --banding.
+REGISTER_DUPLIKAT_KM = 5.0
+_PEMBANDING_REGISTER = """
+                SELECT NULL::bigint, m.attrs->>'hierarki',
+                       (m.attrs->>'nama_pelabuhan') || ' (register Kemenhub)',
+                       ST_Y(m.geom)::numeric, ST_X(m.geom)::numeric, m.geom::geography,
+                       regexp_replace(lower(m.attrs->>'nama_pelabuhan'), '[^a-z0-9]', '', 'g'), true
+                FROM map_layers m
+                WHERE m.provinsi = 'PELABUHAN PENUMPANG' AND m.layer = 'PELABUHAN PENUMPANG'
+                  AND m.attrs->>'hierarki' IN ('PU', 'PP', 'PR', 'PL')
+                  AND GeometryType(m.geom) = 'POINT'"""
+_PEMBANDING_RIPN = f"""
+                SELECT NULL::bigint, r.hierarki, r.nama_pelabuhan || ' (RIPN)',
+                       r.lat::numeric, r.lon::numeric, ST_SetSRID(ST_MakePoint(r.lon, r.lat), 4326)::geography,
+                       regexp_replace(lower(r.nama_pelabuhan), '[^a-z0-9]', '', 'g'), true
+                FROM pelabuhan_ripn r
+                WHERE r.tipe = 'Umum' AND r.hierarki IN ('PU', 'PP', 'PR', 'PL') AND r.lat IS NOT NULL
+                UNION ALL
+                SELECT * FROM ({_PEMBANDING_REGISTER}) reg(id, hirarki_kode, nama, lat, lon, g, kunci, dari_layer)
+                WHERE NOT EXISTS (SELECT 1 FROM pelabuhan_ripn r2
+                                  WHERE r2.tipe = 'Umum' AND r2.lat IS NOT NULL
+                                    AND ST_DWithin(ST_SetSRID(ST_MakePoint(r2.lon, r2.lat), 4326)::geography,
+                                                   reg.g, {REGISTER_DUPLIKAT_KM * 1000}))"""
+
+
+def sql_sehirarki_terdekat(ripn=True):
+    return SQL_SEHIRARKI_TERDEKAT.replace("__PEMBANDING_LAYER__", _PEMBANDING_RIPN if ripn else _PEMBANDING_REGISTER)
+
+
 SQL_SEHIRARKI_TERDEKAT = f"""
             kandidat AS MATERIALIZED (
                 SELECT id, hirarki_kode, nama_pelabuhan, lat, lon,
@@ -80,14 +115,7 @@ SQL_SEHIRARKI_TERDEKAT = f"""
                 SELECT id, hirarki_kode, nama_pelabuhan, lat, lon, g, kunci, false AS dari_layer
                 FROM kandidat
                 UNION ALL
-                SELECT NULL::bigint, m.attrs->>'hierarki',
-                       (m.attrs->>'nama_pelabuhan') || ' (register Kemenhub)',
-                       ST_Y(m.geom)::numeric, ST_X(m.geom)::numeric, m.geom::geography,
-                       regexp_replace(lower(m.attrs->>'nama_pelabuhan'), '[^a-z0-9]', '', 'g'), true
-                FROM map_layers m
-                WHERE m.provinsi = 'PELABUHAN PENUMPANG' AND m.layer = 'PELABUHAN PENUMPANG'
-                  AND m.attrs->>'hierarki' IN ('PU', 'PP', 'PR', 'PL')
-                  AND GeometryType(m.geom) = 'POINT'
+                __PEMBANDING_LAYER__
             ),
             terdekat AS (
                 SELECT p.id,
@@ -104,7 +132,11 @@ SQL_SEHIRARKI_TERDEKAT = f"""
                       -- titik register yg sebenarnya pelabuhan ini sendiri
                       AND NOT (k.dari_layer AND (
                           ST_DWithin(k.g, p.g, {SAMA_TITIK_KM * 1000})
-                          OR (k.kunci = p.kunci AND ST_DWithin(k.g, p.g, {SAMA_NAMA_KM * 1000}))))
+                          OR ((k.kunci = p.kunci
+                               -- nama saling memuat ("Sikabaluan" vs RIPN "Sikabaluan / Pokai", 6,3 km)
+                               OR (length(p.kunci) >= 5 AND strpos(k.kunci, p.kunci) > 0)
+                               OR (length(k.kunci) >= 5 AND strpos(p.kunci, k.kunci) > 0))
+                              AND ST_DWithin(k.g, p.g, {SAMA_NAMA_KM * 1000}))))
                     ORDER BY k.g <-> p.g
                     LIMIT 1
                 ) t ON true
@@ -142,6 +174,9 @@ def _isi_hirarki_kode():
 # atau kabupatennya bisa membedakan; selebihnya dibiarkan kosong, tidak ditebak.
 KOORDINAT_LAYER = [
     # (provinsi map_layers, layer, kolom nama, kolom provinsi, kolom kabupaten, label sumber)
+    # daftar RIPN resmi (import_pelabuhan_ripn.py) didahulukan; provinsi/kab = BPS dari titik
+    ("PELABUHAN RIPN", "Pelabuhan Umum (RIPN)", "Nama Pelabuhan", "Provinsi", "Kabupaten/Kota",
+     "Daftar pelabuhan RIPN Kemenhub (cocok nama)"),
     ("PELABUHAN PENUMPANG", "PELABUHAN PENUMPANG", "nama_pelabuhan", "provinsi", "kabupaten_kota",
      "Layer peta PELABUHAN PENUMPANG (cocok nama)"),
     ("PELABUHAN", "Pelabuhan Nasional", "Name", "Provinsi", "KABUPATEN",
@@ -587,12 +622,50 @@ def _tandai_koordinat_kembar():
     return n
 
 
+def _banding_pembanding():
+    """Pelabuhan sehirarki terdekat dgn pembanding lama vs RIPN, koordinat SAAT INI, tanpa menulis."""
+    hasil = {}
+    with db_cursor() as cur:
+        for label, ripn in (("lama", False), ("ripn", True)):
+            cur.execute(f"WITH {sql_sehirarki_terdekat(ripn)} SELECT id, terdekat_nama, jarak_km FROM terdekat")
+            hasil[label] = {r["id"]: r for r in cur.fetchall()}
+        cur.execute("SELECT id, nama_pelabuhan, hirarki_kode FROM pelabuhan_daerah WHERE hirarki_kode IS NOT NULL")
+        info = {r["id"]: r for r in cur.fetchall()}
+    berubah = []
+    for i, b in hasil["ripn"].items():
+        a = hasil["lama"].get(i)
+        if a is None or a["terdekat_nama"] != b["terdekat_nama"] or abs(a["jarak_km"] - b["jarak_km"]) > 0.05:
+            berubah.append((info[i]["hirarki_kode"], info[i]["nama_pelabuhan"], a and a["terdekat_nama"],
+                            a and round(a["jarak_km"], 1), b["terdekat_nama"], round(b["jarak_km"], 1)))
+    print(f"Pelabuhan berkoordinat dgn pembanding: lama {len(hasil['lama'])}, RIPN {len(hasil['ripn'])}; "
+          f"terdekat berubah {len(berubah)}")
+    for hk in ("PP", "PR", "PL"):
+        n = [x for x in berubah if x[0] == hk]
+        lebih_dekat = sum(1 for x in n if x[3] is not None and x[5] < x[3])
+        print(f"  {hk}: {len(n)} berubah ({lebih_dekat} jadi lebih dekat)")
+    for x in sorted(berubah, key=lambda x: -(abs((x[3] or 0) - x[5])))[:15]:
+        print(f"    {x[0]} {x[1]}: {x[2]} {x[3]} km -> {x[4]} {x[5]} km")
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--force", action="store_true", help="hitung ulang termasuk yang sudah terisi")
     ap.add_argument("--hanya-jalan", action="store_true",
                     help="hanya hitung ruas jalan terdekat (semua jaringan), tanpa langkah lain")
+    ap.add_argument("--banding", action="store_true",
+                    help="bandingkan pelabuhan sehirarki terdekat: pembanding lama (register) vs RIPN, tanpa menulis")
     args = ap.parse_args()
+
+    with db_cursor() as cur:
+        cur.execute("SELECT to_regclass('pelabuhan_ripn') IS NOT NULL AS ada")
+        ada_ripn = cur.fetchone()["ada"]
+    if not ada_ripn:
+        print("PERINGATAN: tabel pelabuhan_ripn belum ada -> pembanding register lama saja "
+              "(jalankan import_pelabuhan_ripn.py)")
+
+    if args.banding:
+        _banding_pembanding()
+        return
 
     if args.hanya_jalan:
         print("Mencari ruas jalan terdekat (semua jaringan)...")
@@ -624,7 +697,7 @@ def main():
         )
         cur.execute(
             f"""
-            WITH {SQL_SEHIRARKI_TERDEKAT}
+            WITH {sql_sehirarki_terdekat(ada_ripn)}
             UPDATE pelabuhan_daerah p
             SET pelabuhan_sehirarki_terdekat_id = t.terdekat_id,
                 pelabuhan_sehirarki_terdekat_nama = t.terdekat_nama,

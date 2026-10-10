@@ -1434,6 +1434,23 @@ scripts/tables/layers out to staging.
   `import_pelabuhan_daerah.py` (DELETE+INSERT) menghapusnya — jalankan ulang
   skrip spatial join setelah reimpor.
   DB baru wajib menjalankan skrip itu (SELECT app.py membaca kolom baru).
+  **11 Okt 2026, RIPN as comparator (user request):**
+  - `sql_sehirarki_terdekat()` compares against `pelabuhan_ripn` umum
+    (official, 634 with coordinates). Where RIPN's hierarki differs from the
+    old register, RIPN wins (Pacitan PL→PP, Tanjung Pakis, Sinjai).
+  - Old PELABUHAN PENUMPANG points are kept only when no RIPN port lies
+    within 5 km.
+  - "Same port" exclusion now also accepts names contained in one another,
+    because "Sikabaluan" matched its own RIPN point "Sikabaluan / Pokai"
+    6.3 km away.
+  - The RIPN layer is the first coordinate source (11 more ports; 496/670
+    have coordinates).
+  - `--banding` prints old-vs-RIPN nearest without writing.
+  - The rerun also applied the 8 Oct register fix, which had never been
+    run with `--force` on this DB (Meulaboh was still 522 km).
+  - Net effect: 211/670 totals changed, 19 by more than 10 points; top-50
+    overlap is 37/50. Parameter #3 nearest changed for 107 rows (8 Oct
+    fix) and 115 rows (RIPN).
 - **PSC 119 lokasi** (3 Okt 2026): `scripts/import_psc119_lokasi_to_postgis.py`
   loads `docs/Konektivitas/8. KESELAMATAN/Data Lokasi PSC 119.xlsx` (207 PSC)
   as map layer `PSC 119` in a new flat bucket `KESELAMATAN`. The tree

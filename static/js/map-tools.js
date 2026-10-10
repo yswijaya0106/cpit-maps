@@ -138,6 +138,12 @@ function showIdentifyInfo(layerName, feature, latLng) {
   }
   const kodeUptBpsdm = feature.getProperty("Kode UPT BPSDMP");
   if (kodeUptBpsdm) attachBpsdmJoin(container, kodeUptBpsdm);
+  const idRipn = feature.getProperty("ID Pelabuhan RIPN");
+  if (idRipn && feature.getProperty("Kode Pelabuhan")) {
+    attachTabelJoin(container,
+      (tabel) => `/api/pelabuhan-ripn/data?id_ripn=${encodeURIComponent(idRipn)}${tabel}`,
+      "Tidak ada baris di tabel ini untuk pelabuhan ini.");
+  }
   if (layerName.startsWith("BATAS PROVINSI::")) {
     const namaProvinsi = feature.getProperty("PROVINSI");
     if (namaProvinsi) attachLakaLantasJoin(container, namaProvinsi);
@@ -808,13 +814,13 @@ function updateMapLegend() {
     // polos di atas tidak cukup mewakilinya, jadi tambahkan sub-daftar
     // kategori di bawahnya, meniru legenda sumber Google My Maps-nya.
     const isKlaster = meta && meta.provinsi === KLASTER_BUCKET;
-    const swatchPoligon = isKlaster || !!ANGKUTAN_SUBSIDI_LEGEND[raw];
+    const swatchPoligon = isKlaster || !!LEGENDA_PER_LAYER[raw];
     const kaplinLegend = raw === "KAPLIN PETAK JALAN" ? KAPLIN_UTILISASI_LEGEND
       : raw === "KAPLIN KORIDOR UTAMA" ? KAPLIN_KORIDOR_LEGEND
       : isKlaster ? KLASTER_LEGEND
       : raw === PERLINTASAN_BTP_LAYER ? PERLINTASAN_BTP_LEGEND
       : raw === TOL_RENCANA_LAYER ? TOL_STATUS_LEGEND
-      : RTRW_PAPSEL_LEGEND[raw] || ANGKUTAN_SUBSIDI_LEGEND[raw] || null;
+      : RTRW_PAPSEL_LEGEND[raw] || LEGENDA_PER_LAYER[raw] || null;
     if (kaplinLegend) {
       const titik = raw === PERLINTASAN_BTP_LAYER;
       const sub = document.createElement("div");

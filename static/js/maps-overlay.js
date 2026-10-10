@@ -128,6 +128,8 @@ const MAP_LAYER_CATEGORIES = [
       // docs/kajian_data_baru_docs_new.md §Fase 4.
       "PELABUHAN TERSUS/TUKS", "PELABUHAN PENYEBERANGAN OPERASI", "TERMINAL TIPE A",
       "PELABUHAN PENUMPANG",
+      // Database Pelabuhan Laut Indonesia / RIPN (scripts/import_pelabuhan_ripn.py)
+      "PELABUHAN RIPN",
       // JALAN DARURAT: bucket nasional flat (scripts/import_jalan_darurat_to_postgis.py),
       // ruas jalan nasional lebar perkerasan >=11m (RNI 2023) yang layak
       // difungsikan sbg landas pacu darurat -- dual-use Jalan<->Udara,
@@ -211,7 +213,7 @@ const MAP_LAYER_CATEGORIES = [
   { id: "kawasan-bappenas", label: "Kawasan Tematik (Bappenas)", icon: "bi-pin-map",
     match: (p) => p === "KAWASAN TEMATIK BAPPENAS" },
   // Latihan Kebutuhan Angkutan Bersubsidi 2026 + kandidat tier MYC (scripts/import_angkutan_bersubsidi.py):
-  // poligon kab/kota, _warna per status layanan / tier; legenda ANGKUTAN_SUBSIDI_LEGEND.
+  // poligon kab/kota, _warna per status layanan / tier; legenda LEGENDA_PER_LAYER.
   { id: "angkutan-bersubsidi", label: "Angkutan Bersubsidi 2026 (draf latihan)", icon: "bi-bus-front",
     match: (p) => p === "ANGKUTAN BERSUBSIDI" },
   // Tutupan lahan pertanian/perkebunan dari OpenStreetMap (scripts/import_tutupan_lahan_osm.py):
@@ -1135,15 +1137,22 @@ const JALAN_KELAS = {
 };
 const JALAN_KELAS_URUT = ["tol", "nasional", "provinsi", "kabkota", "desa"];
 // "Koridor hasil analisis" (layer PETA KORIDOR) -- ungu/magenta. Deck meminta
-// Legenda Angkutan Bersubsidi 2026 (import_angkutan_bersubsidi.py) -- warna sama persis dgn WARNA_STATUS/WARNA_TIER skrip.
+// Sub-legenda per nama layer (warna _warna per fitur dari skrip impor; HARUS sama persis):
+// Angkutan Bersubsidi (import_angkutan_bersubsidi.py WARNA_STATUS/WARNA_TIER),
+// Pelabuhan RIPN (import_pelabuhan_ripn.py WARNA_HIERARKI/WARNA_KHUSUS).
 const ANGKUTAN_SUBSIDI_STATUS = [["#0072B2", "Terlayani angkutan bersubsidi"], ["#E69F00", "Tidak terlayani"]];
-const ANGKUTAN_SUBSIDI_LEGEND = {
+const LEGENDA_PER_LAYER = {
   "Angkutan Bersubsidi Penumpang 2026": ANGKUTAN_SUBSIDI_STATUS,
   "Angkutan Bersubsidi Barang 2026": ANGKUTAN_SUBSIDI_STATUS,
   "Kandidat Skema Tahun Jamak (MYC) 2026": [
     ["#B91C1C", "Tier 1 (kandidat, belum diuji gerbang)"], ["#F97316", "Tier 2"],
     ["#FACC15", "Tier 3"], ["#6B7280", "Tier 4"],
   ],
+  "Pelabuhan Umum (RIPN)": [
+    ["#B91C1C", "PU - Pelabuhan Utama"], ["#EA580C", "PP - Pengumpul"],
+    ["#2563EB", "PR - Pengumpan Regional"], ["#0D9488", "PL - Pengumpan Lokal"],
+  ],
+  "Terminal Khusus TERSUS-TUKS (RIPN)": [["#6B7280", "TERSUS"], ["#A16207", "TUKS"]],
 };
 // garis putus-putus, tetapi google.maps.Data tidak mendukung pola garis.
 const KORIDOR_GAYA = { warna: "#c026d3", lebar: 2.8, z: 8, teks: "Koridor hasil analisis (PETA KORIDOR)" };

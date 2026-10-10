@@ -887,6 +887,9 @@ DATA_TABLES = {
     "dpp_ijd_2025": "DPP IJD TA 2025 (BA + DPP)",
     "program_ijd_riwayat": "Riwayat Program IJD 2023-2026 (DPP Final, Revisi R1)",
     "paket_ls_bina_marga": "Paket LS Bina Marga per Provinsi/Satker TA 2021-2025 (DIPA Akhir, Rp)",
+    "pelabuhan_ripn": "Pelabuhan Laut RIPN: Umum (Hierarki) & Terminal Khusus TERSUS/TUKS",
+    "pelabuhan_kinerja": "Kinerja Pelabuhan Laut 2021-2024 per Pelabuhan RIPN (BPS)",
+    "pelabuhan_fasilitas_komponen": "Fasilitas Pelabuhan Laut per Komponen (Dermaga, Gudang, Lapangan)",
     "sbsn_kegiatan_djbm": "Paket SBSN Ditjen Bina Marga TA 2015-2026 (Pagu/Kontrak/Realisasi, Rp)",
     "angkutan_bersubsidi_2026": "Kebutuhan Angkutan Bersubsidi 2026 per Kab/Kota + Kandidat Tier MYC (Latihan Bappenas, Draf)",
     "wilayah_mapping": "Pemetaan Wilayah SITIA ↔ Kode BPS",
@@ -976,6 +979,9 @@ DATA_TABLE_GEO = {
     "paket_ls_bina_marga": ("kode_provinsi", "kode_provinsi"),
     # provinsi dari satker DIPA / nama satker (sumber tanpa kode wilayah), lihat import_sbsn_djbm.py
     "sbsn_kegiatan_djbm": ("kode_provinsi", "kode_provinsi"),
+    # kode BPS dari titik pelabuhan (sumber pakai urutan Kemendagri), lihat import_pelabuhan_ripn.py
+    **{t: ("kode_provinsi", "kode_kabupaten") for t in (
+        "pelabuhan_ripn", "pelabuhan_kinerja", "pelabuhan_fasilitas_komponen")},
     # kode dari nama kab/kota (provinsi sumber ada yg salah), lihat import_angkutan_bersubsidi.py
     "angkutan_bersubsidi_2026": ("kode_provinsi", "kode_kabupaten"),
     # kode dari lokasi titik UPT (bukan "Kode Daerah" sumber), lihat import_bpsdm_perhubungan.py
@@ -7811,6 +7817,41 @@ BPSDM_JOIN_TABLES = {
         "laboratorium_unit, asrama_unit, asrama_kapasitas_orang, aula_unit "
         "FROM bpsdm_fasilitas WHERE kode_upt = %s ORDER BY tahun DESC"),
 }
+
+
+# Join titik layer "PELABUHAN RIPN" (attr "ID Pelabuhan RIPN") ke tabel kinerja/fasilitas
+# (scripts/import_pelabuhan_ripn.py). Kunci id_ripn, bukan kode pelabuhan (SEL/SAI/PJA ganda).
+PELABUHAN_RIPN_JOIN_TABLES = {
+    "pelabuhan_kinerja": ("Kinerja 2021-2024 (BPS)",
+        "SELECT tahun, unit_dn, gt_dn, unit_ln, gt_ln, penumpang_datang_dn, penumpang_berangkat_dn, "
+        "bongkar_dn_ton, muat_dn_ton, bongkar_ln_ton, muat_ln_ton, total_ton_bersih, keterangan, catatan_data "
+        "FROM pelabuhan_kinerja WHERE id_ripn = %s ORDER BY tahun"),
+    "pelabuhan_fasilitas_komponen": ("Fasilitas per komponen",
+        "SELECT jenis_komponen, nama_komponen, panjang_m, lebar_m, luas, satuan_luas, keterangan, tahun "
+        "FROM pelabuhan_fasilitas_komponen WHERE id_ripn = %s ORDER BY jenis_komponen, nama_komponen"),
+    "pelabuhan_ripn": ("Profil & hierarki rencana RIPN",
+        "SELECT kode_pelabuhan, hierarki, hierarki_2017, hierarki_2022, hierarki_2027, hierarki_2037, "
+        "keterangan_ripn, tipe_khusus, kabupaten_kota, provinsi, dasar_kode, catatan_data "
+        "FROM pelabuhan_ripn WHERE id_ripn = %s"),
+}
+
+
+@app.get("/api/pelabuhan-ripn/data")
+def pelabuhan_ripn_join_data(id_ripn: int, tabel: str = "pelabuhan_kinerja"):
+    if tabel not in PELABUHAN_RIPN_JOIN_TABLES:
+        raise HTTPException(400, "Tabel tidak dikenal untuk join pelabuhan RIPN")
+    label, sql = PELABUHAN_RIPN_JOIN_TABLES[tabel]
+    with db_cursor() as cur:
+        cur.execute(sql, (id_ripn,))
+        rows = cur.fetchall()
+    columns = list(rows[0].keys()) if rows else []
+    return {
+        "tabel": tabel,
+        "label": label,
+        "tabel_tersedia": [{"tabel": k, "label": v[0]} for k, v in PELABUHAN_RIPN_JOIN_TABLES.items()],
+        "columns": columns,
+        "rows": [[jsonable_encoder(r[c]) for c in columns] for r in rows],
+    }
 
 
 @app.get("/api/bpsdm/data")

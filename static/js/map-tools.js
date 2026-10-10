@@ -106,27 +106,56 @@ function formatIdentifyValue(raw) {
     .join("<br>");
 }
 
+/* Kelompokkan atribut popup -> [[judul|null, [[kunci, nilai]...], prefixDibuang]].
+   attrs JSONB tersimpan terurut panjang kunci (bukan urutan asli), jadi atribut analisis
+   subklaster (build_analisis_klaster_subklaster.py / _infrastruktur.py) tampil acak tanpa ini.
+   Layer lain: hanya "Terdekat - ..." yang dipisah, sisanya urutan apa adanya. */
+const IDENTIFY_BAGIAN_SUBKLASTER = [
+  ["Bandara terdekat", /Bandara/], ["Pelabuhan terdekat", /Pelabuhan/],
+  ["Koridor IJD terdekat", /Koridor/], ["Jalan terdekat", /Jalan/],
+];
+const IDENTIFY_URUT_UMUM = ["Klaster", "Subklaster", "Keterangan AOI", "Luas (ha)"];
+
+function identifyBagian(attrs, subklaster) {
+  const terdekat = attrs.filter(([k]) => k.startsWith("Terdekat - "));
+  let sisa = attrs.filter(([k]) => !k.startsWith("Terdekat - "));
+  const bagian = [];
+  if (subklaster) {
+    // nama dulu, lalu kelas/hierarki, jarak, rute, kondisi; catatan terakhir
+    const peringkat = (k) => (/^(Bandara|Pelabuhan|Koridor IJD|Ruas Jalan) Terdekat$/.test(k) ? 0
+      : /^(Kelas|Hierarki|Klasifikasi|Jaringan)/.test(k) ? 1 : /^Jarak/.test(k) ? 2 : /^Rute/.test(k) ? 3
+      : /^Kondisi/.test(k) ? 4 : /^Catatan/.test(k) ? 9 : 5);
+    const kelompok = IDENTIFY_BAGIAN_SUBKLASTER.map(([judul, re]) => {
+      const isi = sisa.filter(([k]) => re.test(k));
+      sisa = sisa.filter(([k]) => !re.test(k));
+      return [judul, isi.sort((a, b) => peringkat(a[0]) - peringkat(b[0])), ""];
+    });
+    const urut = (k) => { const i = IDENTIFY_URUT_UMUM.indexOf(k); return i < 0 ? (k === "Catatan Jarak" ? 99 : 50) : i; };
+    bagian.push([null, sisa.sort((a, b) => urut(a[0]) - urut(b[0])), ""], ...kelompok);
+  } else {
+    bagian.push([null, sisa, ""]);
+  }
+  bagian.push(["Infrastruktur terdekat (garis lurus)", terdekat, "Terdekat - "]);
+  return bagian.filter(([, list]) => list.length);
+}
+
 function showIdentifyInfo(layerName, feature, latLng) {
   clearIdentifyHighlight();
   state.mapLayers.active[layerName]?.overrideStyle(feature, identifyHighlightStyle());
   state.identifyHighlight = { layer: layerName, feature };
 
-  const rows = [];
-  const rowsTerdekat = []; // "Terdekat - <jenis>" (build_analisis_klaster_infrastruktur.py) -> bagian sendiri
+  const attrs = [];
   feature.forEachProperty((value, key) => {
     if (value === null || value === undefined || value === "") return;
     if (String(key).startsWith("_")) return; // atribut teknis (legenda/filter), bukan utk ditampilkan
-    const k = String(key);
-    if (k.startsWith("Terdekat - ")) {
-      rowsTerdekat.push(`<tr><th>${escapeHtml(k.slice(11))}</th><td>${formatIdentifyValue(String(value))}</td></tr>`);
-    } else {
-      rows.push(`<tr><th>${escapeHtml(k)}</th><td>${formatIdentifyValue(String(value))}</td></tr>`);
-    }
+    attrs.push([String(key), String(value)]);
   });
-  const body = rows.length || rowsTerdekat.length
-    ? `<table class="identify-table">${rows.join("")}</table>` + (rowsTerdekat.length
-      ? `<div class="identify-subhead">Infrastruktur terdekat (garis lurus)</div><table class="identify-table">${rowsTerdekat.join("")}</table>`
-      : "")
+  const baris = (list, strip = "") => list.map(([k, v]) =>
+    `<tr><th>${escapeHtml(strip && k.startsWith(strip) ? k.slice(strip.length) : k)}</th><td>${formatIdentifyValue(v)}</td></tr>`).join("");
+  const body = attrs.length
+    ? identifyBagian(attrs, feature.getProperty("Subklaster") != null)
+        .map(([judul, list, strip]) => (judul ? `<div class="identify-subhead">${escapeHtml(judul)}</div>` : "")
+          + `<table class="identify-table">${baris(list, strip)}</table>`).join("")
     : `<div class="hint">Fitur ini tidak memiliki atribut</div>`;
 
   // Konten dibangun sebagai DOM node (bukan string) supaya select join tabel

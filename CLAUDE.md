@@ -1814,6 +1814,35 @@ upsert, so they're safe to re-run:
     Recap sheets. Urgensi is the author's narrative, and the tiers are
     candidates not yet tested against Analisa 2's gate. Kajian:
     `docs/kajian_multimoda_infrastruktur_logistik.md`.
+- **Drive Konektivitas recheck (10 Oct 2026).** Only three files were new.
+  Sources are in `docs/10102026/`; SHP zips are extracted under
+  `Maps/_sumber_*_2026/`. IRI/IRIO, Kerangka Berpikir, SK 1688 and the
+  Subklaster SHP were byte-identical or equivalent to what's already loaded.
+  - `import_pelabuhan_ripn.py` → `pelabuhan_ripn` (636 umum with hierarki +
+    2017-2037 plan, 1,978 TERSUS/TUKS), `pelabuhan_kinerja` (BPS 2021-24),
+    `pelabuhan_fasilitas_komponen`, and overlay bucket `PELABUHAN RIPN`.
+    Identify joins via `/api/pelabuhan-ripn/data`. The join key is
+    `id_ripn`, because codes SEL/SAI/PJA are shared. Source kab codes are
+    in Kemendagri order, so BPS codes come from the point. The script
+    refuses to write unless the recomputed Total_Ton_Bersih equals the
+    source's derived sheet. "2A_Fasilitas_Ringkas" and "Database Tambahan"
+    are ≤1% filled and are skipped.
+  - `import_infrastruktur_2026.py` loads only the themes we lacked into
+    `LOGISTIK & EKONOMI`, `SUMBER DAYA AIR`, `ENERGI & KELISTRIKAN` and
+    `PERMUKIMAN & LAYANAN DASAR` (tree categories in maps-overlay.js), plus
+    "Rencana Umum Jalan Nasional Non-Tol (SK 367/2023)" in `JALAN
+    NASIONAL`. Irrigation polygons are simplified at import (~30 m), which
+    takes 30 → 5.5 MB gzip. Rerun `build_map_layer_wilayah.py` afterwards.
+    The usulan detail block "Infrastruktur di Sekitar Ruas" reads these
+    through `GET /api/usulan-inpres/{id}/infrastruktur-sekitar`
+    (`USULAN_INFRA_SEKITAR`, geodesic distance, information only).
+  - `import_rtrw_papua_selatan_struktur_ruang.py` adds 7 layers to `RTRW` /
+    "Papua Selatan": simpul, energi, permukiman, telekom, irigasi (KUGI,
+    STSJRN 1 = Rencana) and the Wanam demplot irrigation CAD plan (UTM 54S).
+    Deletes are per layer, because `import_subklaster_to_postgis.py` wipes
+    its whole bucket.
+  - Per-layer sub-legends live in `LEGENDA_PER_LAYER` (maps-overlay.js),
+    with colours that must match each script.
 - `import_tutupan_lahan_osm.py` (7 Oct 2026) — OSM farm/plantation polygons
   (kelapa sawit, karet, kelapa, kebun lain, sawah, pertanian lain, tambak),
   which until now only showed as basemap pixels, become bucket `TUTUPAN LAHAN

@@ -1163,6 +1163,18 @@ const LEGENDA_PER_LAYER = {
     ["#2563EB", "PR - Pengumpan Regional"], ["#0D9488", "PL - Pengumpan Lokal"],
   ],
   "Terminal Khusus TERSUS-TUKS (RIPN)": [["#6B7280", "TERSUS"], ["#A16207", "TUKS"]],
+  // import_rtrw_papua_selatan_struktur_ruang.py WARNA_STATUS / WARNA_DEMPLOT
+  ...Object.fromEntries([
+    "Simpul Transportasi & Logistik (RTRW Papua Selatan)", "Infrastruktur Energi (RTRW Papua Selatan)",
+    "Jaringan Transmisi Listrik (RTRW Papua Selatan)", "Sistem Pusat Permukiman (RTRW Papua Selatan)",
+    "Jaringan Telekomunikasi (RTRW Papua Selatan)", "Jaringan Irigasi (RTRW Papua Selatan)",
+  ].map((l) => [l, [["#0F766E", "Eksisting"], ["#F59E0B", "Rencana"]]])),
+  "Rencana Irigasi Demplot Wanam (KSPEAN)": [
+    ["#1D4ED8", "Saluran primer pemberi"], ["#3B82F6", "Saluran sekunder pemberi"], ["#93C5FD", "Saluran tersier"],
+    ["#B91C1C", "Saluran primer pembuang"], ["#F87171", "Saluran sekunder pembuang"], ["#7C3AED", "Saluran gendong"],
+    ["#78350F", "Tanggul luar"], ["#A16207", "Tanggul dalam"], ["#D97706", "Tanggul lahan"],
+    ["#9CA3AF", "Batas petak lahan"], ["#16A34A", "Area demplot"],
+  ],
   // import_infrastruktur_2026.py WARNA_RENCUM
   "Rencana Umum Jalan Nasional Non-Tol (SK 367/2023)": [
     ["#7C3AED", "Pembangunan (trase indikatif)"], ["#DB2777", "Peningkatan"], ["#0891B2", "Jembatan"],

@@ -116,12 +116,28 @@ function pijdIndeksKelas(x, batas) {
   return Math.min(i, 4);
 }
 
+// Peta tematik: label basemap selain nama negara dimatikan (nama kota/provinsi
+// negara tetangga beraksara lokal, nama laut, dll. bersaing dgn choropleth), nama
+// negara ditebalkan dgn halo supaya terbaca jelas.
+function pijdMapStyle() {
+  const gelap = state.mapTheme !== "light";
+  return mapStyleForTheme(state.mapTheme).concat([
+    { elementType: "labels", stylers: [{ visibility: "off" }] },
+    { featureType: "administrative.country", elementType: "labels.text", stylers: [{ visibility: "on" }] },
+    { featureType: "administrative.country", elementType: "labels.text.fill", stylers: [{ color: gelap ? "#e5ecf8" : "#1f2937" }] },
+    { featureType: "administrative.country", elementType: "labels.text.stroke",
+      stylers: [{ color: gelap ? "#0b1220" : "#ffffff" }, { weight: 4 }] },
+    { featureType: "administrative.country", elementType: "geometry.stroke",
+      stylers: [{ color: gelap ? "#6b7fa8" : "#94a3b8" }, { weight: 1 }] },
+  ]);
+}
+
 function pijdInitMap() {
   if (pijd.map) return true;
   if (!window.google?.maps) return false;
   pijd.map = new google.maps.Map(document.getElementById("pijdMap"), {
     center: { lat: -2.5, lng: 118 }, zoom: 5, mapTypeId: "roadmap",
-    styles: mapStyleForTheme(state.mapTheme), disableDefaultUI: true, zoomControl: true,
+    styles: pijdMapStyle(), disableDefaultUI: true, zoomControl: true,
     gestureHandling: "greedy", clickableIcons: false,
   });
   pijd.tooltip = document.createElement("div");
@@ -361,9 +377,22 @@ async function pijdKegiatan(kode, nama) {
 
 /* ---------------- Tab Barat-Timur & Pulau ---------------- */
 
+// Filter "Tahun" bersama utk tab Barat-Timur, Ruas Berulang, Tanpa IJD, Histori
+// Kemantapan ("" = gabungan 2023-2026).
+function pijdTahunUmum() {
+  return document.getElementById("pijdTahunUmum").value;
+}
+function pijdTahunLabel() {
+  return pijdTahunUmum() || "2023–2026";
+}
+
 async function pijdLoadRingkasan() {
-  if (!pijd.ringkasan) pijd.ringkasan = await pijdFetch("/api/program-ijd/ringkasan");
-  return pijd.ringkasan;
+  const th = pijdTahunUmum();
+  pijd.ringkasan = pijd.ringkasan || {};
+  if (!pijd.ringkasan[th]) {
+    pijd.ringkasan[th] = await pijdFetch(`/api/program-ijd/ringkasan${th ? `?tahun=${th}` : ""}`);
+  }
+  return pijd.ringkasan[th];
 }
 
 async function pijdRenderWilayah() {
@@ -376,12 +405,16 @@ async function pijdRenderWilayah() {
     const kum = (s) => s.reduce((x, t) => x + t.alokasi_t, 0);
     const kumB = kum(B), kumT = kum(T);
     const fmtT = (v) => `Rp ${v.toLocaleString("id-ID", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} T`;
+    const tunggal = B.length === 1; // filter satu tahun: tanpa "a → z" dan kolom Δ
+    const porsiTile = (nama, s, sub) => laporanKpiTile(tunggal ? `Porsi ${nama} ${a.tahun}` : `Porsi ${nama} ${a.tahun} → ${z.tahun}`,
+      tunggal ? pijdPct(s[0].porsi_pct) : `${pijdPct(s[0].porsi_pct)} → ${pijdPct(s[s.length - 1].porsi_pct)}`, sub);
     const kpis = `<div class="laporan-kpi-row">
-      ${laporanKpiTile("Total 2023–2026", fmtT(d.total_t), `${d.n_kegiatan.toLocaleString("id-ID")} kegiatan`)}
-      ${laporanKpiTile(`Porsi Barat ${a.tahun} → ${z.tahun}`, `${pijdPct(a.porsi_pct)} → ${pijdPct(z.porsi_pct)}`, "Sumatera, Jawa, Bali")}
-      ${laporanKpiTile(`Porsi Timur ${a.tahun} → ${z.tahun}`, `${pijdPct(T[0].porsi_pct)} → ${pijdPct(T[T.length - 1].porsi_pct)}`, "Nusa Tenggara, Kalimantan, Sulawesi, Maluku, Papua")}
-      ${laporanKpiTile("Kumulatif Barat : Timur", `${pijdPct(Math.round((kumB / (kumB + kumT)) * 1000) / 10)} : ${pijdPct(Math.round((kumT / (kumB + kumT)) * 1000) / 10)}`, fmtT(kumB + kumT))}
+      ${laporanKpiTile(`Total ${pijdTahunLabel()}`, fmtT(d.total_t), `${d.n_kegiatan.toLocaleString("id-ID")} kegiatan`)}
+      ${porsiTile("Barat", B, "Sumatera, Jawa, Bali")}
+      ${porsiTile("Timur", T, "Nusa Tenggara, Kalimantan, Sulawesi, Maluku, Papua")}
+      ${tunggal ? "" : laporanKpiTile("Kumulatif Barat : Timur", `${pijdPct(Math.round((kumB / (kumB + kumT)) * 1000) / 10)} : ${pijdPct(Math.round((kumT / (kumB + kumT)) * 1000) / 10)}`, fmtT(kumB + kumT))}
     </div>`;
+    const thDelta = tunggal ? "" : `<th class="num">Δ ${a.tahun}→${z.tahun}</th>`;
     const stacks = B.map((b, i) => {
       const t = T[i];
       return `<div class="pijd-stack-row"><span>${b.tahun}</span>
@@ -392,13 +425,13 @@ async function pijdRenderWilayah() {
     const legend = `<div style="margin-bottom:8px"><span class="pijd-key"><span class="pijd-swatch" style="background:${PIJD_WARNA_BARAT}"></span>Barat</span>
       <span class="pijd-key"><span class="pijd-swatch" style="background:${PIJD_WARNA_TIMUR}"></span>Timur</span></div>`;
     const tabelWil = `<div class="biaya-tabel-wrap"><table class="biaya-usulan-table"><thead><tr><th>Wilayah</th>
-      ${B.map((t) => `<th class="num">${t.tahun}</th>`).join("")}<th class="num">Δ ${a.tahun}→${z.tahun}</th></tr></thead><tbody>
+      ${B.map((t) => `<th class="num">${t.tahun}</th>`).join("")}${thDelta}</tr></thead><tbody>
       ${["Barat", "Timur"].map((w) => {
         const s = d.wilayah[w];
         const delta = s[0].alokasi_t ? Math.round((s[s.length - 1].alokasi_t / s[0].alokasi_t - 1) * 1000) / 10 : null;
         return `<tr><td>${w}<div class="hint">kegiatan · km</div></td>${s.map((t) => `<td class="num">${fmtT(t.alokasi_t)}
           <div class="hint">${t.n_kegiatan} · ${t.panjang_km.toLocaleString("id-ID")}</div></td>`).join("")}
-          <td class="num">${delta != null ? `${delta > 0 ? "+" : ""}${delta.toLocaleString("id-ID")}%` : "–"}</td></tr>`;
+          ${tunggal ? "" : `<td class="num">${delta != null ? `${delta > 0 ? "+" : ""}${delta.toLocaleString("id-ID")}%` : "–"}</td>`}</tr>`;
       }).join("")}</tbody></table></div>`;
     const wilHtml = `<div class="laporan-chart-block">
       <div class="laporan-chart-title"><i class="bi bi-compass"></i> Porsi Alokasi Barat–Timur per Tahun</div>
@@ -416,14 +449,14 @@ async function pijdRenderWilayah() {
       const delta = s[0].alokasi_t ? Math.round((s[s.length - 1].alokasi_t / s[0].alokasi_t - 1) * 100) : null;
       return `<tr><td>${escapeHtml(p.pulau)} <span class="pijd-pill">${p.wilayah}</span></td>
         ${s.map((t) => `<td class="num">${t.alokasi_t.toLocaleString("id-ID", { minimumFractionDigits: 2 })}</td>`).join("")}
-        <td class="num">${delta != null ? biayaPctBadge(delta) : "–"}</td></tr>`;
+        ${tunggal ? "" : `<td class="num">${delta != null ? biayaPctBadge(delta) : "–"}</td>`}</tr>`;
     }).join("");
     const pulauHtml = `<div class="laporan-chart-block">
       <div class="laporan-chart-title"><i class="bi bi-bar-chart"></i> Alokasi per Pulau</div>
-      <div class="laporan-chart-sub">Total 2023–2026 (B = Barat, T = Timur); tabel dalam Rp triliun per tahun</div>
+      <div class="laporan-chart-sub">Total ${pijdTahunLabel()} (B = Barat, T = Timur); tabel dalam Rp triliun${tunggal ? "" : " per tahun"}</div>
       ${pulauBar}
       <div class="biaya-tabel-wrap"><table class="biaya-usulan-table"><thead><tr><th>Pulau</th>${B.map((t) => `<th class="num">${t.tahun}</th>`).join("")}
-        <th class="num">Δ ${a.tahun}→${z.tahun}</th></tr></thead><tbody>${pulauRows}</tbody></table></div></div>`;
+        ${thDelta}</tr></thead><tbody>${pulauRows}</tbody></table></div></div>`;
     view.innerHTML = kpis + wilHtml + pulauHtml + `<p class="hint">${escapeHtml(d.catatan)}</p>`;
   } catch (err) {
     view.innerHTML = `<div class="laporan-distribusi-empty">${escapeHtml(err.message)}</div>`;
@@ -436,11 +469,13 @@ async function pijdRenderBerulang() {
   const view = document.getElementById("pijdBerulangView");
   pijdLoading(view);
   try {
-    const d = (await pijdLoadRingkasan()).ruas_berulang;
+    const r = await pijdLoadRingkasan();
+    const d = r.ruas_berulang;
     const pf = d.per_frekuensi, bt = d.berturut;
     const kpis = `<div class="laporan-kpi-row">
       ${laporanKpiTile("Ruas Dialokasikan ≥ 2 Tahun", d.n.toLocaleString("id-ID"), `4×: ${pf[4]} · 3×: ${pf[3]} · 2×: ${pf[2]}`)}
-      ${laporanKpiTile("Alokasi Ruas Berulang", `Rp ${d.alokasi_t.toLocaleString("id-ID")} T`, `${pijdPct(d.porsi_pct)} dari total 2023–2026`)}
+      ${laporanKpiTile(pijdTahunUmum() ? `Alokasi ${pijdTahunUmum()} Ruas Berulang` : "Alokasi Ruas Berulang",
+        `Rp ${d.alokasi_t.toLocaleString("id-ID")} T`, `${pijdPct(d.porsi_pct)} dari total ${pijdTahunLabel()}`)}
       ${laporanKpiTile("Berturut-turut", `${bt[4] + bt[3] + bt[2]} / ${d.n}`, `tanpa jeda tahun (4×: ${bt[4]}, 3×: ${bt[3]}, 2×: ${bt[2]})`)}
     </div>`;
     const tot = d.silang_fiskal.reduce((s, r) => s + r["4"] + r["3"] + r["2"], 0);
@@ -457,11 +492,13 @@ async function pijdRenderBerulang() {
     pijd.berulang = d.daftar;
     const daftarHtml = `<div class="laporan-chart-block">
       <div class="laporan-chart-title"><i class="bi bi-list-ol"></i> Daftar Ruas Berulang</div>
+      ${pijdTahunUmum() ? `<div class="laporan-chart-sub">Ruas yang dialokasikan pada ${pijdTahunUmum()} dan juga pada tahun lain;
+        frekuensi & kolom Total dihitung atas 2023–2026.</div>` : ""}
       <div class="biaya-filter-row" style="padding:0 0 8px;border:0"><label>Frekuensi
         <select id="pijdBerulangFrek"><option value="3">≥ 3 kali</option><option value="4">4 kali</option>
         <option value="2">Semua (≥ 2 kali)</option></select></label></div>
       <div id="pijdBerulangTabel"></div></div>`;
-    view.innerHTML = kpis + silangHtml + daftarHtml + `<p class="hint">${escapeHtml((await pijdLoadRingkasan()).catatan)}</p>`;
+    view.innerHTML = kpis + silangHtml + daftarHtml + `<p class="hint">${escapeHtml(r.catatan)}</p>`;
     const sel = document.getElementById("pijdBerulangFrek");
     sel.addEventListener("change", pijdRenderBerulangTabel);
     pijdRenderBerulangTabel();
@@ -478,7 +515,7 @@ function pijdRenderBerulangTabel() {
     <td>${b.tahun.map((t) => `<span class="pijd-pill">${t}</span>`).join("")}${b.berturut ? "" : '<div class="hint">ada jeda tahun</div>'}</td>
     <td>${escapeHtml(b.fiskal)}</td><td class="num">${biayaFmt(b.total_alokasi_m)}</td></tr>`).join("");
   document.getElementById("pijdBerulangTabel").innerHTML = `<div class="biaya-tabel-wrap"><table class="biaya-usulan-table">
-    <thead><tr><th>Kegiatan (nama terakhir)</th><th>Kab/Kota</th><th>Tahun</th><th>Fiskal</th><th class="num">Total (Rp M)</th></tr></thead>
+    <thead><tr><th>Kegiatan (nama terakhir)</th><th>Kab/Kota</th><th>Tahun</th><th>Fiskal</th><th class="num">Total 2023–2026 (Rp M)</th></tr></thead>
     <tbody>${rows || '<tr><td colspan="5">Tidak ada.</td></tr>'}</tbody></table></div>
     <p class="hint">${daftar.length} ruas. Perlu ditelaah apakah pendanaan berulang adalah penanganan bertahap yang direncanakan atau penanganan yang tidak bertahan.</p>`;
 }
@@ -494,7 +531,7 @@ async function pijdRenderNihil() {
     const n = d.daftar.length;
     const kuat = d.daftar.filter((k) => k.fiskal === "Tinggi" || k.fiskal === "Sangat Tinggi").length;
     const kpis = `<div class="laporan-kpi-row">
-      ${laporanKpiTile("Kab/Kota Tanpa IJD 2023–2026", `${n} dari ${d.n_kab_lingkup}`, "DKI Jakarta di luar lingkup")}
+      ${laporanKpiTile(`Kab/Kota Tanpa IJD ${pijdTahunLabel()}`, `${n} dari ${d.n_kab_lingkup}`, "DKI Jakarta di luar lingkup")}
       ${laporanKpiTile("Berfiskal Tinggi / Sangat Tinggi", `${kuat} (${pijdPct(n ? Math.round((kuat / n) * 1000) / 10 : 0)})`, "kapasitas fiskal relatif kuat")}
       ${laporanKpiTile("Berfiskal Rendah / Sangat Rendah", d.daftar.filter((k) => /Rendah/.test(k.fiskal)).length, "patut dicermati penyebabnya")}
     </div>`;
@@ -650,15 +687,36 @@ async function pijdRenderKemantapan() {
   pijdLoading(view);
   try {
     const d = pijd.kemantapan || (pijd.kemantapan = await pijdFetch("/api/usulan-riwayat/kemantapan"));
-    const nas = d.nasional;
+    // Filter tahun (client-side): KPI & tabel provinsi hanya tahun itu; perubahan &
+    // daftar = ruas teramati ≥ 2 tahun yang salah satu pengamatannya tahun itu.
+    const thPilih = pijdTahunUmum();
+    if (thPilih && !d.tahun.includes(Number(thPilih))) {
+      view.innerHTML = `<div class="laporan-distribusi-empty">Tidak ada data kondisi untuk ${thPilih}: ekspor SITIA ${thPilih}
+        tidak memuat kolom kondisi, histori dimulai ${d.tahun[0]}.</div>`;
+      return;
+    }
+    const pakaiTh = (t) => !thPilih || Number(t) === Number(thPilih);
+    pijd.kmtDaftar = thPilih ? d.daftar.filter((x) => x.pct_mantap[thPilih] != null) : d.daftar;
+    const nas = d.nasional.filter((t) => pakaiTh(t.tahun));
     const kpis = `<div class="laporan-kpi-row">
       ${nas.map((t) => laporanKpiTile(`% Mantap ${t.tahun}`, pijdPct(t.pct_mantap),
         `${t.n_ruas.toLocaleString("id-ID")} ruas usulan · ${biayaFmt(t.panjang_km)} km`)).join("")}
-      ${laporanKpiTile("Ruas teramati ≥ 2 tahun", d.daftar.length.toLocaleString("id-ID"), "dasar perbandingan perubahan")}
+      ${laporanKpiTile("Ruas teramati ≥ 2 tahun", pijd.kmtDaftar.length.toLocaleString("id-ID"),
+        thPilih ? `termasuk pengamatan ${thPilih}` : "dasar perbandingan perubahan")}
     </div>`;
+    const kelompok = (xs) => {
+      const ds = xs.map((x) => x.delta_poin).sort((a, b) => a - b);
+      const n = ds.length;
+      return { n, naik: xs.filter((x) => x.arah === "naik").length, tetap: xs.filter((x) => x.arah === "tetap").length,
+        turun: xs.filter((x) => x.arah === "turun").length,
+        median_delta: n ? Math.round(((ds[(n - 1) >> 1] + ds[n >> 1]) / 2) * 10) / 10 : null };
+    };
     const kel = (judul, g) => `<div class="pijd-stack-row pijd-arah-row"><span>${judul}<div class="hint">${g.n} ruas · median ${pijdDeltaBadge(g.median_delta)}</div></span>
       ${pijdArahStack(g)}</div>`;
-    const p = d.perubahan;
+    const p = thPilih
+      ? { didanai: kelompok(pijd.kmtDaftar.filter((x) => x.didanai_di_antara)),
+          tidak_didanai: kelompok(pijd.kmtDaftar.filter((x) => !x.didanai_di_antara)) }
+      : d.perubahan;
     const arahHtml = `<div class="laporan-chart-block">
       <div class="laporan-chart-title"><i class="bi bi-arrow-down-up"></i> Perubahan % Mantap Ruas yang Sama: Didanai IJD vs Tidak</div>
       <div class="laporan-chart-sub">Selisih % mantap tahun pengamatan terakhir − pertama. Membaik/memburuk = berubah ≥ ${d.ambang_poin} poin.
@@ -667,9 +725,9 @@ async function pijdRenderKemantapan() {
         <span class="pijd-key"><span class="pijd-swatch pijd-arah-tetap"></span>Tetap</span>
         <span class="pijd-key"><span class="pijd-swatch pijd-arah-turun"></span>Memburuk</span></div>
       ${kel("Didanai IJD", p.didanai)}${kel("Tidak didanai", p.tidak_didanai)}</div>`;
-    const th = d.tahun;
+    const th = d.tahun.filter(pakaiTh);
     const provRows = d.provinsi.map((pr) => {
-      const s = pr.seri;
+      const s = pr.seri.filter((t) => pakaiTh(t.tahun));
       return `<tr><td>${escapeHtml(pr.provinsi)}</td>${s.map((t) => `<td class="num">${pijdPct(t.pct_mantap)}<div class="hint">${t.n_ruas} ruas</div></td>`).join("")}</tr>`;
     }).join("");
     const nasRow = `<tr><td><b>Nasional</b></td>${nas.map((t) => `<td class="num"><b>${pijdPct(t.pct_mantap)}</b><div class="hint">${t.n_ruas} ruas</div></td>`).join("")}</tr>`;
@@ -704,7 +762,7 @@ function pijdRenderKemantapanTabel() {
   const dana = document.getElementById("pijdKmtDana").value;
   const arah = document.getElementById("pijdKmtArah").value;
   const prov = document.getElementById("pijdKmtProv").value;
-  const xs = d.daftar.filter((x) => (dana === "semua" || x.didanai_di_antara === (dana === "ya"))
+  const xs = pijd.kmtDaftar.filter((x) => (dana === "semua" || x.didanai_di_antara === (dana === "ya"))
     && (arah === "semua" || x.arah === arah) && (!prov || x.provinsi === prov));
   const BATAS = 300;
   const rows = xs.slice(0, BATAS).map((x) => `<tr><td>${escapeHtml(x.nama_ruas || "")}<div class="hint">${escapeHtml(x.status_ruas || "")} · ${biayaFmt(x.panjang_ruas_km)} km</div></td>
@@ -721,11 +779,21 @@ function pijdRenderKemantapanTabel() {
 
 /* ---------------- Tab & binding ---------------- */
 
+const PIJD_TAB_TAHUN_UMUM = ["wilayah", "berulang", "nihil", "kemantapan"];
+
+// Ganti tahun: render ulang tab aktif, tab lain dimuat ulang saat dibuka.
+function pijdGantiTahunUmum() {
+  PIJD_TAB_TAHUN_UMUM.forEach((t) => { pijd.dimuat[t] = false; });
+  if (PIJD_TAB_TAHUN_UMUM.includes(pijd.tab)) pijdSetTab(pijd.tab);
+}
+
 function pijdSetTab(tab) {
   document.querySelectorAll("[data-pijd-tab]").forEach((b) => b.classList.toggle("active", b.dataset.pijdTab === tab));
   document.getElementById("pijdPetaFilter").hidden = tab !== "peta";
   document.getElementById("pijdPetaView").hidden = tab !== "peta";
   document.getElementById("pijdRekapFilter").hidden = tab !== "rekap";
+  document.getElementById("pijdUmumFilter").hidden = !PIJD_TAB_TAHUN_UMUM.includes(tab);
+  pijd.tab = tab;
   const views = { wilayah: pijdRenderWilayah, berulang: pijdRenderBerulang, nihil: pijdRenderNihil, rekap: pijdRenderRekap,
     kemantapan: pijdRenderKemantapan };
   for (const t of Object.keys(views)) {
@@ -751,6 +819,7 @@ function bindProgramIjd() {
   document.getElementById("pijdMetrik").addEventListener("change", () => pijdGambarPeta(false));
   document.getElementById("pijdRekapTahun").addEventListener("change", pijdRenderRekap);
   document.getElementById("pijdRekapProv").addEventListener("change", pijdRenderRekap);
+  document.getElementById("pijdTahunUmum").addEventListener("change", pijdGantiTahunUmum);
   document.getElementById("programIjdClose").addEventListener("click", tutup);
   overlay.addEventListener("click", (e) => { if (e.target === overlay) tutup(); });
   document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !overlay.hidden) tutup(); });

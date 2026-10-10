@@ -210,6 +210,10 @@ const MAP_LAYER_CATEGORIES = [
     match: (p) => p === "KORIDOR AWP-1" },
   { id: "kawasan-bappenas", label: "Kawasan Tematik (Bappenas)", icon: "bi-pin-map",
     match: (p) => p === "KAWASAN TEMATIK BAPPENAS" },
+  // Latihan Kebutuhan Angkutan Bersubsidi 2026 + kandidat tier MYC (scripts/import_angkutan_bersubsidi.py):
+  // poligon kab/kota, _warna per status layanan / tier; legenda ANGKUTAN_SUBSIDI_LEGEND.
+  { id: "angkutan-bersubsidi", label: "Angkutan Bersubsidi 2026 (draf latihan)", icon: "bi-bus-front",
+    match: (p) => p === "ANGKUTAN BERSUBSIDI" },
   // Tutupan lahan pertanian/perkebunan dari OpenStreetMap (scripts/import_tutupan_lahan_osm.py):
   // indikatif, cakupan OSM tidak merata -- tidak ada poligon != tidak ada kebun.
   { id: "tutupan-osm", label: "Tutupan Lahan (OSM, indikatif)", icon: "bi-tree",
@@ -1127,6 +1131,16 @@ const JALAN_KELAS = {
 };
 const JALAN_KELAS_URUT = ["tol", "nasional", "provinsi", "kabkota", "desa"];
 // "Koridor hasil analisis" (layer PETA KORIDOR) -- ungu/magenta. Deck meminta
+// Legenda Angkutan Bersubsidi 2026 (import_angkutan_bersubsidi.py) -- warna sama persis dgn WARNA_STATUS/WARNA_TIER skrip.
+const ANGKUTAN_SUBSIDI_STATUS = [["#0072B2", "Terlayani angkutan bersubsidi"], ["#E69F00", "Tidak terlayani"]];
+const ANGKUTAN_SUBSIDI_LEGEND = {
+  "Angkutan Bersubsidi Penumpang 2026": ANGKUTAN_SUBSIDI_STATUS,
+  "Angkutan Bersubsidi Barang 2026": ANGKUTAN_SUBSIDI_STATUS,
+  "Kandidat Skema Tahun Jamak (MYC) 2026": [
+    ["#B91C1C", "Tier 1 (kandidat, belum diuji gerbang)"], ["#F97316", "Tier 2"],
+    ["#FACC15", "Tier 3"], ["#6B7280", "Tier 4"],
+  ],
+};
 // garis putus-putus, tetapi google.maps.Data tidak mendukung pola garis.
 const KORIDOR_GAYA = { warna: "#c026d3", lebar: 2.8, z: 8, teks: "Koridor hasil analisis (PETA KORIDOR)" };
 

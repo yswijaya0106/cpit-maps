@@ -808,12 +808,13 @@ function updateMapLegend() {
     // polos di atas tidak cukup mewakilinya, jadi tambahkan sub-daftar
     // kategori di bawahnya, meniru legenda sumber Google My Maps-nya.
     const isKlaster = meta && meta.provinsi === KLASTER_BUCKET;
+    const swatchPoligon = isKlaster || !!ANGKUTAN_SUBSIDI_LEGEND[raw];
     const kaplinLegend = raw === "KAPLIN PETAK JALAN" ? KAPLIN_UTILISASI_LEGEND
       : raw === "KAPLIN KORIDOR UTAMA" ? KAPLIN_KORIDOR_LEGEND
       : isKlaster ? KLASTER_LEGEND
       : raw === PERLINTASAN_BTP_LAYER ? PERLINTASAN_BTP_LEGEND
       : raw === TOL_RENCANA_LAYER ? TOL_STATUS_LEGEND
-      : RTRW_PAPSEL_LEGEND[raw] || null;
+      : RTRW_PAPSEL_LEGEND[raw] || ANGKUTAN_SUBSIDI_LEGEND[raw] || null;
     if (kaplinLegend) {
       const titik = raw === PERLINTASAN_BTP_LAYER;
       const sub = document.createElement("div");
@@ -821,7 +822,7 @@ function updateMapLegend() {
       sub.innerHTML = kaplinLegend.map(([c, t]) => `
         <div class="map-legend-subitem">
           ${titik ? `<img src="${pointIconUrl("perlintasan", c)}" width="14" height="14" alt="">`
-            : `<span style="display:inline-block;width:28px;height:${isKlaster ? 12 : 4}px;background:${c};border-radius:2px"></span>`}
+            : `<span style="display:inline-block;width:28px;height:${swatchPoligon ? 12 : 4}px;background:${c};border-radius:2px"></span>`}
           <span class="map-legend-subitem-label">${escapeHtml(t)}</span>
         </div>`).join("");
       listEl.appendChild(sub);

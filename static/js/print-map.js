@@ -114,6 +114,7 @@ function printLegendSubitems(key, raw, meta, jenis) {
   else if (meta && meta.provinsi === KLASTER_BUCKET) items = KLASTER_LEGEND;
   else if (raw === PERLINTASAN_BTP_LAYER) return PERLINTASAN_BTP_LEGEND.map(([warna, teks]) => ({ warna, teks, jenis: "titik" }));
   else if (typeof RTRW_PAPSEL_LEGEND !== "undefined" && RTRW_PAPSEL_LEGEND[raw]) items = RTRW_PAPSEL_LEGEND[raw];
+  else if (ANGKUTAN_SUBSIDI_LEGEND[raw]) items = ANGKUTAN_SUBSIDI_LEGEND[raw];
   if (items) return items.map(([warna, teks]) => ({ warna, teks, jenis }));
   if (raw === TOL_RENCANA_LAYER) return TOL_STATUS_LEGEND.map(([warna, teks]) => ({ warna, teks, jenis: "garis" }));
   const kelasJalan = jalanKelasDiLayer(key);

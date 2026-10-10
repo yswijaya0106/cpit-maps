@@ -1795,6 +1795,25 @@ upsert, so they're safe to re-run:
     split works without `build_map_layer_wilayah.py`.
   - DB-only and DELETE+INSERT. Rerun after `import_kawasan_tematik.py` or a
     boundary reimport.
+- **Drive "Penambahan Data" 28 Sep 2026 (imported 10 Oct 2026).** All three
+  importers refuse to write when the source's own totals don't reconcile. They
+  are DELETE+INSERT and feed no IJD/NPR score.
+  - `import_paket_ls_bina_marga.py` → `paket_ls_bina_marga`: DIPA Paket LS TA
+    2021-2025, 57,123 paket × output. `jalan_daerah` marks the IJD RO (2023+).
+  - `import_sbsn_djbm.py` → `sbsn_kegiatan_djbm`: SBSN paket TA 2015-2026,
+    2,005 rows. Every sheet has its own layout (`KOLOM` per year); 2025-26 are
+    in Rp ribu. It reconciles against satker/group subtotals and TOTAL.
+    Provinsi comes first from the same satker in Paket LS of the same year:
+    after the 2022 split, satker names still say "PROVINSI PAPUA
+    (JAYAWIJAYA)". Run the Paket LS import first. For 2021-25, SBSN per
+    provinsi × tahun equals `paket_ls_bina_marga.sbsn_rp` (158/158 cells).
+  - `import_angkutan_bersubsidi.py` → `angkutan_bersubsidi_2026` (514 kab ×
+    penumpang/barang) + overlay bucket `ANGKUTAN BERSUBSIDI` (status per
+    sektor, Kandidat MYC tier; `ANGKUTAN_SUBSIDI_LEGEND` must match the
+    script's colours). It recomputes the MYC tier rule (59/59) and checks the
+    Recap sheets. Urgensi is the author's narrative, and the tiers are
+    candidates not yet tested against Analisa 2's gate. Kajian:
+    `docs/kajian_multimoda_infrastruktur_logistik.md`.
 - `import_tutupan_lahan_osm.py` (7 Oct 2026) — OSM farm/plantation polygons
   (kelapa sawit, karet, kelapa, kebun lain, sawah, pertanian lain, tambak),
   which until now only showed as basemap pixels, become bucket `TUTUPAN LAHAN

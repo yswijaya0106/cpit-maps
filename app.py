@@ -8675,6 +8675,33 @@ USULAN_INFRA_SEKITAR = [
 ]
 
 
+@app.get("/api/usulan-inpres/{usulan_id}/layer-kecamatan")
+def usulan_inpres_layer_kecamatan(usulan_id: int):
+    """Layer BATAS KECAMATAN (provinsi bucket, kabupaten = provinsi asli, layer =
+    kab/kota) untuk kab/kota usulan + kab/kota lain yang dilalui rutenya
+    (usulan_kecamatan_dilalui). Frontend menyalakannya otomatis saat rute usulan
+    digambar supaya sorotan kecamatan dilintasi (updateKecamatanLintasan) tampil."""
+    with db_cursor() as cur:
+        cur.execute(
+            """
+            WITH kab AS (
+              SELECT provinsi AS prov, kabupaten_kota AS kab FROM usulan_inpres WHERE id = %s
+              UNION
+              SELECT DISTINCT r.nama_provinsi, r.jenis_kabupaten || ' ' || r.nama_kabupaten_kota
+              FROM usulan_kecamatan_dilalui d
+              JOIN ref_wilayah r ON r.kode_kecamatan = d.kode_kecamatan
+              WHERE d.usulan_id = %s
+            )
+            SELECT DISTINCT m.provinsi, m.kabupaten, m.layer
+            FROM kab k
+            JOIN map_layer_meta m ON m.provinsi = %s
+             AND lower(m.kabupaten) = lower(k.prov) AND lower(m.layer) = lower(k.kab)
+            """,
+            (usulan_id, usulan_id, BATAS_KEC_DIRNAME),
+        )
+        return {"layers": cur.fetchall()}
+
+
 @app.get("/api/usulan-inpres/{usulan_id}/infrastruktur-sekitar")
 def usulan_inpres_infrastruktur_sekitar(usulan_id: int, radius_km: float = 15):
     radius_km = max(1.0, min(radius_km, 50.0))

@@ -893,6 +893,30 @@ function gambarUsulanMulti(entri, geojson) {
     path.forEach((p) => entri.bounds.extend(p));
   });
   if (typeof updateKecamatanLintasan === "function") updateKecamatanLintasan();
+  tampilkanKecamatanUsulan(u.id);
+}
+
+/* Nyalakan layer BATAS KECAMATAN kab/kota yang dilalui rute usulan, supaya
+   sorotan kecamatan dilintasi (updateKecamatanLintasan, maps-overlay.js)
+   langsung terlihat tanpa harus mencentang layernya dulu di Overlay Peta.
+   Dibatasi KEC_OTOMATIS_MAKS layer aktif agar "pilih semua" tidak membanjiri peta. */
+const KEC_OTOMATIS_MAKS = 20;
+async function tampilkanKecamatanUsulan(id) {
+  if (typeof showMapLayer !== "function") return;
+  try {
+    const res = await fetch(`/api/usulan-inpres/${id}/layer-kecamatan`);
+    if (!res.ok) return;
+    const { layers } = await res.json();
+    for (const l of layers || []) {
+      const aktif = Object.keys(state.mapLayers.active).filter((k) => k.startsWith("BATAS KECAMATAN::")).length;
+      if (aktif >= KEC_OTOMATIS_MAKS) break;
+      await showMapLayer(l.provinsi, l.kabupaten, l.layer);  // sudah aktif -> no-op; memanggil updateKecamatanLintasan
+      const cb = typeof listCheckboxFor === "function" ? listCheckboxFor(mapLayerKey(l.provinsi, l.kabupaten, l.layer)) : null;
+      if (cb) cb.checked = true;
+    }
+  } catch (err) {
+    console.error(err);
+  }
 }
 
 function hapusUsulanMulti(id) {
@@ -1426,6 +1450,7 @@ async function flyToUsulanGeometry(u) {
 
     fitBoundsCapped(bounds);
     if (typeof updateKecamatanLintasan === "function") updateKecamatanLintasan();
+    tampilkanKecamatanUsulan(u.id);
     if (statusEl) statusEl.remove();
   } catch (err) {
     console.error(err);

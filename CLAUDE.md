@@ -1843,6 +1843,21 @@ upsert, so they're safe to re-run:
     its whole bucket.
   - Per-layer sub-legends live in `LEGENDA_PER_LAYER` (maps-overlay.js),
     with colours that must match each script.
+  - `build_analisis_klaster_infrastruktur.py` (11 Oct) adds the nearest
+    logistics/support infrastructure per Merauke subklaster: RIPN and RTRW
+    ports, terminal khusus, fishing port, pasar, settlement centre, power,
+    telecom and irrigation. Output is table
+    `subklaster_infrastruktur_terdekat` plus "Terdekat - …" attrs.
+    - It is additive: the OSRM script `build_analisis_klaster_subklaster.py`
+      is not rerun.
+    - The `_infra_terdekat` array goes on the 32 SUBKLASTER polygons only;
+      detail polygons get text only (OOM precedent).
+    - Types with nothing within 500 km are skipped. That's Terminal BBM: no
+      point in Papua.
+    - Pasar carries a coverage note: only 2 points in Papua Selatan, none
+      in Merauke.
+    - Distances are rechecked with shapely in UTM 54S.
+    - Run it after the three importers above.
 - `import_tutupan_lahan_osm.py` (7 Oct 2026) — OSM farm/plantation polygons
   (kelapa sawit, karet, kelapa, kebun lain, sawah, pertanian lain, tambak),
   which until now only showed as basemap pixels, become bucket `TUTUPAN LAHAN

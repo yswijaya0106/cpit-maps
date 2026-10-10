@@ -929,6 +929,7 @@ DATA_TABLES = {
     "koridor_simpul_terdekat": "Peta Koridor — Jarak Terdekat ke Simpul Bandara & Pelabuhan",
     "cer_awp1_koridor": "Analisis Skoring Jalan AWP-1 — CER per Koridor (eksperimental)",
     "iri_ruas_nasional": "IRI & Kemantapan Jalan Nasional per Ruas (Survei Juli 2026)",
+    "subklaster_infrastruktur_terdekat": "Klaster/Subklaster Merauke — Infrastruktur Logistik & Pendukung Terdekat",
     "subklaster_analisis_transportasi": "Analisis Konektivitas Klaster/Subklaster Merauke (Bandara/Pelabuhan/Jalan Terdekat)",
     # BPSDM Perhubungan (scripts/import_bpsdm_perhubungan.py, docs/kajian_data_bpsdm_perhubungan.md)
     "bpsdm_upt": "BPSDM Perhubungan — Daftar UPT & Ringkasan",
@@ -9781,9 +9782,13 @@ def program_ijd_kegiatan(kode_provinsi: int, kode_kabupaten: Optional[int] = Non
 
 
 @app.get("/api/program-ijd/ringkasan")
-def program_ijd_ringkasan():
+def program_ijd_ringkasan(tahun: Optional[int] = None):
     """Barat-Timur & pulau (deck hal. 15-16), ruas berulang x fiskal (hal. 17-18),
-    kab/kota tanpa IJD (hal. 19-20)."""
+    kab/kota tanpa IJD (hal. 19-20). Dengan `tahun`: Barat-Timur/pulau dan tanpa
+    IJD hanya tahun itu; ruas berulang = ruas yang dialokasikan ≥ 2 tahun (dihitung
+    atas 2023-2026) DAN salah satunya tahun itu -- alokasi/porsinya alokasi tahun itu."""
+    if tahun is not None and tahun not in _BIAYA_TAHUN:
+        raise HTTPException(400, "tahun harus 2023-2026.")
     with db_cursor() as cur:
         _program_ijd_cek_tabel(cur)
         cur.execute("SELECT tahun, kode_provinsi, kode_kabupaten, provinsi, kab_kota, nama_kegiatan, kategori, "
@@ -9794,13 +9799,14 @@ def program_ijd_ringkasan():
                     "WHERE kode_provinsi <> 31")
         ref_kab = cur.fetchall()
         fiskal_kab, fiskal_prov = _program_fiskal(cur)
-    tahun_list = list(_BIAYA_TAHUN)
+    tahun_list = [tahun] if tahun else list(_BIAYA_TAHUN)
+    rows_th = [r for r in rows if r["tahun"] in tahun_list]  # semua baris bila tanpa filter
 
     # 1. Barat-Timur & pulau
     def _kosong():
         return {t: {"alokasi_t": 0.0, "n_kegiatan": 0, "panjang_km": 0.0} for t in tahun_list}
     wil, pulau = {"Barat": _kosong(), "Timur": _kosong()}, {p: _kosong() for p, _, _ in _PROGRAM_PULAU}
-    for r in rows:
+    for r in rows_th:
         p, w = _PROGRAM_PULAU_BY_PROV.get(r["kode_provinsi"], (None, None))
         if not p:
             continue
@@ -9831,7 +9837,7 @@ def program_ijd_ringkasan():
     berulang = []
     for (wk, _), rs in grup.items():
         th = sorted({r["tahun"] for r in rs})
-        if len(th) < 2:
+        if len(th) < 2 or (tahun and tahun not in th):
             continue
         akhir = rs[-1]
         fiskal = fiskal_kab.get(wk[1]) if wk[0] == "K" else fiskal_prov.get(akhir["kode_provinsi"])
@@ -9840,6 +9846,7 @@ def program_ijd_ringkasan():
             "tahun": th, "frekuensi": len(th), "berturut": th[-1] - th[0] + 1 == len(th),
             "fiskal": fiskal or "Tidak ada data",
             "total_alokasi_m": round(sum(float(r["alokasi_rp"] or 0) for r in rs) / 1e9, 1),
+            "alokasi_filter_m": round(sum(float(r["alokasi_rp"] or 0) for r in rs if r["tahun"] in tahun_list) / 1e9, 1),
             "kategori": sorted({r["kategori"] for r in rs if r["kategori"]}),
         })
     berulang.sort(key=lambda x: (-x["frekuensi"], -x["total_alokasi_m"]))
@@ -9847,11 +9854,11 @@ def program_ijd_ringkasan():
     silang = {f: {n: 0 for n in (4, 3, 2)} for f in fiskal_kolom}
     for b in berulang:
         silang[b["fiskal"]][b["frekuensi"]] += 1
-    total_alok = sum(float(r["alokasi_rp"] or 0) for r in rows)
-    alok_berulang = sum(b["total_alokasi_m"] for b in berulang) * 1e9
+    total_alok = sum(float(r["alokasi_rp"] or 0) for r in rows_th)
+    alok_berulang = sum(b["alokasi_filter_m"] for b in berulang) * 1e9
 
-    # 3. Kab/kota tanpa IJD 2023-2026 (DKI di luar lingkup IJD)
-    ada = {r["kode_kabupaten"] for r in rows if r["kode_kabupaten"]}
+    # 3. Kab/kota tanpa IJD 2023-2026 / tahun terpilih (DKI di luar lingkup IJD)
+    ada = {r["kode_kabupaten"] for r in rows_th if r["kode_kabupaten"]}
     nihil = [{"kode": k["kode"], "provinsi": k["prov"].title(),
               "kab_kota": f"{'Kota' if k['j'] == 'KOTA' else 'Kab.'} {k['n'].title()}",
               "fiskal": fiskal_kab.get(k["kode"]) or "Tidak ada data"}
@@ -9869,7 +9876,7 @@ def program_ijd_ringkasan():
                    "total_t": round(sum(pulau[p][t]["alokasi_t"] for t in tahun_list), 2)}
                   for p, w, _ in _PROGRAM_PULAU],
         "sensitivitas_kalimantan_barat": sensitivitas,
-        "total_t": round(total_alok / 1e12, 2), "n_kegiatan": len(rows),
+        "tahun": tahun, "total_t": round(total_alok / 1e12, 2), "n_kegiatan": len(rows_th),
         "ruas_berulang": {
             "n": len(berulang), "per_frekuensi": {n: sum(1 for b in berulang if b["frekuensi"] == n) for n in (4, 3, 2)},
             "berturut": {n: sum(1 for b in berulang if b["frekuensi"] == n and b["berturut"]) for n in (4, 3, 2)},

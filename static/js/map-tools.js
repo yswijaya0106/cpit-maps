@@ -439,7 +439,10 @@ function attachSubklasterAnalisis(container, feature) {
       TERDEKAT — garis utuh di antaranya adalah rute jalan sungguhan (OSRM/OpenStreetMap, arah
       berkendara); garis putus-putus dipakai hanya kalau OSRM tidak menemukan rute jalan (garis
       lurus, perkiraan). Titik-titik kecil biru muda/hijau muda = SEMUA bandara/pelabuhan lain di
-      pulau Papua (arahkan kursor utk nama & jaraknya).
+      pulau Papua (arahkan kursor utk nama & jaraknya). Titik sedang + garis putus-putus tipis =
+      infrastruktur logistik/pendukung terdekat (pelabuhan RIPN/RTRW, terminal khusus, pelabuhan
+      perikanan, pasar, pusat permukiman, listrik, telekomunikasi, irigasi) — jarak garis lurus,
+      rincian di atribut "Terdekat - …".
     </div>`;
   container.appendChild(wrap);
 }
@@ -488,6 +491,22 @@ function gambarSubklasterAnalisis(prop) {
   gambarTarget("Koridor IJD Terdekat", "_koridor_lat", "_koridor_lon", "_koridor_ref_lat", "_koridor_ref_lon", "_koridor_rute", "#d97706", "jalan");
 
   // SEMUA bandara & pelabuhan di pulau Papua (titik kecil, jarak garis lurus di title/tooltip saja)
+  // infrastruktur logistik/pendukung terdekat (scripts/build_analisis_klaster_infrastruktur.py)
+  (prop("_infra_terdekat") || []).forEach((x) => {
+    if (x.lat == null) return;
+    overlay.push(new google.maps.Marker({
+      position: { lat: x.lat, lng: x.lon }, map: state.map, zIndex: 180,
+      title: `${x.jenis}: ${x.nama || "?"} (${x.jarak_km} km garis lurus)`,
+      icon: pointIcon(x.glyph || "titik", x.warna || "#475569", 1, 22),
+    }));
+    if (x.ref_lat != null && x.jarak_km > 0) {
+      overlay.push(new google.maps.Polyline({
+        path: [{ lat: x.ref_lat, lng: x.ref_lon }, { lat: x.lat, lng: x.lon }], map: state.map,
+        strokeColor: x.warna || "#475569", strokeOpacity: 0, zIndex: 170,
+        icons: [{ icon: { path: "M 0,-1 0,1", strokeOpacity: 0.8, scale: 2 }, offset: "0", repeat: "10px" }],
+      }));
+    }
+  });
   (prop("_semua_bandara") || []).forEach((b) => {
     overlay.push(titikKecil(b.lat, b.lon, "#93c5fd", `${b.nama} (${b.jarak_km} km garis lurus)`, "pesawat"));
   });

@@ -8,6 +8,11 @@ function initApp() {
     disableDefaultUI: false,
     fullscreenControl: false,
     streetViewControl: false,
+    // Pojok kanan bawah dipakai tombol Asisten AI (.chat-launcher, fixed) -- kontrol
+    // zoom/kamera bawaan Google di sana tampak sebagai "tombol kedua" di belakangnya.
+    zoomControlOptions: { position: google.maps.ControlPosition.LEFT_BOTTOM },
+    cameraControlOptions: { position: google.maps.ControlPosition.LEFT_BOTTOM },
+    rotateControl: false,
     styles: mapStyleForTheme(state.mapTheme),
   });
 

@@ -261,11 +261,15 @@ async function loadMapLayerTree() {
       .filter((p) => (p.kabupaten_count_tanpa_koridor ?? p.kabupaten_count) > 0)
       .map((p) => ({ ...p, kabupaten_count: p.kabupaten_count_tanpa_koridor ?? p.kabupaten_count }));
     if (!rows.length) return;
+    // Hanya kategori "jalan" (catch-all) yang barisnya provinsi RBI asli; kategori
+    // lain berisi bucket data (BANDARA, PELABUHAN, ...) -> hitung sbg "kelompok",
+    // dan tanpa badge bila cuma satu (dulu tampil "1 provinsi" yg menyesatkan).
+    const asliProvinsi = cat.id === "jalan";
     tree.appendChild(renderTreeNode({
       icon: cat.icon,
       label: cat.label,
-      count: rows.length,
-      countSuffix: "provinsi",
+      count: asliProvinsi || rows.length > 1 ? rows.length : null,
+      countSuffix: asliProvinsi ? "provinsi" : "kelompok",
       loadChildren: () => renderProvinsiChildren(rows),
     }));
   });

@@ -112,13 +112,21 @@ function showIdentifyInfo(layerName, feature, latLng) {
   state.identifyHighlight = { layer: layerName, feature };
 
   const rows = [];
+  const rowsTerdekat = []; // "Terdekat - <jenis>" (build_analisis_klaster_infrastruktur.py) -> bagian sendiri
   feature.forEachProperty((value, key) => {
     if (value === null || value === undefined || value === "") return;
     if (String(key).startsWith("_")) return; // atribut teknis (legenda/filter), bukan utk ditampilkan
-    rows.push(`<tr><th>${escapeHtml(key)}</th><td>${formatIdentifyValue(String(value))}</td></tr>`);
+    const k = String(key);
+    if (k.startsWith("Terdekat - ")) {
+      rowsTerdekat.push(`<tr><th>${escapeHtml(k.slice(11))}</th><td>${formatIdentifyValue(String(value))}</td></tr>`);
+    } else {
+      rows.push(`<tr><th>${escapeHtml(k)}</th><td>${formatIdentifyValue(String(value))}</td></tr>`);
+    }
   });
-  const body = rows.length
-    ? `<table class="identify-table">${rows.join("")}</table>`
+  const body = rows.length || rowsTerdekat.length
+    ? `<table class="identify-table">${rows.join("")}</table>` + (rowsTerdekat.length
+      ? `<div class="identify-subhead">Infrastruktur terdekat (garis lurus)</div><table class="identify-table">${rowsTerdekat.join("")}</table>`
+      : "")
     : `<div class="hint">Fitur ini tidak memiliki atribut</div>`;
 
   // Konten dibangun sebagai DOM node (bukan string) supaya select join tabel

@@ -670,6 +670,7 @@ async function showMapLayer(provinsi, kabupaten, layer) {
     bindIconZoomRefresh();
     state.mapLayers.lod[key] = { lod: geojson.lod ?? 2, tersedia: !!geojson.lod_tersedia };
     bindMapLayerLodRefresh();
+    bindGarisPutusRefresh();
     applyLayerStyle(key);
     if (layer === "KAPLIN STASIUN") bindKaplinLabelZoom();
     if (provinsi === "BATAS KECAMATAN") updateKecamatanLintasan();
@@ -791,6 +792,7 @@ async function swapMapLayerLod(key, lod) {
     data.addGeoJson(geojson);
     info.lod = geojson.lod ?? lod;
     tertukar = true;
+    jadwalGarisPutus(key); // fitur baru -> polyline putus-putus dibangun ulang
     if (provinsi === "BATAS KECAMATAN") updateKecamatanLintasan();
   } catch (err) {
     console.error(err); // tetap pakai geometri yang sudah tampil
@@ -1105,7 +1107,8 @@ function layerLegendSymbolHtml(key, color, size = 18) {
   }
   const svg = /Polygon/.test(type)
     ? `<rect x="3" y="3" width="18" height="18" rx="2" fill="${color}" fill-opacity="0.45" stroke="${color}" stroke-width="2"/>`
-    : `<polyline points="2,19 8,9 14,15 22,4" fill="none" stroke="${color}" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/>`;
+    : `<polyline points="2,19 8,9 14,15 22,4" fill="none" stroke="${color}" stroke-width="2.6" stroke-linejoin="round"${
+      garisPutusLayer(key) ? ' stroke-dasharray="4 3"' : ' stroke-linecap="round"'}/>`;
   return img("data:image/svg+xml;charset=UTF-8," + encodeURIComponent(
     `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24">${svg}</svg>`));
 }
@@ -1180,7 +1183,7 @@ const LEGENDA_PER_LAYER = {
     ["#7C3AED", "Pembangunan (trase indikatif)"], ["#DB2777", "Peningkatan"], ["#0891B2", "Jembatan"],
   ],
 };
-// garis putus-putus, tetapi google.maps.Data tidak mendukung pola garis.
+// PETA KORIDOR (deck slide 3: ungu/magenta, putus-putus -> lihat garisPutusLayer).
 const KORIDOR_GAYA = { warna: "#c026d3", lebar: 2.8, z: 8, teks: "Koridor hasil analisis (PETA KORIDOR)" };
 
 const AWP1_LAYER = "Koridor AWP-1";
@@ -1191,6 +1194,130 @@ const TOL_STATUS_LEGEND = [
   ["#6d28d9", "Rencana"], ["#9ca3af", "Status tidak tercatat"],
 ];
 const AWP1_WARNA = "#ec4899";
+
+/* ---------- garis putus-putus (deck 20261007 slide 3: koridor & rencana) ----------
+   google.maps.Data tidak punya pola garis. Fitur yang harus putus-putus tetap ada di
+   layer Data tetapi transparan (klik/identify/seleksi tetap jalan), lalu di atasnya
+   digambar google.maps.Polyline bersimbol garis pendek berulang. Polyline hanya dibuat
+   utk fitur di viewport dan dibangun ulang saat peta berhenti (idle); di atas
+   GARIS_PUTUS_MAKS fitur sekaligus layer itu sementara digambar utuh (ribuan polyline
+   bersimbol membuat peta patah-patah), lalu kembali putus-putus saat diperbesar. */
+const GARIS_PUTUS_MAKS = 2500;
+const _STATUS_RENCANA_KOLOM = ["Status Pembangunan", "Status Jaringan", "Status"];
+
+// Seluruh layer putus-putus: koridor (PETA KORIDOR, AWP-1) & layer rencana. Rencana Umum
+// Jalan Tol TIDAK, karena memuat ruas operasi/konstruksi -> per ruas lewat status.
+function garisPutusLayer(key) {
+  const raw = mapLayerRawName(key);
+  return raw === "PETA KORIDOR" || raw === AWP1_LAYER || (/^rencana/i.test(raw) && raw !== TOL_RENCANA_LAYER);
+}
+
+function garisPutusFitur(key, feature) {
+  if (garisPutusLayer(key)) return true;
+  return _STATUS_RENCANA_KOLOM.some((k) => String(feature.getProperty(k) ?? "").trim().toLowerCase() === "rencana");
+}
+
+const _garisBboxCache = new WeakMap();
+function garisBbox(feature) {
+  let bb = _garisBboxCache.get(feature);
+  if (!bb) {
+    bb = { s: 90, n: -90, w: 180, e: -180 };
+    feature.getGeometry()?.forEachLatLng((ll) => {
+      bb.s = Math.min(bb.s, ll.lat()); bb.n = Math.max(bb.n, ll.lat());
+      bb.w = Math.min(bb.w, ll.lng()); bb.e = Math.max(bb.e, ll.lng());
+    });
+    _garisBboxCache.set(feature, bb);
+  }
+  return bb;
+}
+
+function garisDiViewport(feature, bounds) {
+  if (!bounds) return true;
+  const bb = garisBbox(feature);
+  const sw = bounds.getSouthWest(), ne = bounds.getNorthEast();
+  return bb.n >= sw.lat() && bb.s <= ne.lat() && bb.e >= sw.lng() && bb.w <= ne.lng();
+}
+
+function garisJalurLatLng(geom) {
+  const t = geom.getType();
+  if (t === "LineString") return [geom.getArray()];
+  if (t === "MultiLineString") return geom.getArray().map((ls) => ls.getArray());
+  return [];
+}
+
+// Swatch legenda garis (HTML): putus-putus bila seluruh layer putus-putus atau baris itu "Rencana".
+function legendaGarisSwatch(key, warna, teks, tinggi = 4) {
+  const putus = garisPutusLayer(key) || /^rencana\b/i.test(String(teks || ""));
+  const bg = putus ? `repeating-linear-gradient(90deg, ${warna} 0 6px, transparent 6px 10px)` : warna;
+  return `<span style="display:inline-block;width:28px;height:${tinggi}px;background:${bg};border-radius:2px"></span>`;
+}
+
+function hapusGarisPutus(key) {
+  (state.mapLayers.putus?.[key] || []).forEach((pl) => pl.setMap(null));
+  if (state.mapLayers.putus) delete state.mapLayers.putus[key];
+}
+
+function gambarGarisPutus(key) {
+  hapusGarisPutus(key);
+  const data = state.mapLayers.active[key];
+  const styleFn = data?.getStyle();
+  if (!data || typeof styleFn !== "function" || !state.map) return;
+  const bounds = state.map.getBounds();
+  const polys = [];
+  data.forEach((f) => {
+    const st = styleFn(f);
+    const p = st && st._putus;
+    if (!p || !garisDiViewport(f, bounds)) return;
+    const skala = Math.max(1.6, p.lebar);
+    garisJalurLatLng(f.getGeometry()).forEach((path) => {
+      if (path.length < 2) return;
+      polys.push(new google.maps.Polyline({
+        map: state.map, path, clickable: false, strokeOpacity: 0, zIndex: st.zIndex ?? 2,
+        icons: [{
+          icon: { path: "M 0,-1 0,1", strokeColor: p.warna, strokeOpacity: p.opacity, strokeWeight: p.lebar, scale: skala },
+          offset: "0", repeat: `${Math.round(skala * 4.5)}px`,
+        }],
+      }));
+    });
+  });
+  state.mapLayers.putus = state.mapLayers.putus || {};
+  state.mapLayers.putus[key] = polys;
+}
+
+// applyLayerStyle bisa dipanggil beruntun (slider) -> gambar sekali per frame.
+const _garisPutusTertunda = new Set();
+function jadwalGarisPutus(key) {
+  if (_garisPutusTertunda.has(key)) return;
+  _garisPutusTertunda.add(key);
+  requestAnimationFrame(() => { _garisPutusTertunda.delete(key); gambarGarisPutus(key); });
+}
+
+// idle: viewport berubah -> gambar ulang; atur peralihan utuh <-> putus-putus menurut jumlah fitur.
+function refreshGarisPutus() {
+  const bounds = state.map?.getBounds();
+  state.mapLayers.putusUtuh = state.mapLayers.putusUtuh || {};
+  Object.keys(state.mapLayers.active).forEach((key) => {
+    const data = state.mapLayers.active[key];
+    let n = 0;
+    data.forEach((f) => {
+      if (/LineString/.test(f.getGeometry()?.getType() || "") && garisPutusFitur(key, f) && garisDiViewport(f, bounds)) n++;
+    });
+    if (!n && !state.mapLayers.putus?.[key]?.length) return;
+    const utuh = n > GARIS_PUTUS_MAKS;
+    if (utuh !== !!state.mapLayers.putusUtuh[key]) {
+      state.mapLayers.putusUtuh[key] = utuh;
+      applyLayerStyle(key); // menjadwalkan gambar ulang sendiri
+    } else if (!utuh) {
+      jadwalGarisPutus(key);
+    }
+  });
+}
+
+function bindGarisPutusRefresh() {
+  if (state._garisPutusBound || !state.map) return;
+  state._garisPutusBound = true;
+  state.map.addListener("idle", refreshGarisPutus);
+}
 
 function jalanLayerJenis(key) {
   const meta = state.mapLayers.meta[key] || {};
@@ -1334,13 +1461,22 @@ function applyLayerStyle(key) {
   // Slider ukuran yg sama (iconScale) mengatur TEBAL GARIS utk fitur garis; ikon titik
   // sudah memakainya lewat ukuranIkon(). Poligon tidak ikut.
   const skalaGaris = (state.mapLayers.iconScale || {})[key] ?? 1;
+  const putusAktif = !(state.mapLayers.putusUtuh || {})[key];
   data.setStyle((f) => {
-    const st = gaya(f);
-    if (skalaGaris !== 1 && st && st.strokeWeight && /LineString/.test(f.getGeometry()?.getType() || "")) {
-      return { ...st, strokeWeight: Math.max(0.5, st.strokeWeight * skalaGaris) };
+    let st = gaya(f);
+    const garis = /LineString/.test(f.getGeometry()?.getType() || "");
+    if (skalaGaris !== 1 && st && st.strokeWeight && garis) {
+      st = { ...st, strokeWeight: Math.max(0.5, st.strokeWeight * skalaGaris) };
+    }
+    // garis putus-putus: garis Data dibuat transparan, polyline putus-putus menggantikannya
+    // (gambarGarisPutus). _putus juga dibaca cetak peta (printStyleFromGoogle).
+    if (garis && putusAktif && st && st.visible !== false && st.strokeColor && garisPutusFitur(key, f)) {
+      return { ...st, strokeOpacity: 0,
+               _putus: { warna: st.strokeColor, opacity: st.strokeOpacity ?? 1, lebar: st.strokeWeight || 2 } };
     }
     return st;
   });
+  jadwalGarisPutus(key);
 }
 
 // Sheet KAPLIN memuat petak agregat (mis. Jatinegara-Bekasi 14,8 km) SEKALIGUS petak per-stasiun di atas
@@ -1371,6 +1507,8 @@ function hideMapLayer(key) {
   const data = state.mapLayers.active[key];
   if (!data) return;
   data.setMap(null);
+  hapusGarisPutus(key);
+  if (state.mapLayers.putusUtuh) delete state.mapLayers.putusUtuh[key];
   delete state.mapLayers.active[key];
   delete state.mapLayers.opacity[key];
   if (state.mapLayers.iconScale) delete state.mapLayers.iconScale[key];
@@ -1400,6 +1538,8 @@ function hideMapLayer(key) {
 function clearActiveMapLayers() {
   Object.keys(state.mapLayers.active).forEach((key) => clearSelectionForLayer(key));
   Object.values(state.mapLayers.active).forEach((data) => data.setMap(null));
+  Object.keys(state.mapLayers.putus || {}).forEach(hapusGarisPutus);
+  state.mapLayers.putusUtuh = {};
   state.mapLayers.active = {};
   state.mapLayers.opacity = {};
   state.mapLayers.meta = {};

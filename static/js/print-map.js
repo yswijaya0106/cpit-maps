@@ -108,6 +108,12 @@ function printLabelText(props, field) {
 // Sub-legenda: meniru updateMapLegend() (map-tools.js) supaya legenda cetak
 // sama dgn legenda di layar.
 function printLegendSubitems(key, raw, meta, jenis) {
+  // garis koridor/rencana digambar putus-putus di peta -> simbol legendanya juga (garis_putus)
+  return printLegendSubitemsDasar(key, raw, meta, jenis).map((it) =>
+    (it.jenis === "garis" && (garisPutusLayer(key) || /^rencana\b/i.test(it.teks)) ? { ...it, jenis: "garis_putus" } : it));
+}
+
+function printLegendSubitemsDasar(key, raw, meta, jenis) {
   let items = null;
   if (raw === "KAPLIN PETAK JALAN") items = KAPLIN_UTILISASI_LEGEND;
   else if (raw === "KAPLIN KORIDOR UTAMA") items = KAPLIN_KORIDOR_LEGEND;
@@ -153,6 +159,11 @@ function printStyleFromGoogle(st, jenis, fallbackColor) {
       gaya.point_size = icon.scaledSize?.width || 24;
     }
     return gaya;
+  }
+  if (st._putus) {
+    // garis putus-putus (applyLayerStyle): di layar garis Data-nya transparan, warna asli di _putus
+    return { fill: null, fill_opacity: 0, stroke: st._putus.warna, stroke_width: st._putus.lebar,
+             stroke_opacity: st._putus.opacity, dash: true };
   }
   return {
     fill: jenis === "poligon" ? (st.fillColor || fallbackColor) : null,
@@ -201,7 +212,8 @@ function printCollectOverlay(key, view, dupRaw) {
     warna: kelasJalan.length === 1 ? JALAN_KELAS[kelasJalan[0]].warna
       : kelasJalan.length > 1 ? JALAN_KELAS.kabkota.warna
       : raw === "PETA KORIDOR" ? KORIDOR_GAYA.warna : raw === AWP1_LAYER ? AWP1_WARNA : color,
-    jenis,
+    // jenis = simbol legenda layer tanpa sub-item (map_print._legenda)
+    jenis: jenis === "garis" && garisPutusLayer(key) ? "garis_putus" : jenis,
     fields: [...fields],
     legend: printLegendSubitems(key, raw, meta, jenis),
     feats,

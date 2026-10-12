@@ -885,7 +885,8 @@ function updateMapLegend() {
       sub.innerHTML = kaplinLegend.map(([c, t]) => `
         <div class="map-legend-subitem">
           ${titik ? `<img src="${pointIconUrl("perlintasan", c)}" width="14" height="14" alt="">`
-            : `<span style="display:inline-block;width:28px;height:${swatchPoligon ? 12 : 4}px;background:${c};border-radius:2px"></span>`}
+            : swatchPoligon ? `<span style="display:inline-block;width:28px;height:12px;background:${c};border-radius:2px"></span>`
+            : legendaGarisSwatch(key, c, t)}
           <span class="map-legend-subitem-label">${escapeHtml(t)}</span>
         </div>`).join("");
       listEl.appendChild(sub);

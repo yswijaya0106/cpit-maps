@@ -50,6 +50,7 @@ class CetakGaya(BaseModel):
     stroke: Optional[str] = None
     stroke_width: float = 1.5
     stroke_opacity: float = 1.0
+    dash: bool = False  # garis putus-putus (koridor/rencana, deck 20261007 slide 3)
     point_color: Optional[str] = None
     point_radius: float = 4.0
     # Ikon titik spt di layar (pesawat bandara, jangkar pelabuhan, ...): kunci ke
@@ -481,6 +482,31 @@ def siapkan_fitur(req: CetakPetaRequest, view: Tampilan, ss: float):
     return hasil
 
 
+def _garis_putus(d, c, warna, w: int):
+    """Garis putus-putus sepanjang polyline c (piksel kanvas). Pola berlanjut antar
+    segmen (bukan diulang per segmen), sama spt simbol berulang di layar."""
+    # Status dash/celah dibawa maju (bukan dihitung ulang dgn modulo): versi modulo bisa
+    # macet pada langkah ~0 akibat galat floating point -> 114 juta d.line, cetak tak selesai.
+    garis, celah = max(6, w * 2.4), max(4, w * 2.1)
+    aktif, sisa = True, garis  # sedang di dash?  sisa panjang dash/celah saat ini
+    for (x1, y1), (x2, y2) in zip(c, c[1:]):
+        dx, dy = x2 - x1, y2 - y1
+        panjang = math.hypot(dx, dy)
+        if panjang == 0:
+            continue
+        t = 0.0
+        while panjang - t > 1e-6:
+            langkah = min(sisa, panjang - t)
+            if aktif:
+                d.line([(x1 + dx * t / panjang, y1 + dy * t / panjang),
+                        (x1 + dx * (t + langkah) / panjang, y1 + dy * (t + langkah) / panjang)], fill=warna, width=w)
+            t += langkah
+            sisa -= langkah
+            if sisa <= 1e-6:
+                aktif = not aktif
+                sisa = garis if aktif else celah
+
+
 def _lebar_garis(w_layar: float, faktor: float) -> int:
     return max(1, int(round(w_layar * faktor)))
 
@@ -534,8 +560,11 @@ def render_vektor(req: CetakPetaRequest, view: Tampilan, fitur_per_layer, ss: in
                     if len(c) < 2:
                         continue
                     w = _lebar_garis(g.stroke_width, faktor)
-                    d.line(c, fill=_rgba(g.stroke or layer.warna, g.stroke_opacity, _rgb(layer.warna)),
-                           width=w, joint="curve" if w > 2 else None)
+                    warna = _rgba(g.stroke or layer.warna, g.stroke_opacity, _rgb(layer.warna))
+                    if g.dash:
+                        _garis_putus(d, c, warna, w)
+                    else:
+                        d.line(c, fill=warna, width=w, joint="curve" if w > 2 else None)
                 elif p.geom_type == "Point":
                     x, y = p.x, p.y
                     ikon = _ikon_gambar(req, g.point_icon)
@@ -1022,11 +1051,16 @@ def _gambar_simbol(c, jenis, warna, x, y, w, h, ikon=None):
                     preserveAspectRatio=True, anchor="c", mask="auto")
         return
     col = _rl_warna(_rgb(warna))
-    if jenis == "garis":
+    if jenis in ("garis", "garis_putus"):
         c.setStrokeColor(col)
         c.setLineWidth(2.2)
-        c.setLineCap(1)
+        if jenis == "garis_putus":
+            c.setLineCap(0)
+            c.setDash(3.2, 2.2)
+        else:
+            c.setLineCap(1)
         c.line(x + 1, y + h / 2, x + w - 1, y + h / 2)
+        c.setDash()
     elif jenis == "titik":
         c.setFillColor(col)
         c.setStrokeColorRGB(0.08, 0.1, 0.14)
@@ -1374,6 +1408,9 @@ def _swatch_png(jenis: str, warna: str, ikon=None) -> io.BytesIO:
         img.paste(im, ((84 - im.width) // 2, (44 - im.height) // 2), im)
     elif jenis == "garis":
         d.line([(6, 22), (78, 22)], fill=(*rgb, 255), width=8)
+    elif jenis == "garis_putus":
+        for x0 in range(6, 78, 20):
+            d.line([(x0, 22), (min(x0 + 12, 78), 22)], fill=(*rgb, 255), width=8)
     elif jenis == "titik":
         d.ellipse((28, 8, 56, 36), fill=(*rgb, 255), outline=(20, 24, 34, 255), width=3)
     else:

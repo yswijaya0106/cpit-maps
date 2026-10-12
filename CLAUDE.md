@@ -971,8 +971,25 @@ bappenas.xlsx`, `Jalan Tol/`). Done and browser-verified:
   1), but below usulan lines (20–30). Kab/kota road layers are classified per
   ruas: status column first, then RBI fungsi (jalan lain/setapak/lingkungan
   = desa). This was verified against Kota Tasikmalaya attrs. PETA KORIDOR is
-  magenta. Dashed lines are NOT possible: `google.maps.Data` has no line
-  patterns.
+  magenta.
+- **Dashed corridor/plan lines (12 Oct 2026, slide 3):** `google.maps.Data` has
+  no line patterns, so maps-overlay.js draws them itself:
+  - Which lines: every PETA KORIDOR and Koridor AWP-1 line, every layer whose
+    name starts with "Rencana" (except the toll master plan), and any line whose
+    `Status Pembangunan`/`Status Jaringan`/`Status` is "Rencana"
+    (`garisPutusFitur`). Toll: 225/362 ruas.
+  - How: `applyLayerStyle` makes those Data lines transparent (`strokeOpacity:
+    0`, so identify/select still work) and adds `_putus` to the style.
+    `gambarGarisPutus` draws a `google.maps.Polyline` with a repeated dash
+    symbol for features in the viewport only, rebuilt on `idle` and after a LOD
+    swap. Above `GARIS_PUTUS_MAKS` (2,500) features in view, the layer falls
+    back to solid until you zoom in.
+  - Legend: `legendaGarisSwatch` on screen; `garis_putus` legend type in print.
+    Print reads `_putus` → `CetakGaya.dash` → `map_print._garis_putus`.
+  - **Gotcha fixed before release:** the first `_garis_putus` recomputed the
+    dash phase with float modulo and could stall on ~0-length steps (114M
+    `d.line` calls, the print request never returned and pinned a uvicorn
+    worker at 100% CPU). It now carries dash/gap state forward.
 - **NPR vs NPRwa:** `/npr` now returns `benchmark_kabupaten`. It is the NPR
   weighted by `panjang_penanganan_pemda` across all usulan in the same
   kab/kota. The deck doesn't name the weight, so this is an assumption,

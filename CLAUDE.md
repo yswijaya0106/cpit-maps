@@ -1022,6 +1022,15 @@ bappenas.xlsx`, `Jalan Tol/`). Done and browser-verified:
   - 2,565/2,692 corridors have geometry. 131 have 0 km length (flagged in
     `catatan_data`).
   - Rerun after a new Excel version.
+  - **Preview & Export Skor CER** (14 Oct 2026, for corridor-selection
+    review, same shape as Export Skor IJD): toolbar button
+    `#btnUsulanExportCer`, [static/js/cer-awp1.js](static/js/cer-awp1.js),
+    `GET /api/cer-awp1/{provinsi,preview,export/xlsx}` (`provinsi`
+    repeatable, `urut=cer|tot`). Columns, rounding and the xlsx (grouped
+    header + "Keterangan" sheet with formulas and review caveats) live in
+    `cer_awp1.EXPORT_KOLOM`/`tulis_xlsx`. It reads the stored scores, never
+    recomputes. Per-provinsi rank is over the whole provinsi, before
+    filtering. `cer-awp1` is in `_PATH_PENILAIAN`.
 - **Toll master plan:** `scripts/import_jalan_tol_rencana_umum.py` loads
   `JBHRENCUM_28022023` (national toll master plan, 28 Feb 2023, RAR v5
   extracted with bsdtar/unrar).

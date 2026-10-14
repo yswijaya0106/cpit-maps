@@ -644,7 +644,7 @@ def _catat_token(masuk, keluar):
         j["token_masuk"] += int(masuk or 0)
         j["token_keluar"] += int(keluar or 0)
 _TOOLS_PENILAIAN = {"hitung_skor_ijd_usulan"}
-_TABEL_PENILAIAN = re.compile(r"\bpenilaian_bappenas_ai\b", re.IGNORECASE)
+_TABEL_PENILAIAN = re.compile(r"\b(penilaian_bappenas_ai|cer_awp1_koridor)\b", re.IGNORECASE)
 
 
 def _tanpa_penilaian() -> bool:
@@ -952,7 +952,7 @@ def _tool_jalankan_query_sql(sql=None, judul=None, actions=None) -> dict:
     if _SQL_TABEL_TERLARANG.search(sql):
         return {"error": "Tabel akun pengguna, log chat, dan data pribadi layanan PSC119 tidak boleh diakses lewat chat."}
     if _tanpa_penilaian() and _TABEL_PENILAIAN.search(sql):
-        return {"error": "Akun umum tidak memiliki akses ke hasil penilaian IJD (tabel penilaian_bappenas_ai)."}
+        return {"error": "Akun umum tidak memiliki akses ke hasil penilaian (tabel penilaian_bappenas_ai / cer_awp1_koridor)."}
     inti = sql.strip().rstrip(";")
     try:
         with db_cursor() as cur:

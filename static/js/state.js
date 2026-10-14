@@ -52,7 +52,7 @@ const state = {
 // menolak endpoint penilaian utk role itu (_PATH_PENILAIAN di app.py), UI di
 // sini hanya menyembunyikan supaya konsisten.
 const APP_MODE_LABEL = { sijalan: "SiJalan", sikon: "Sikon" };
-const PENILAIAN_BUTTONS = ["btnUsulanExportIjdScore", "btnIjdDashboard", "btnUsulanExportNpr"];
+const PENILAIAN_BUTTONS = ["btnUsulanExportIjdScore", "btnIjdDashboard", "btnUsulanExportNpr", "btnUsulanExportCer"];
 
 function aksesPenilaianRole() {
   return !(state.auth.required && state.auth.role === "umum");

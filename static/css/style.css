@@ -456,6 +456,16 @@ table.datatable td.checklist-cell > div {
 }
 /* Sel prosa AI (Narasi AI / Kesimpulan) — teks lengkap ada di tooltip title */
 table.datatable td.prose-cell { cursor: help; }
+/* Preview Skor CER AWP-1 — header dua baris (grup + judul kolom), lihat cer-awp1.js */
+table.cer-datatable thead tr.cer-grup-row th {
+  text-align: center; font-size: 10.5px; letter-spacing: .04em; color: var(--text-dim);
+  border-left: 1px solid var(--border);
+}
+.cer-preview-catatan {
+  padding: 6px 14px; font-size: 12px; line-height: 1.45; color: var(--text-dim);
+  border-bottom: 1px solid var(--border);
+}
+.cer-preview-catatan:empty { display: none; }
 /* Laporan Daerah Prioritas — satu kriteria per kolom (bukan satu sel
    berisi banyak baris spt .checklist-cell di preview skor IJD), jadi
    kolom dibuat sempit & rata tengah supaya banyak kolom muat sekaligus. */

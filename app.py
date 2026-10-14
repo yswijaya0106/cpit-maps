@@ -52,6 +52,7 @@ from map_layer_labels import map_layer_label as _map_layer_label  # noqa: E402
 import auth  # noqa: E402
 import chat_providers  # noqa: E402
 import chat_dataset  # noqa: E402
+import cer_awp1  # noqa: E402
 import wilayah_pulau  # noqa: E402
 import road_safety  # noqa: E402
 import urban_darat  # noqa: E402
@@ -216,8 +217,8 @@ _AUTH_EXEMPT_PATHS = {"/api/auth/login", "/api/auth/me"}
 _PATH_PENILAIAN = re.compile(
     r"^/api/("
     r"usulan-inpres/(\d+/)?(ijd-score|npr|skor-prioritas-nasional|penilaian-bappenas|biaya-acuan)(/|$)"
-    r"|(prioritas-nasional|pagu-provinsi|alokasi-2-lapis|laporan-daerah-prioritas|biaya-konstruksi/acuan)(/|$)"
-    r"|data/penilaian_bappenas_ai(/|$)"
+    r"|(prioritas-nasional|pagu-provinsi|alokasi-2-lapis|laporan-daerah-prioritas|biaya-konstruksi/acuan|cer-awp1)(/|$)"
+    r"|data/(penilaian_bappenas_ai|cer_awp1_koridor)(/|$)"
     r")"
 )
 ROLE_TANPA_PENILAIAN = {"umum"}
@@ -1044,7 +1045,7 @@ def data_tables(request: Request):
     out = []
     # Tabel hasil penilaian disembunyikan dari menu utk role 'umum' (isinya juga
     # ditolak middleware, lihat _PATH_PENILAIAN).
-    tersembunyi = {"penilaian_bappenas_ai"} if getattr(request.state, "role", None) in ROLE_TANPA_PENILAIAN else set()
+    tersembunyi = {"penilaian_bappenas_ai", "cer_awp1_koridor"} if getattr(request.state, "role", None) in ROLE_TANPA_PENILAIAN else set()
     with db_cursor() as cur:
         # Cek keberadaan tabel LEWAT information_schema (bukan try/except di
         # sekitar query yang bisa gagal) -- kalau satu query di tengah loop
@@ -1277,11 +1278,21 @@ def data_table_export(table: str, provinsi: int = 0, kabupaten: int = 0, kriteri
         cur.execute(f'SELECT {col_sql} FROM "{table}" {where} ORDER BY 1', params)
         rows = cur.fetchall()
 
+    # Excel tidak menerima datetime ber-zona-waktu (kolom timestamptz spt
+    # imported_at/diimpor_pada) maupun list/dict (kolom ARRAY/JSONB) --
+    # jadikan waktu lokal tanpa tzinfo dan teks JSON.
+    def _sel(v):
+        if isinstance(v, datetime) and v.tzinfo is not None:
+            return v.astimezone().replace(tzinfo=None)
+        if isinstance(v, (list, dict)):
+            return json.dumps(v, ensure_ascii=False, default=str)
+        return v
+
     wb = openpyxl.Workbook(write_only=True)
     ws = wb.create_sheet(table[:31])
     ws.append(columns)
     for r in rows:
-        ws.append([r[c] for c in columns])
+        ws.append([_sel(r[c]) for c in columns])
     buf = io.BytesIO()
     wb.save(buf)
     buf.seek(0)
@@ -3775,6 +3786,60 @@ def usulan_inpres_ijd_score_bulk_export(provinsi: list[str] = Query(default=[]),
     fname = f"ijd_skor_{scope}_{tahun}_{datetime.now():%Y%m%d%H%M%S}.xlsx"
     return StreamingResponse(
         buf,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f"attachment; filename={fname}"},
+    )
+
+
+# --- Preview & Export Skor CER AWP-1 (bahan reviu pemilihan koridor) --------
+# Pola sama dgn Export Skor IJD di atas (kontrak /preview = GET /api/data/{table}
+# + "grup" per kolom). Logika kolom/xlsx di cer_awp1.py. Endpoint penilaian:
+# ditolak utk role umum (_PATH_PENILAIAN).
+
+def _cer_cakupan_label(provinsi: list[str]) -> str:
+    if not provinsi:
+        return "Nasional"
+    if len(provinsi) <= 3:
+        return ", ".join(provinsi)
+    return f"{len(provinsi)} Provinsi"
+
+
+@app.get("/api/cer-awp1/provinsi")
+def cer_awp1_provinsi():
+    with db_cursor() as cur:
+        return cer_awp1.daftar_provinsi(cur)
+
+
+@app.get("/api/cer-awp1/preview")
+def cer_awp1_preview(provinsi: list[str] = Query(default=[]), urut: str = "cer",
+                     limit: int = 50, offset: int = 0):
+    limit = max(1, min(limit, 200))
+    offset = max(0, offset)
+    provinsi = [p for p in provinsi if p]
+    with db_cursor() as cur:
+        rows = cer_awp1.baris_export(cur, provinsi, urut)
+    page = [cer_awp1.nilai_baris(r, offset + i + 1, bulatkan=True)
+            for i, r in enumerate(rows[offset:offset + limit])]
+    return jsonable_encoder({
+        "table": "cer_awp1_preview",
+        "label": f"Preview Export Skor CER AWP-1 — {_cer_cakupan_label(provinsi)}",
+        "columns": [k[1] for k in cer_awp1.EXPORT_KOLOM],
+        "grup": [k[0] for k in cer_awp1.EXPORT_KOLOM],
+        "rows": page, "total": len(rows), "limit": limit, "offset": offset,
+        "ringkasan": cer_awp1.ringkasan(rows, provinsi, urut),
+    })
+
+
+@app.get("/api/cer-awp1/export/xlsx")
+def cer_awp1_export_xlsx(provinsi: list[str] = Query(default=[]), urut: str = "cer"):
+    provinsi = [p for p in provinsi if p]
+    with db_cursor() as cur:
+        rows = cer_awp1.baris_export(cur, provinsi, urut)
+    isi = cer_awp1.tulis_xlsx(rows, cer_awp1.ringkasan(rows, provinsi, urut))
+    cakupan = re.sub(r"[^\w]+", "_", _cer_cakupan_label(provinsi)).strip("_")
+    fname = f"skor_cer_awp1_{cakupan}_{datetime.now():%Y%m%d%H%M%S}.xlsx"
+    return StreamingResponse(
+        io.BytesIO(isi),
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition": f"attachment; filename={fname}"},
     )
